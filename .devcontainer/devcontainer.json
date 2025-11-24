@@ -1,0 +1,7 @@
+// .devcontainer/devcontainer.json
+{
+  "name": "Python 3.12 Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "features": {}
+}
