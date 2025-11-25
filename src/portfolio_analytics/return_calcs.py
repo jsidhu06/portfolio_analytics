@@ -1,41 +1,105 @@
 import pandas as pd
 
 
-def calculate_total_return_index_share_count_ts(df):
-    if {"Close", "Dividends"}.difference(df.columns):
-        raise ValueError("'Close' and 'Dividends' columns must be present in the dataframe")
-
-    share_count_ts = []
-    prior_share_count = 1
-
-    for _, row in df.iterrows():
-        num_shares = prior_share_count * (1 + row["Dividends"] / row["Close"])  # (1+D_t/P_t)
-        share_count_ts.append(num_shares)
-        prior_share_count = num_shares
-
-    assert len(share_count_ts) == len(df), (
-        "length of share count time series does not match "
-        "length of Close and Dividend time series"
-    )
-
-    return pd.Series(share_count_ts, index=df.index)
-
-
-def calculate_total_return_index_ts(price_ts: pd.Series, share_count_ts: pd.Series) -> pd.Series:
-    assert len(price_ts) == len(
-        share_count_ts
-    ), "Price time series is of different length to share count time series"
-    return price_ts * share_count_ts
-
-
-def calculate_daily_total_return_gross_dividends_ts(
+def assert_price_dividend_series_aligned(
     price_series: pd.Series, dividend_series: pd.Series
-):
+) -> None:
+    """Assert that price and dividend series are aligned.
+
+    The series are considered aligned if they have the same length and
+    their indices are identical.
+
+    Args:
+        price_series (pd.Series): Series of prices.
+        dividend_series (pd.Series): Series of dividends.
+
+    Raises:
+        AssertionError: If the series are not aligned (different lengths or indices).
+    """
     assert (
         len(price_series) == len(dividend_series)
         and (price_series.index == dividend_series.index).all()
     ), "price and dividend series are misaligned"
 
+
+def calculate_total_return_index_share_count_ts(
+    price_series: pd.Series, dividend_series: pd.Series
+) -> pd.Series:
+    """Calculate the share count time series for total return index.
+
+    Starting with 1 share, calculates the number of shares held over time,
+    accounting for dividend reinvestment using the formula:
+    shares_t = shares_(t-1) * (1 + dividend_t / price_t).
+
+    Args:
+        price_series (pd.Series): Series of prices indexed by date/time.
+        dividend_series (pd.Series): Series of dividends indexed by date/time.
+                                    Must be aligned with price_series.
+
+    Returns:
+        pd.Series: Share count time series with the same index as the input series.
+
+    Raises:
+        AssertionError: If price_series and dividend_series are not aligned.
+    """
+    assert_price_dividend_series_aligned(price_series, dividend_series)
+
+    share_count_ts = []
+    prior_share_count = 1
+
+    for close_price, dividend in zip(price_series, dividend_series):
+        num_shares = prior_share_count * (1 + dividend / close_price)  # (1+D_t/P_t)
+        share_count_ts.append(num_shares)
+        prior_share_count = num_shares
+
+    return pd.Series(share_count_ts, index=price_series.index)
+
+
+def calculate_total_return_index_ts(
+    price_series: pd.Series, dividend_series: pd.Series
+) -> pd.Series:
+    """Calculate the total return index time series.
+
+    The total return index accounts for both price appreciation and dividend
+    reinvestment, calculated as: total_return_index_t = price_t * share_count_t.
+
+    Args:
+        price_series (pd.Series): Series of prices indexed by date/time.
+        dividend_series (pd.Series): Series of dividends indexed by date/time.
+                                    Must be aligned with price_series.
+
+    Returns:
+        pd.Series: Total return index time series with the same index as the input series.
+
+    Raises:
+        AssertionError: If price_series and dividend_series are not aligned.
+    """
+    assert_price_dividend_series_aligned(price_series, dividend_series)
+    share_count_ts = calculate_total_return_index_share_count_ts(price_series, dividend_series)
+    return price_series * share_count_ts
+
+
+def calculate_daily_total_return_gross_dividends_ts(
+    price_series: pd.Series, dividend_series: pd.Series
+) -> pd.Series:
+    """Calculate daily total returns including gross dividends.
+
+    Calculates the daily percentage returns that account for both price changes
+    and dividend payments using the formula: return_t = ((price_t + dividend_t) / price_(t-1)) - 1.
+    Results are expressed as percentages. This is RT112 on the Bloomberg terminal.
+
+    Args:
+        price_series (pd.Series): Series of prices indexed by date/time.
+        dividend_series (pd.Series): Series of dividends indexed by date/time.
+                                    Must be aligned with price_series.
+
+    Returns:
+        pd.Series: Daily total returns (in percentages) with the same index as the input series.
+
+    Raises:
+        AssertionError: If price_series and dividend_series are not aligned.
+    """
+    assert_price_dividend_series_aligned(price_series, dividend_series)
     return_series = (
         ((price_series.ffill() + dividend_series.fillna(0)) / price_series.ffill().shift(1))
         .sub(1)
