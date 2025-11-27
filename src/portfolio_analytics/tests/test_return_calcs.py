@@ -108,7 +108,7 @@ class TestCalculateTotalReturnIndex:
 
         # Calculate total return index and take pct_change
         total_return_index = calculate_total_return_index_ts(price_series, dividend_series)
-        pct_change_result = total_return_index.pct_change(periods=1) * 100
+        pct_change_result = total_return_index.pct_change(periods=1)
 
         # Calculate daily total return with gross dividends
         daily_return_result = calculate_daily_total_return_gross_dividends_ts(

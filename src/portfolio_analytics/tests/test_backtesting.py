@@ -1,6 +1,11 @@
 import numpy as np
 import pandas as pd
-from portfolio_analytics.backtesting import get_portfolio_returns_series
+from portfolio_analytics.backtesting import (
+    get_portfolio_returns_series,
+    get_daily_quantile_portfolio_returns,
+    get_quantile_portfolio_returns,
+    get_quantile_portfolio_returns_df,
+)
 
 
 class TestGetPortfolioReturnsSeries:
@@ -183,3 +188,160 @@ class TestGetPortfolioReturnsSeries:
         assert np.allclose(
             portfolio_returns_without_zeros.values, portfolio_returns_with_zeros.values
         )
+
+
+def make_weights_multiindex_df():
+    rebalance_dates = [pd.Timestamp("2024-12-31"), pd.Timestamp("2025-01-31")]
+    stocks = ["AAPL", "MSFT", "GOOGL"]
+    rows = []
+    for d in rebalance_dates:
+        for s in stocks:
+            rows.append((d, s))
+
+    mi = pd.MultiIndex.from_tuples(rows, names=["date", "stock"])
+
+    data = []
+    for d in rebalance_dates:
+        if d == rebalance_dates[0]:
+            data.extend(
+                [
+                    {"Q1": 1.0, "Q2": 0.0},  # AAPL
+                    {"Q1": 0.0, "Q2": 0.5},  # MSFT
+                    {"Q1": 0.0, "Q2": 0.5},  # GOOGL
+                ]
+            )
+        else:
+            data.extend(
+                [
+                    {"Q1": 0.0, "Q2": 0.5},  # AAPL
+                    {"Q1": 1.0, "Q2": 0.0},  # MSFT
+                    {"Q1": 0.0, "Q2": 0.5},  # GOOGL
+                ]
+            )
+
+    return pd.DataFrame(data, index=mi)
+
+
+def make_fake_price_df(stocks, start_date, end_date):
+    # Create daily dates inclusive of start and end
+    dates = pd.date_range(start_date, end_date, freq="D")
+
+    # Use a reproducible RNG so tests are deterministic
+    rng = np.random.RandomState(42)
+
+    # Build MultiIndex columns (Ticker, Field)
+    data = {}
+    for i, s in enumerate(stocks):
+        # Generate small daily returns (some positive, some negative)
+        daily_ret = rng.normal(loc=0.0005, scale=0.02, size=len(dates))
+        # Ensure variability across stocks by shifting mean slightly
+        daily_ret += i * 0.0001
+
+        # Build close prices via cumulative returns from a base price
+        base = 100 + i * 5
+        close = base * np.cumprod(1 + daily_ret)
+
+        # small dividends series: mostly zero, occasional small dividend
+        dividends = np.zeros(len(dates))
+        dividends[::3] = 0.5  # pay dividend every 3rd day
+
+        data[(s, "Close")] = close
+        data[(s, "Dividends")] = dividends
+
+    # Create MultiIndex and DataFrame
+    cols = pd.MultiIndex.from_tuples(list(data.keys()), names=["Ticker", "Field"])
+    df = pd.DataFrame(data=list(data.values()), index=cols).T
+    df.index = dates
+    return df
+
+
+def test_get_quantile_portfolio_returns_df(monkeypatch):
+    """Integration test for get_quantile_portfolio_returns_df using mocked price fetcher."""
+    weights_mi_df = make_weights_multiindex_df()
+
+    # The backtesting module calls fetch_historical_price_data(stocks, start_date, end_date, actions=True)
+    def fake_fetch_historical_price_data(stocks, start, end, actions=True):
+        return make_fake_price_df(stocks, start, end)
+
+    # Patch the fetcher in the backtesting module
+    monkeypatch.setattr(
+        "portfolio_analytics.backtesting.fetch_historical_price_data",
+        fake_fetch_historical_price_data,
+    )
+
+    # Run the function under test
+    result_df = get_quantile_portfolio_returns_df(weights_mi_df, pd.Timestamp("2025-02-28"))
+
+    # Basic structure checks
+    assert isinstance(result_df, pd.DataFrame)
+    # For two rebalance dates we expect two result rows (we now include the last rebalance period)
+    assert result_df.shape[0] == 2
+    assert set(result_df.columns) == {"Q1", "Q2"}
+    # No NaNs and numeric
+    assert result_df.notna().all(axis=None)
+    assert np.isfinite(result_df.values).all()
+
+    # Values should be reasonable (not extremely large)
+    assert (np.abs(result_df.values) < 1e3).all()
+
+
+class TestQuantilePortfolioReturns:
+    """Tests for quantile-level daily and cumulative returns functions"""
+
+    def test_get_daily_quantile_portfolio_returns_matches_individual(self):
+        """Daily quantile returns should equal running portfolio returns per-quantile"""
+        # Stocks and weights for two quantiles
+        weights_df = pd.DataFrame(
+            {
+                "Q2": pd.Series({"A": 1.0, "B": 0.0, "C": 0.0}),
+                "Q1": pd.Series({"A": 0.0, "B": 0.5, "C": 0.5}),
+            }
+        )
+
+        # Simple returns for 4 days
+        dates = pd.date_range("2025-01-01", periods=4, freq="D")
+        returns_df = pd.DataFrame(
+            {
+                "A": [0.01, 0.02, -0.005, 0.01],
+                "B": [0.005, -0.01, 0.02, 0.0],
+                "C": [0.02, 0.0, 0.01, -0.02],
+            },
+            index=dates,
+        )
+
+        daily_df = get_daily_quantile_portfolio_returns(weights_df, returns_df)
+
+        expected_q1 = get_portfolio_returns_series(weights_df["Q1"], returns_df)
+        expected_q2 = get_portfolio_returns_series(weights_df["Q2"], returns_df)
+
+        assert list(daily_df.columns) == ["Q2", "Q1"]
+        assert daily_df.index.equals(returns_df.index)
+        assert np.allclose(daily_df["Q1"].values, expected_q1.values)
+        assert np.allclose(daily_df["Q2"].values, expected_q2.values)
+
+    def test_get_quantile_portfolio_returns_cumulative(self):
+        """Quantile returns should be computed from daily returns correctly"""
+        weights_df = pd.DataFrame(
+            {
+                "Q2": pd.Series({"A": 1.0, "B": 0.0}),
+                "Q1": pd.Series({"A": 0.0, "B": 1.0}),
+            }
+        )
+
+        dates = pd.date_range("2025-01-01", periods=3, freq="D")
+        returns_df = pd.DataFrame(
+            {"A": [0.01, 0.02, -0.01], "B": [0.005, -0.01, 0.03]}, index=dates
+        )
+
+        daily_df = get_daily_quantile_portfolio_returns(weights_df, returns_df)
+        expected_cum = (1 + daily_df).cumprod().sub(1).iloc[-1]
+
+        quantile_df = get_quantile_portfolio_returns(weights_df, returns_df)
+
+        # Structure checks
+        assert list(quantile_df.index) == ["Q2", "Q1"]
+
+        # Numeric equality
+        assert np.allclose(quantile_df.values, expected_cum.values)
+
+        assert quantile_df.shape == (2,)

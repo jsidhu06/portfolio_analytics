@@ -105,7 +105,6 @@ def calculate_daily_total_return_gross_dividends_ts(
     return_series = (
         ((price_series.ffill() + dividend_series.fillna(0)) / price_series.ffill().shift(1))
         .sub(1)
-        .mul(100)
         .rename("return_series")
     )
 

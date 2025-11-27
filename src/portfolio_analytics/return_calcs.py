@@ -1,5 +1,7 @@
 import pandas as pd
 
+idx = pd.IndexSlice
+
 
 def assert_price_dividend_series_aligned(
     price_series: pd.Series, dividend_series: pd.Series
@@ -103,8 +105,29 @@ def calculate_daily_total_return_gross_dividends_ts(
     return_series = (
         ((price_series.ffill() + dividend_series.fillna(0)) / price_series.ffill().shift(1))
         .sub(1)
-        .mul(100)
         .rename("return_series")
     )
 
     return return_series
+
+
+def generate_returns_df(price_df: pd.DataFrame) -> pd.DataFrame:
+    """Generate daily returns DataFrame from price DataFrame.
+
+    Args:
+        price_df (pd.DataFrame): DataFrame with index as date and a multi-indexed column (stock, field).
+
+    Returns:
+        pd.DataFrame: DataFrame of daily returns with the same index and columns as input.
+    """
+
+    return (
+        price_df.groupby("Ticker", axis=1, group_keys=True)
+        .apply(
+            lambda df: calculate_daily_total_return_gross_dividends_ts(
+                df.droplevel(axis=1, level=0)["Close"], df.droplevel(axis=1, level=0)["Dividends"]
+            )
+        )
+        .iloc[1:]
+        .fillna(0)
+    )  # Drop the first row with NaN values due to pct_change
