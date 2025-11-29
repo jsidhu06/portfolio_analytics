@@ -1,9 +1,11 @@
+import numpy as np
 import pandas as pd
 import pytest
 from portfolio_analytics.return_calcs import (
     assert_price_dividend_series_aligned,
     calculate_total_return_index_ts,
     calculate_daily_total_return_gross_dividends_ts,
+    generate_returns_df,
 )
 
 
@@ -122,3 +124,245 @@ class TestCalculateTotalReturnIndex:
             atol=1e-10,
             check_names=False,
         )
+
+
+class TestGenerateReturnsDf:
+    """Test suite for generate_returns_df function"""
+
+    def test_generate_returns_df_basic_structure(self):
+        """Test that output has correct structure: single-level columns (tickers)"""
+        # Create multi-indexed price DataFrame
+        dates = pd.date_range("2025-01-01", periods=5, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["AAPL", "MSFT"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0, 50.0, 0.0],  # Day 1
+                [101.0, 0.0, 51.0, 0.5],  # Day 2 (MSFT dividend)
+                [102.0, 0.5, 50.5, 0.0],  # Day 3 (AAPL dividend)
+                [103.0, 0.0, 51.5, 0.0],  # Day 4
+                [104.0, 0.0, 52.0, 0.0],  # Day 5
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # Output should have single-level columns (tickers only)
+        assert isinstance(returns_df.columns, pd.Index)
+        assert not isinstance(returns_df.columns, pd.MultiIndex)
+        assert set(returns_df.columns) == {"AAPL", "MSFT"}
+
+    def test_generate_returns_df_first_row_dropped(self):
+        """Test that first row (with NaN) is dropped"""
+        dates = pd.date_range("2025-01-01", periods=5, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["AAPL", "MSFT"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0, 50.0, 0.0],
+                [101.0, 0.0, 51.0, 0.0],
+                [102.0, 0.0, 50.0, 0.0],
+                [103.0, 0.0, 51.0, 0.0],
+                [104.0, 0.0, 52.0, 0.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # First row should be dropped; output should have 4 rows
+        assert len(returns_df) == 4
+        assert returns_df.index[0] == dates[1]  # First remaining row is second date
+
+    def test_generate_returns_df_no_nans_except_first_row(self):
+        """Test that no NaN values remain after first row is dropped"""
+        dates = pd.date_range("2025-01-01", periods=5, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["AAPL"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0],
+                [101.0, 0.0],
+                [102.0, 0.5],
+                [103.0, 0.0],
+                [104.0, 0.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # No NaN values should remain
+        assert returns_df.notna().all(axis=None)
+
+    def test_generate_returns_df_with_dividends(self):
+        """Test return calculation includes dividends"""
+        dates = pd.date_range("2025-01-01", periods=3, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["STOCK"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        # Day 1: price 100, no dividend
+        # Day 2: price 101, no dividend -> return = (101 + 0) / 100 - 1 = 0.01
+        # Day 3: price 102, dividend 1 -> return = (102 + 1) / 101 - 1 ≈ 0.00990
+        data = np.array(
+            [
+                [100.0, 0.0],
+                [101.0, 0.0],
+                [102.0, 1.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # Check day 2 return
+        assert np.isclose(returns_df.loc[dates[1], "STOCK"], 0.01)
+        # Check day 3 return (includes dividend)
+        expected_day3 = (102.0 + 1.0) / 101.0 - 1.0
+        assert np.isclose(returns_df.loc[dates[2], "STOCK"], expected_day3)
+
+    def test_generate_returns_df_multiple_stocks(self):
+        """Test with multiple stocks"""
+        dates = pd.date_range("2025-01-01", periods=4, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["AAPL", "MSFT", "GOOGL"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0, 50.0, 0.0, 75.0, 0.0],
+                [101.0, 0.0, 51.0, 0.0, 74.0, 0.0],
+                [102.0, 0.0, 50.5, 0.0, 76.0, 0.0],
+                [103.0, 0.0, 51.5, 0.0, 75.5, 0.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        assert set(returns_df.columns) == {"AAPL", "MSFT", "GOOGL"}
+        assert len(returns_df) == 3  # First row dropped
+
+    def test_generate_returns_df_zero_returns(self):
+        """Test when prices don't change (zero returns)"""
+        dates = pd.date_range("2025-01-01", periods=4, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["STOCK"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0],
+                [100.0, 0.0],
+                [100.0, 0.0],
+                [100.0, 0.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # All returns should be zero
+        assert np.allclose(returns_df.values, 0.0)
+
+    def test_generate_returns_df_negative_returns(self):
+        """Test when prices decline (negative returns)"""
+        dates = pd.date_range("2025-01-01", periods=4, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["STOCK"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0],
+                [99.0, 0.0],
+                [98.0, 0.0],
+                [97.0, 0.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # All returns should be negative
+        assert (returns_df < 0).all(axis=None)
+        # Check specific value: -1/100 = -0.01
+        assert np.isclose(returns_df.iloc[0, 0], -0.01)
+
+    def test_generate_returns_df_large_price_change(self):
+        """Test with large price changes"""
+        dates = pd.date_range("2025-01-01", periods=3, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["STOCK"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, 0.0],
+                [200.0, 0.0],  # 100% return
+                [50.0, 0.0],  # -75% return
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # Day 2: 100% return
+        assert np.isclose(returns_df.iloc[0, 0], 1.0)
+        # Day 3: -75% return
+        assert np.isclose(returns_df.iloc[1, 0], -0.75)
+
+    def test_generate_returns_df_index_preservation(self):
+        """Test that date index is preserved (except first row)"""
+        dates = pd.date_range("2025-01-01", periods=5, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["AAPL"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.ones((5, 2)) * 100.0
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # Index should be all dates except the first
+        assert returns_df.index.equals(dates[1:])
+
+    def test_generate_returns_df_with_missing_fields_raises_error(self):
+        """Test that missing Close or Dividends field raises KeyError"""
+        dates = pd.date_range("2025-01-01", periods=3, freq="D")
+        # Missing Dividends field
+        cols = pd.MultiIndex.from_product([["AAPL"], ["Close", "Open"]], names=["Ticker", "Field"])
+        data = np.array(
+            [
+                [100.0, 99.0],
+                [101.0, 100.0],
+                [102.0, 101.0],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        with pytest.raises(KeyError):
+            generate_returns_df(price_df)
+
+    def test_generate_returns_df_fillna_zero_dividends(self):
+        """Test that NaN dividends are treated as zero"""
+        dates = pd.date_range("2025-01-01", periods=4, freq="D")
+        cols = pd.MultiIndex.from_product(
+            [["STOCK"], ["Close", "Dividends"]], names=["Ticker", "Field"]
+        )
+        data = np.array(
+            [
+                [100.0, np.nan],
+                [101.0, np.nan],
+                [102.0, 0.5],
+                [103.0, np.nan],
+            ]
+        )
+        price_df = pd.DataFrame(data, index=dates, columns=cols)
+
+        returns_df = generate_returns_df(price_df)
+
+        # Should not raise and should produce valid returns
+        assert returns_df.notna().all(axis=None)
+        # Day 3 should account for dividend
+        expected_day3 = (102.0 + 0.5) / 101.0 - 1.0
+        assert np.isclose(returns_df.iloc[1, 0], expected_day3)

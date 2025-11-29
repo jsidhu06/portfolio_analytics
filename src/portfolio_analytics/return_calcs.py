@@ -122,12 +122,13 @@ def generate_returns_df(price_df: pd.DataFrame) -> pd.DataFrame:
     """
 
     return (
-        price_df.groupby("Ticker", axis=1, group_keys=True)
+        price_df.T.groupby("Ticker", group_keys=True)
         .apply(
             lambda df: calculate_daily_total_return_gross_dividends_ts(
-                df.droplevel(axis=1, level=0)["Close"], df.droplevel(axis=1, level=0)["Dividends"]
+                df.T.droplevel(axis=1, level=0)["Close"],
+                df.T.droplevel(axis=1, level=0)["Dividends"],
             )
         )
-        .iloc[1:]
+        .T.iloc[1:]
         .fillna(0)
     )  # Drop the first row with NaN values due to pct_change
