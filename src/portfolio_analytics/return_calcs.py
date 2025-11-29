@@ -88,7 +88,7 @@ def calculate_daily_total_return_gross_dividends_ts(
 
     Calculates the daily percentage returns that account for both price changes
     and dividend payments using the formula: return_t = ((price_t + dividend_t) / price_(t-1)) - 1.
-    Results are expressed as percentages. This is RT112 on the Bloomberg terminal.
+    Results are expressed in decimal.
 
     Args:
         price_series (pd.Series): Series of prices indexed by date/time.
@@ -96,7 +96,7 @@ def calculate_daily_total_return_gross_dividends_ts(
                                     Must be aligned with price_series.
 
     Returns:
-        pd.Series: Daily total returns (in percentages) with the same index as the input series.
+        pd.Series: Daily total returns (in decimal format) with the same index as the input series.
 
     Raises:
         AssertionError: If price_series and dividend_series are not aligned.

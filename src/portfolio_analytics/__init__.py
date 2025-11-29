@@ -5,6 +5,8 @@ from .return_calcs import (
     calculate_total_return_index_ts,
     calculate_daily_total_return_gross_dividends_ts,
 )
+from .backtesting import get_multiindexed_weights_df, get_quantile_portfolio_returns_df
+
 
 __all__ = [
     "calculate_sharpe_ratio",
@@ -14,4 +16,6 @@ __all__ = [
     "calculate_total_return_index_share_count_ts",
     "calculate_total_return_index_ts",
     "calculate_daily_total_return_gross_dividends_ts",
+    "get_multiindexed_weights_df",
+    "get_quantile_portfolio_returns_df",
 ]

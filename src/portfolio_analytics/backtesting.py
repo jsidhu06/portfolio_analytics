@@ -22,7 +22,7 @@ def get_weights_df(
     if weighting_schema not in ["equal", "market_cap"]:
         raise ValueError("weighting_schema must be one of ['equal','market_cap']")
 
-    weights_df = pd.DataFrame(data=0, index=buckets.index, columns=buckets.cat.categories)
+    weights_df = pd.DataFrame(data=0.0, index=buckets.index, columns=buckets.cat.categories)
     for bucket in buckets.cat.categories:
         stocks_in_bucket = buckets[buckets == bucket].index
         if weighting_schema == "equal":
@@ -37,6 +37,38 @@ def get_weights_df(
             )
 
     return weights_df
+
+
+def get_multiindexed_weights_df(
+    factor_multiindex_series: pd.Series,
+    num_quantiles: int = 5,
+    weighting_schema: str = "equal",
+    market_caps_multiindex_series: pd.Series = None,
+) -> pd.DataFrame:
+    weights_list = []
+    rebalance_dates = sorted(factor_multiindex_series.index.get_level_values(0).unique())
+    for date in rebalance_dates:
+        factor_series = factor_multiindex_series.xs(date, level=0)
+        buckets = bucket_stocks(factor_series, num_quantiles=num_quantiles)
+
+        if weighting_schema == "market_cap":
+            if market_caps_multiindex_series is None:
+                raise ValueError(
+                    "market_caps_multiindex_series must be provided for market_cap weighting"
+                )
+            market_caps_series = market_caps_multiindex_series.xs(date, level=0)
+        else:
+            market_caps_series = None
+
+        weights_df = get_weights_df(
+            buckets,
+            weighting_schema=weighting_schema,
+            market_caps=market_caps_series,
+        )
+        weights_df.index = pd.MultiIndex.from_product([[date], weights_df.index])
+        weights_list.append(weights_df)
+
+    return pd.concat(weights_list)
 
 
 def get_portfolio_returns_series(
@@ -56,6 +88,9 @@ def get_portfolio_returns_series(
     common_stocks = weights_series.index.intersection(returns_df.columns)
     weights_aligned = weights_series.loc[common_stocks]
     returns_aligned = returns_df[common_stocks]
+
+    # Normalize weights to sum to 1
+    weights_aligned /= weights_aligned.sum()
 
     # Calculate portfolio returns
     portfolio_returns = []
@@ -102,22 +137,22 @@ def get_quantile_portfolio_returns(weights_df: pd.DataFrame, returns_df: pd.Data
 
 def get_quantile_portfolio_returns_df(
     weights_multiindex_df: pd.DataFrame,
-    last_date: pd.Timestamp = None,
+    last_date: pd.Timestamp = pd.Timestamp.today().normalize(),
 ) -> pd.DataFrame:
     """Calculate quantile portfolio returns over multiple rebalance periods.
 
     Args:
-        weights_multiindex_df (pd.DataFrame): Multi-indexed DataFrame with (date, stock) index and quantile weights as columns.
+        weights_multiindex_df (pd.DataFrame): Multi-indexed DataFrame with (date, stock) index
+        and quantile weights as columns.
+        last_date (pd.Timestamp): The last date to consider for returns calculation. Defaults to
+        today's date.
 
     Returns:
         pd.DataFrame: DataFrame with rebalance dates as index and quantile portfolio returns as columns.
     """
 
     rebalance_dates = sorted(weights_multiindex_df.index.get_level_values(0).unique())
-    if last_date is not None:
-        rebalance_dates.append(last_date)
-    else:
-        rebalance_dates.append(pd.Timestamp.today().normalize())
+    rebalance_dates.append(last_date)
     results = []
     for i in range(len(rebalance_dates) - 1):
         start_date = rebalance_dates[i]

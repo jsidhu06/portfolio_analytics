@@ -318,30 +318,39 @@ class TestQuantilePortfolioReturns:
         assert daily_df.index.equals(returns_df.index)
         assert np.allclose(daily_df["Q1"].values, expected_q1.values)
         assert np.allclose(daily_df["Q2"].values, expected_q2.values)
+        # Since Q2 is just stock A, its returns should match exactly
+        assert np.allclose(daily_df["Q2"].values, returns_df["A"].values)
 
     def test_get_quantile_portfolio_returns_cumulative(self):
         """Quantile returns should be computed from daily returns correctly"""
         weights_df = pd.DataFrame(
             {
-                "Q2": pd.Series({"A": 1.0, "B": 0.0}),
-                "Q1": pd.Series({"A": 0.0, "B": 1.0}),
+                "Q2": pd.Series({"A": 0.3, "B": 0.7, "C": 0.0, "D": 0.0}),
+                "Q1": pd.Series({"A": 0.0, "B": 0.0, "C": 0.9, "D": 0.1}),
             }
         )
 
+        # individual security returns for 3 days
         dates = pd.date_range("2025-01-01", periods=3, freq="D")
         returns_df = pd.DataFrame(
-            {"A": [0.01, 0.02, -0.01], "B": [0.005, -0.01, 0.03]}, index=dates
+            {
+                "A": [0.01, 0.02, -0.01],
+                "B": [0.005, -0.01, 0.03],
+                "C": [-0.015, -0.005, 0.1],
+                "D": [0.05, -0.01, 0.07],
+            },
+            index=dates,
         )
 
         daily_df = get_daily_quantile_portfolio_returns(weights_df, returns_df)
-        expected_cum = (1 + daily_df).cumprod().sub(1).iloc[-1]
+        expected_return = (1 + daily_df).prod().sub(1)
 
-        quantile_df = get_quantile_portfolio_returns(weights_df, returns_df)
+        quantile_returns = get_quantile_portfolio_returns(weights_df, returns_df)
 
         # Structure checks
-        assert list(quantile_df.index) == ["Q2", "Q1"]
+        assert list(quantile_returns.index) == ["Q2", "Q1"]
 
         # Numeric equality
-        assert np.allclose(quantile_df.values, expected_cum.values)
+        assert np.allclose(quantile_returns.values, expected_return.values)
 
-        assert quantile_df.shape == (2,)
+        assert quantile_returns.shape == (2,)  # shape of the series should be (num_quantiles,)

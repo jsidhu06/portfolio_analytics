@@ -33,7 +33,7 @@ def fetch_latest_price_data(tickers: List[str]) -> Dict[str, Dict[pd.Timestamp, 
     """
     Fetch latest price data from yfinance
 
-    returns a dictionary mapping each ticker to a dict that maps the stock price timestamp
+    Returns a dictionary mapping each ticker to a dict that maps the stock price timestamp
     to the stock price
     """
 
@@ -47,11 +47,14 @@ def fetch_latest_price_data(tickers: List[str]) -> Dict[str, Dict[pd.Timestamp, 
             continue
 
         latest_date = dt.datetime.fromtimestamp(latest_date_timestamp).date()
-        try:
+        if hasattr(single_stock_data, "fast_info") and hasattr(
+            single_stock_data.fast_info, "last_price"
+        ):
             latest_prices_dict.update(
                 {ticker: {latest_date: single_stock_data.fast_info.last_price}}
             )
-        except AttributeError:
-            logger.warning("Could not obtain last price for %s. Skipping.", ticker)
+        else:
+            logger.warning("No price data for %s. Skipping.", ticker)
+            continue
 
     return latest_prices_dict
