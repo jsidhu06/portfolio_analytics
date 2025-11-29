@@ -1,0 +1,47 @@
+[project]
+name = "portfolio_analytics"
+version = "0.1.0"
+description = "Python package for portfolio analytics, including risk and return metrics"
+authors = [
+    { name = "TODO", email = "todo@example.com" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
+dependencies = [
+    "numpy",
+    "pandas",
+    "yfinance"
+]
+
+# Optional groups (e.g., dev, tests, docs)
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+    "mypy",
+    "pre-commit",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Ruff (linter)
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+# Black (formatter)
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+# Pytest
+[tool.pytest.ini_options]
+pythonpath = ["src"]
