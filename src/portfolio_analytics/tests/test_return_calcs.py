@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+import logging
 from portfolio_analytics.return_calcs import (
     assert_price_dividend_series_aligned,
     calculate_total_return_index_ts,
@@ -326,8 +327,9 @@ class TestGenerateReturnsDf:
         # Index should be all dates except the first
         assert returns_df.index.equals(dates[1:])
 
-    def test_generate_returns_df_with_missing_fields_raises_error(self):
-        """Test that missing Close or Dividends field raises KeyError"""
+    def test_generate_returns_df_with_missing_dividends_logs_warning(self, caplog):
+        """Test that missing Dividends field logs warning and uses Close only"""
+
         dates = pd.date_range("2025-01-01", periods=3, freq="D")
         # Missing Dividends field
         cols = pd.MultiIndex.from_product([["AAPL"], ["Close", "Open"]], names=["Ticker", "Field"])
@@ -340,8 +342,15 @@ class TestGenerateReturnsDf:
         )
         price_df = pd.DataFrame(data, index=dates, columns=cols)
 
-        with pytest.raises(KeyError):
-            generate_returns_df(price_df)
+        with caplog.at_level(logging.WARNING):
+            returns_df = generate_returns_df(price_df)
+
+        # Check that warning was logged
+        assert "No dividend data for AAPL" in caplog.text
+        assert len(returns_df) == 2  # First row dropped
+        # Check returns match pct_change: (101-100)/100 = 0.01, (102-101)/101 ≈ 0.0099
+        assert np.isclose(returns_df.iloc[0, 0], 0.01)
+        assert np.isclose(returns_df.iloc[1, 0], (102.0 - 101.0) / 101.0)
 
     def test_generate_returns_df_fillna_zero_dividends(self):
         """Test that NaN dividends are treated as zero"""

@@ -259,18 +259,11 @@ def test_get_quantile_portfolio_returns_df(monkeypatch):
     """Integration test for get_quantile_portfolio_returns_df using mocked price fetcher."""
     weights_mi_df = make_weights_multiindex_df()
 
-    # The backtesting module calls fetch_historical_price_data(stocks, start_date, end_date, actions=True)
-    def fake_fetch_historical_price_data(stocks, start, end, actions=True):
-        return make_fake_price_df(stocks, start, end)
-
-    # Patch the fetcher in the backtesting module
-    monkeypatch.setattr(
-        "portfolio_analytics.backtesting.fetch_historical_price_data",
-        fake_fetch_historical_price_data,
-    )
-
+    price_df = make_fake_price_df(["AAPL", "MSFT", "GOOGL"], "2024-12-30", "2025-02-28")
     # Run the function under test
-    result_df = get_quantile_portfolio_returns_df(weights_mi_df, pd.Timestamp("2025-02-28"))
+    result_df = get_quantile_portfolio_returns_df(
+        weights_mi_df, price_df, pd.Timestamp("2025-02-28")
+    )
 
     # Basic structure checks
     assert isinstance(result_df, pd.DataFrame)

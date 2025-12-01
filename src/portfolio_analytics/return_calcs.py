@@ -1,4 +1,8 @@
+import logging
 import pandas as pd
+
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 idx = pd.IndexSlice
 
@@ -121,14 +125,29 @@ def generate_returns_df(price_df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame: DataFrame of daily returns with the same index and columns as input.
     """
 
-    return (
-        price_df.T.groupby("Ticker", group_keys=True)
-        .apply(
-            lambda df: calculate_daily_total_return_gross_dividends_ts(
+    def has_dividends(df: pd.DataFrame) -> bool:
+        return "Dividends" in df.index.get_level_values(1)
+
+    def calculate_returns_for_group(df: pd.DataFrame) -> pd.Series:
+        if has_dividends(df):
+            return calculate_daily_total_return_gross_dividends_ts(
                 df.T.droplevel(axis=1, level=0)["Close"],
                 df.T.droplevel(axis=1, level=0)["Dividends"],
             )
+
+        logger.warning(
+            f"No dividend data for {df.index.get_level_values(0).unique()[0]}. "
+            "Calculating returns using price data only."
         )
+        return (
+            df.T.droplevel(axis=1, level=0)["Close"]
+            .pct_change(periods=1, fill_method=None)
+            .rename("return_series")
+        )
+
+    return (
+        price_df.T.groupby("Ticker", group_keys=True)
+        .apply(calculate_returns_for_group)
         .T.iloc[1:]
         .fillna(0)
     )  # Drop the first row with NaN values due to pct_change

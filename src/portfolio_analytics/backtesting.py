@@ -1,5 +1,4 @@
 import pandas as pd
-from .yfinance_utils import fetch_historical_price_data
 from .return_calcs import generate_returns_df
 
 
@@ -25,6 +24,8 @@ def get_weights_df(
     weights_df = pd.DataFrame(data=0.0, index=buckets.index, columns=buckets.cat.categories)
     for bucket in buckets.cat.categories:
         stocks_in_bucket = buckets[buckets == bucket].index
+        if len(stocks_in_bucket) == 0:
+            continue
         if weighting_schema == "equal":
             weight = 1.0 / len(stocks_in_bucket)
             weights_df.loc[stocks_in_bucket, bucket] = weight
@@ -65,7 +66,9 @@ def get_multiindexed_weights_df(
             weighting_schema=weighting_schema,
             market_caps=market_caps_series,
         )
-        weights_df.index = pd.MultiIndex.from_product([[date], weights_df.index])
+        weights_df.index = pd.MultiIndex.from_product(
+            [[date], weights_df.index], names=["Date", "Ticker"]
+        )
         weights_list.append(weights_df)
 
     return pd.concat(weights_list)
@@ -137,6 +140,7 @@ def get_quantile_portfolio_returns(weights_df: pd.DataFrame, returns_df: pd.Data
 
 def get_quantile_portfolio_returns_df(
     weights_multiindex_df: pd.DataFrame,
+    price_df: pd.DataFrame,
     last_date: pd.Timestamp = pd.Timestamp.today().normalize(),
 ) -> pd.DataFrame:
     """Calculate quantile portfolio returns over multiple rebalance periods.
@@ -144,13 +148,14 @@ def get_quantile_portfolio_returns_df(
     Args:
         weights_multiindex_df (pd.DataFrame): Multi-indexed DataFrame with (date, stock) index
         and quantile weights as columns.
+        price_df (pd.DataFrame): DataFrame with index as date and multi-indexed column of
+        (ticker,field).
         last_date (pd.Timestamp): The last date to consider for returns calculation. Defaults to
         today's date.
 
     Returns:
         pd.DataFrame: DataFrame with rebalance dates as index and quantile portfolio returns as columns.
     """
-
     rebalance_dates = sorted(weights_multiindex_df.index.get_level_values(0).unique())
     rebalance_dates.append(last_date)
     results = []
@@ -161,12 +166,12 @@ def get_quantile_portfolio_returns_df(
         # Get weights for the current rebalance date
         weights_df = weights_multiindex_df.xs(start_date, level=0)
 
-        # Fetch price data for the stocks in the weights DataFrame
-        stocks = weights_df.index.tolist()
-        price_df = fetch_historical_price_data(stocks, start_date, end_date, actions=True)
+        idx = price_df.index
+        i_start = idx.searchsorted(start_date, side="left")
+        i_end = idx.searchsorted(end_date, side="right") - 1
 
         # Calculate daily returns
-        returns_df = generate_returns_df(price_df)
+        returns_df = generate_returns_df(price_df.iloc[i_start : i_end + 1])
 
         # Calculate quantile portfolio returns
         quantile_returns = get_quantile_portfolio_returns(weights_df, returns_df)
