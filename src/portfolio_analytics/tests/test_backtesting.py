@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from portfolio_analytics.return_calcs import generate_returns_df
 from portfolio_analytics.backtesting import (
     get_portfolio_returns_series,
     get_daily_quantile_portfolio_returns,
@@ -255,14 +256,17 @@ def make_fake_price_df(stocks, start_date, end_date):
     return df
 
 
-def test_get_quantile_portfolio_returns_df(monkeypatch):
+def test_get_quantile_portfolio_returns_df():
     """Integration test for get_quantile_portfolio_returns_df using mocked price fetcher."""
     weights_mi_df = make_weights_multiindex_df()
 
     price_df = make_fake_price_df(["AAPL", "MSFT", "GOOGL"], "2024-12-30", "2025-02-28")
+
+    returns_df = generate_returns_df(price_df)
+
     # Run the function under test
     result_df = get_quantile_portfolio_returns_df(
-        weights_mi_df, price_df, pd.Timestamp("2025-02-28")
+        weights_mi_df, returns_df, pd.Timestamp("2025-02-28")
     )
 
     # Basic structure checks

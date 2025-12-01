@@ -1,5 +1,4 @@
 import pandas as pd
-from .return_calcs import generate_returns_df
 
 
 def bucket_stocks(factor_series, num_quantiles=5):
@@ -140,7 +139,7 @@ def get_quantile_portfolio_returns(weights_df: pd.DataFrame, returns_df: pd.Data
 
 def get_quantile_portfolio_returns_df(
     weights_multiindex_df: pd.DataFrame,
-    price_df: pd.DataFrame,
+    returns_df: pd.DataFrame,
     last_date: pd.Timestamp = pd.Timestamp.today().normalize(),
 ) -> pd.DataFrame:
     """Calculate quantile portfolio returns over multiple rebalance periods.
@@ -148,8 +147,7 @@ def get_quantile_portfolio_returns_df(
     Args:
         weights_multiindex_df (pd.DataFrame): Multi-indexed DataFrame with (date, stock) index
         and quantile weights as columns.
-        price_df (pd.DataFrame): DataFrame with index as date and multi-indexed column of
-        (ticker,field).
+        returns_df (pd.DataFrame): DataFrame with index as date and tickers as columns
         last_date (pd.Timestamp): The last date to consider for returns calculation. Defaults to
         today's date.
 
@@ -166,15 +164,14 @@ def get_quantile_portfolio_returns_df(
         # Get weights for the current rebalance date
         weights_df = weights_multiindex_df.xs(start_date, level=0)
 
-        idx = price_df.index
-        i_start = idx.searchsorted(start_date, side="left")
+        idx = returns_df.index
+        i_start = idx.searchsorted(start_date + pd.tseries.offsets.DateOffset(days=1), side="left")
         i_end = idx.searchsorted(end_date, side="right") - 1
 
-        # Calculate daily returns
-        returns_df = generate_returns_df(price_df.iloc[i_start : i_end + 1])
-
         # Calculate quantile portfolio returns
-        quantile_returns = get_quantile_portfolio_returns(weights_df, returns_df)
+        quantile_returns = get_quantile_portfolio_returns(
+            weights_df, returns_df.iloc[i_start : i_end + 1]
+        )
         quantile_returns.name = end_date  # we set .name to end_date because these are
         # returns attributed to the period ending on end_date
         results.append(quantile_returns)
