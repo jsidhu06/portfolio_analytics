@@ -115,6 +115,35 @@ def calculate_daily_total_return_gross_dividends_ts(
     return return_series
 
 
+def calculate_total_return_over_period(
+    price_series: pd.Series, dividend_series: pd.Series
+) -> float:
+    """Calculate the total return over the entire period.
+
+    This uses the canonical standard total return calculation:
+    \mathrm{TRA}(t, t+n)
+    = \frac{P_{t+n}}{P_t}
+      \prod_{i=1}^{n}
+      \left( 1 + \frac{D_{t+i}}{P_{t+i}} \right)
+
+
+    Args:
+        price_series (pd.Series): Series of prices indexed by date/time.
+        dividend_series (pd.Series): Series of dividends indexed by date/time.
+                                    Must be aligned with price_series.
+
+    Returns:
+        float: Total return over the period in decimal format.
+
+    Raises:
+        AssertionError: If price_series and dividend_series are not aligned.
+    """
+    assert_price_dividend_series_aligned(price_series, dividend_series)
+    multiplier = (1 + dividend_series.fillna(0) / price_series.ffill()).prod()
+    total_return = (price_series.iloc[-1] / price_series.iloc[0]) * multiplier - 1
+    return total_return
+
+
 def generate_returns_df(price_df: pd.DataFrame) -> pd.DataFrame:
     """Generate daily returns DataFrame from price DataFrame.
 

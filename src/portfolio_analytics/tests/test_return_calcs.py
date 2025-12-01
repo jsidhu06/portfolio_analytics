@@ -6,6 +6,7 @@ from portfolio_analytics.return_calcs import (
     assert_price_dividend_series_aligned,
     calculate_total_return_index_ts,
     calculate_daily_total_return_gross_dividends_ts,
+    calculate_total_return_over_period,
     generate_returns_df,
 )
 
@@ -124,6 +125,48 @@ class TestCalculateTotalReturnIndex:
             daily_return_result.iloc[1:].reset_index(drop=True),
             atol=1e-10,
             check_names=False,
+        )
+
+
+class TestCalculateTotalReturnOverPeriod:
+    def test_total_return_over_period_with_dividends(self):
+        date_range = pd.date_range("2025-01-01", "2025-01-10", freq="D")
+        price_series = pd.Series(
+            [100, 102, 101, 103, 104, 106, 105, 107, 108, 110], index=date_range
+        )
+        dividend_series = pd.Series([0, 1.0, 0, 0.5, 0, 1.0, 0, 0.5, 0, 1.0], index=date_range)
+
+        total_return = calculate_total_return_over_period(price_series, dividend_series)
+
+        # Manually calculate expected total return
+        expected_return = (110 / 100) * (1 + 1.0 / 102) * (1 + 0.5 / 103) * (1 + 1.0 / 106) * (
+            1 + 0.5 / 107
+        ) * (1 + 1.0 / 110) - 1
+
+        assert np.isclose(total_return, expected_return)
+
+    def test_total_return_equivalence(self):
+        date_range = pd.date_range("2025-01-01", "2025-01-10", freq="D")
+        price_series = pd.Series(
+            [100, 102, 101, 103, 104, 106, 105, 107, 108, 110], index=date_range
+        )
+        dividend_series = pd.Series([0, 1.0, 0, 0.5, 0, 1.0, 0, 0.5, 0, 1.0], index=date_range)
+
+        total_return = calculate_total_return_over_period(price_series, dividend_series)
+
+        # Calculate total return using pct change of total return index and geometric compounding
+        # of daily return methods. All 3 should yield the same result.
+        total_return_index = calculate_total_return_index_ts(price_series, dividend_series)
+        total_return_via_index = (total_return_index.iloc[-1] / total_return_index.iloc[0]) - 1
+
+        daily_total_return_ts = calculate_daily_total_return_gross_dividends_ts(
+            price_series, dividend_series
+        )
+
+        total_return_via_daily = (daily_total_return_ts + 1).prod() - 1
+
+        assert np.allclose(
+            np.stack([total_return, total_return_via_index, total_return_via_daily]), total_return
         )
 
 
