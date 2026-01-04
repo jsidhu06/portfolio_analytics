@@ -306,20 +306,20 @@ class ValuationMCSAmerican(OptionValuation):
         )
         time_list = self.underlying.time_grid[time_index_start : time_index_end + 1]
         discount_factors = self.discount_curve.get_discount_factors(time_list, dtobjects=True)
-        V = intrinsic_values[-1]
+        V = np.zeros_like(intrinsic_values)
+        V[-1] = intrinsic_values[-1]
         for t in range(len(time_list) - 2, 0, -1):
-            # derive relevant discount factor for given time interval
             df = discount_factors[t + 1, 1] / discount_factors[t, 1]
-            # regression step
-            coefficients = np.polyfit(instrument_values[t], V * df, deg)
-            # calculation of continuation values per path
-            C = np.polyval(coefficients, instrument_values[t])
-            # optimal decision step:
-            # if condition is satisfied (instrinsic value > regressed cont. value)
-            # then take intrinsic value; else take actual cont. value
-            V = np.where(intrinsic_values[t] > C, intrinsic_values[t], V * df)
+            itm = intrinsic_values[t] > 0
+            # itm = [True for _ in range(intrinsic_values.shape[1])]  # consider all paths
+            X = instrument_values[t][itm]
+            Y = df * V[t + 1][itm]
+            coefficients = np.polyfit(X, Y, deg=deg)
+            predicted_cv = np.zeros_like(instrument_values[t])
+            predicted_cv[itm] = np.polyval(coefficients, instrument_values[t][itm])
+            V[t] = np.where(intrinsic_values[t] > predicted_cv, intrinsic_values[t], df * V[t + 1])
         df = discount_factors[1, 1] / discount_factors[0, 1]
-        result = df * np.sum(V) / len(V)
+        result = df * np.mean(V[1])
         if full:
             return result, df * V
         return result
