@@ -1,6 +1,5 @@
 # pylint: disable=missing-docstring, invalid-name, too-many-arguments
 import numpy as np
-import pandas as pd
 
 SECONDS_IN_DAY = 86400.0
 
@@ -110,20 +109,14 @@ class ConstantShortRate:
             raise ValueError("Short rate negative.")
             # this is debatable given recent market realities
 
-    def _ensure_ascending(self, x):
-        if np.any(np.diff(x) < 0):
-            raise ValueError("date_list must be sorted ascending")
-
     def get_discount_factors(self, date_list, dtobjects=True):
         """Get discount factors for given date list."""
-        self._ensure_ascending(date_list)
-
         if dtobjects is True:
             dlist = get_year_deltas(date_list)
         else:
             dlist = np.array(date_list)
         dflist = np.exp(-self.short_rate * dlist)
-        return pd.DataFrame({"discount_factor": dflist}, index=date_list)
+        return np.array((date_list, dflist)).T
 
 
 class MarketEnvironment:
