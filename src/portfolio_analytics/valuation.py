@@ -14,14 +14,8 @@ class OptionValuation(ABC):
         object modeling the single risk factor
     mar_env: instance of market_environment
         market environment data for valuation
-    payoff_func: str
-        derivatives payoff in Python syntax
-        Example: 'np.maximum(maturity_value - 100, 0)'
-        where maturity_value is the NumPy vector with
-        respective values of the underlying
-        Example: 'np.maximum(instrument_values - 100, 0)'
-        where instrument_values is the NumPy matrix with
-        values of the underlying over the whole time/path grid
+    side: str
+        'call' or 'put' for the option type
 
     Methods
     =======
@@ -33,17 +27,20 @@ class OptionValuation(ABC):
         returns the Vega of the derivative
     """
 
-    def __init__(self, name, underlying, mar_env, payoff_func=""):
+    def __init__(self, name, underlying, mar_env, side: str):
+        if side not in ("call", "put"):
+            raise ValueError(f"side must be 'call' or 'put', received '{side}'")
         self.name = name
+        self.side = side
         self.pricing_date = mar_env.pricing_date
         self.strike = mar_env.constants.get("strike")  # strike is optional
         self.maturity = mar_env.get_constant("maturity")
         self.currency = mar_env.get_constant("currency")
+
         # simulation parameters and discount curve from simulation object
         self.frequency = underlying.frequency
         self.paths = underlying.paths
         self.discount_curve = underlying.discount_curve
-        self.payoff_func = payoff_func
         self.underlying = underlying
         # provide pricing_date and maturity to underlying
         self.underlying.special_dates.extend([self.pricing_date, self.maturity])
@@ -151,14 +148,6 @@ class ValuationMCSEuropean(OptionValuation):
         object modeling the single risk factor
     mar_env: instance of market_environment
         market environment data for valuation
-    payoff_func: str
-        derivatives payoff in Python syntax
-        Example: 'np.maximum(maturity_value - 100, 0)'
-        where maturity_value is the NumPy vector with
-        respective values of the underlying
-        Example: 'np.maximum(instrument_values - 100, 0)'
-        where instrument_values is the NumPy matrix with
-        values of the underlying over the whole time/path grid
 
     Methods
     =======
@@ -175,8 +164,6 @@ class ValuationMCSEuropean(OptionValuation):
         random_seed: int, optional
             random seed for path generation
         """
-        if not callable(self.payoff_func):
-            raise TypeError("payoff_func must be a callable accepting a context dict.")
 
         paths = self.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.underlying.time_grid
@@ -184,22 +171,11 @@ class ValuationMCSEuropean(OptionValuation):
         time_index_end = int(np.where(time_grid == self.maturity)[0][0])
         instrument_values = paths[time_index_start : time_index_end + 1]
         maturity_value = paths[time_index_end]
-        # summaries (compute once; payoff decides what it uses)
-        mean_value = np.mean(instrument_values, axis=0)
-        max_value = np.max(instrument_values, axis=0)
-        min_value = np.min(instrument_values, axis=0)
 
-        ctx = {
-            "instrument_values": instrument_values,
-            "maturity_value": maturity_value,
-            "mean_value": mean_value,
-            "max_value": max_value,
-            "min_value": min_value,
-            "strike": self.strike,
-            "initial_value": self.underlying.initial_value,
-        }
-
-        payoff = self.payoff_func(ctx)
+        if self.side == "call":
+            payoff = np.maximum(maturity_value - self.strike, 0)
+        else:
+            payoff = np.maximum(self.strike - maturity_value, 0)
 
         return instrument_values, payoff, time_index_start, time_index_end
 
@@ -229,7 +205,7 @@ class ValuationMCSEuropean(OptionValuation):
 
 
 class ValuationMCSAmerican(OptionValuation):
-    """Monte Carlo Simulation European option valuation class.
+    """Monte Carlo Simulation American option valuation class.
 
     Attributes
     ==========
@@ -239,16 +215,8 @@ class ValuationMCSAmerican(OptionValuation):
         object modeling the single risk factor
     mar_env: instance of market_environment
         market environment data for valuation
-    payoff_func: callable
-        derivatives payoff function accepting a context dict
-        the payoff function for a vanilla European option would be:
-        def payoff_func(ctx):
-            return np.maximum(ctx['maturity_value'] - ctx['strike'], 0)
-        the payoff function for a vanilla American option would be:
-        def payoff_func(ctx):
-            return np.maximum(ctx['instrument_values'] - ctx['strike'], 0)
-        where instrument_values is the NumPy matrix with
-        values of the underlying over the whole time/path grid
+    side: str
+        'call' or 'put' for the option type
 
     Methods
     =======
@@ -265,26 +233,16 @@ class ValuationMCSAmerican(OptionValuation):
         random_seed: int, optional
             random seed for path generation
         """
-        if not callable(self.payoff_func):
-            raise TypeError("payoff_func must be a callable accepting a context dict.")
-
         paths = self.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.underlying.time_grid
         time_index_start = int(np.where(time_grid == self.pricing_date)[0][0])
         time_index_end = int(np.where(time_grid == self.maturity)[0][0])
         instrument_values = paths[time_index_start : time_index_end + 1]
-        maturity_value = paths[time_index_end]
 
-        ctx = {
-            "instrument_values": instrument_values,
-            "maturity_value": maturity_value,
-            "time_index_start": time_index_start,
-            "time_index_end": time_index_end,
-            "strike": self.strike,
-            "initial_value": self.underlying.initial_value,
-        }
-
-        payoff = self.payoff_func(ctx)
+        if self.side == "call":
+            payoff = np.maximum(instrument_values - self.strike, 0)
+        else:
+            payoff = np.maximum(self.strike - instrument_values, 0)
 
         return instrument_values, payoff, time_index_start, time_index_end
 
@@ -314,12 +272,15 @@ class ValuationMCSAmerican(OptionValuation):
             # itm = [True for _ in range(intrinsic_values.shape[1])]  # consider all paths
             X = instrument_values[t][itm]
             Y = df * V[t + 1][itm]
-            coefficients = np.polyfit(X, Y, deg=deg)
+            if len(X) > 0:
+                coefficients = np.polyfit(X, Y, deg=deg)
+            else:
+                coefficients = np.zeros(deg + 1)
             predicted_cv = np.zeros_like(instrument_values[t])
             predicted_cv[itm] = np.polyval(coefficients, instrument_values[t][itm])
             V[t] = np.where(intrinsic_values[t] > predicted_cv, intrinsic_values[t], df * V[t + 1])
         df = discount_factors[1, 1] / discount_factors[0, 1]
         result = df * np.mean(V[1])
         if full:
-            return result, df * V
+            return result, df * np.mean(V[1])
         return result
