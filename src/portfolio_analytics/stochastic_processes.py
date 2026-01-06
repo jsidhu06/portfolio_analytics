@@ -1,6 +1,5 @@
 "Path simulation classes for various stochastic processes"
 
-from typing import Optional, Union
 from abc import ABC, abstractmethod
 import datetime as dt
 import numpy as np
@@ -80,7 +79,7 @@ class PathSimulation(ABC):
         self.time_grid = np.array(time_grid)
 
     def get_instrument_values(
-        self, random_seed: Optional[int] = None, day_count_convention: float = 365.0
+        self, random_seed: int | None = None, day_count_convention: float = 365.0
     ) -> np.ndarray:
         """Get instrument values matrix; generate paths if not yet available.
 
@@ -106,7 +105,7 @@ class PathSimulation(ABC):
 
     @abstractmethod
     def generate_paths(
-        self, random_seed: Optional[int] = None, day_count_convention: float = 365.0
+        self, random_seed: int | None = None, day_count_convention: float = 365.0
     ) -> None:
         """Generate paths for the stochastic process.
 
@@ -151,9 +150,9 @@ class GeometricBrownianMotion(PathSimulation):
 
     def update(
         self,
-        initial_value: Optional[float] = None,
-        volatility: Optional[float] = None,
-        final_date: Optional[dt.datetime] = None,
+        initial_value: float | None = None,
+        volatility: float | None = None,
+        final_date: dt.datetime | None = None,
     ) -> None:
         """Update parameters of the GBM model."""
         if initial_value is not None:
@@ -167,7 +166,7 @@ class GeometricBrownianMotion(PathSimulation):
         self.instrument_values = None
 
     def generate_paths(
-        self, random_seed: Optional[int] = None, day_count_convention: Union[int, float] = 365
+        self, random_seed: int | None = None, day_count_convention: int | float = 365
     ) -> None:
         """Generate geometric Brownian motion paths.
 
@@ -274,7 +273,7 @@ class SquareRootDiffusion(PathSimulation):
         self.instrument_values = None
 
     def generate_paths(
-        self, random_seed: Optional[int] = None, day_count_convention: Union[int, float] = 365
+        self, random_seed: int | None = None, day_count_convention: int | float = 365
     ) -> None:
         """Generate Cox-Ingersoll-Ross (square-root diffusion) paths.
 
@@ -372,7 +371,7 @@ class JumpDiffusion(PathSimulation):
         self.instrument_values = None
 
     def generate_paths(
-        self, random_seed: Optional[int] = None, day_count_convention: Union[int, float] = 365
+        self, random_seed: int | None = None, day_count_convention: int | float = 365
     ) -> None:
         """Generate Merton jump diffusion paths.
 

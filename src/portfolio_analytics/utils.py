@@ -1,7 +1,7 @@
 """Helper functions and classes for derivatives valuation."""
 
 import numpy as np
-from typing import List, Tuple, Union
+from typing import List
 
 SECONDS_IN_DAY = 86400
 
@@ -66,10 +66,10 @@ def get_year_deltas(date_list: List, day_count_convention: float = 365.0) -> np.
 
 
 def sn_random_numbers(
-    shape: Tuple[int, int, int],
+    shape: tuple[int, int, int],
     antithetic: bool = True,
     moment_matching: bool = True,
-    random_seed: Union[int, None] = None,
+    random_seed: int | None = None,
 ) -> np.ndarray:
     """Return array of standard normally distributed pseudo-random numbers.
 

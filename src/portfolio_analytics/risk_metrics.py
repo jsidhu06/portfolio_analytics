@@ -1,4 +1,3 @@
-from typing import Union
 import numpy as np
 import pandas as pd
 
@@ -154,7 +153,7 @@ def calculate_portfolio_vol(returns_series: pd.Series, frequency="daily") -> flo
 
 def calculate_sharpe_ratio(
     returns_series: pd.Series,
-    risk_free_rate: Union[int, float] = 0,
+    risk_free_rate: int | float = 0,
     returns_frequency: str = "daily",
 ) -> float:
     """Calculate the Sharpe ratio of a returns series.
@@ -163,7 +162,7 @@ def calculate_sharpe_ratio(
 
     Args:
         returns_series (pd.Series): Series of returns.
-        risk_free_rate (Union[int, float]): Risk-free rate. Defaults to 0.
+        risk_free_rate (int | float): Risk-free rate. Defaults to 0.
         returns_frequency (str): Frequency of returns. Must be one of 'daily', 'weekly',
                                'monthly', 'quarterly', or 'yearly'. Defaults to 'daily'.
 

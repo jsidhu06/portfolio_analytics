@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional, Union
 import datetime as dt
 import numpy as np
 from .stochastic_processes import PathSimulation
@@ -52,10 +51,10 @@ class OptionValuation(ABC):
 
     def update(
         self,
-        initial_value: Optional[float] = None,
-        volatility: Optional[float] = None,
-        strike: Optional[float] = None,
-        maturity: Optional[dt.datetime] = None,
+        initial_value: float | None = None,
+        volatility: float | None = None,
+        strike: float | None = None,
+        maturity: dt.datetime | None = None,
     ) -> None:
         """Update selected valuation parameters if not None.
 
@@ -92,7 +91,7 @@ class OptionValuation(ABC):
                 self.underlying.instrument_values = None
 
     @abstractmethod
-    def generate_payoff(self, random_seed: Optional[int] = None) -> Tuple:
+    def generate_payoff(self, random_seed: int | None = None) -> tuple:
         """Generate payoff at maturity for the derivative.
 
         This abstract method must be implemented by subclasses to define
@@ -118,8 +117,8 @@ class OptionValuation(ABC):
 
     @abstractmethod
     def present_value(
-        self, random_seed: Optional[int] = None, full: bool = False
-    ) -> Union[float, Tuple[float, np.ndarray]]:
+        self, random_seed: int | None = None, full: bool = False
+    ) -> float | tuple[float, np.ndarray]:
         """Calculate present value of the derivative.
 
         This abstract method must be implemented by subclasses to define
@@ -147,7 +146,7 @@ class OptionValuation(ABC):
         """
         raise NotImplementedError("Method present_value() not implemented")
 
-    def delta(self, epsilon: Optional[float] = None, random_seed: Optional[int] = None):
+    def delta(self, epsilon: float | None = None, random_seed: int | None = None):
         "Calculate option delta using central difference approximation"
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
@@ -173,7 +172,7 @@ class OptionValuation(ABC):
             return 1.0
         return delta
 
-    def vega(self, epsilon: float = 0.01, random_seed: Optional[int] = None):
+    def vega(self, epsilon: float = 0.01, random_seed: int | None = None):
         "Calculate option vega using central difference approximation"
         epsilon = max(epsilon, self.underlying.volatility / 50.0)
         # central-difference approximation
@@ -215,7 +214,7 @@ class ValuationMCSEuropean(OptionValuation):
         returns the present value of the derivative
     """
 
-    def generate_payoff(self, random_seed: Optional[int] = None) -> None:
+    def generate_payoff(self, random_seed: int | None = None) -> None:
         """
         Parameters
         ==========
@@ -238,8 +237,8 @@ class ValuationMCSEuropean(OptionValuation):
         return instrument_values, payoff, time_index_start, time_index_end
 
     def present_value(
-        self, random_seed: Optional[int] = None, full: bool = False
-    ) -> Tuple[float, np.ndarray] | float:
+        self, random_seed: int | None = None, full: bool = False
+    ) -> tuple[float, np.ndarray] | float:
         """
         Parameters
         ==========
@@ -283,7 +282,7 @@ class ValuationMCSAmerican(OptionValuation):
         returns the present value of the derivative
     """
 
-    def generate_payoff(self, random_seed: Optional[int] = None) -> Tuple:
+    def generate_payoff(self, random_seed: int | None = None) -> tuple:
         """
         Parameters
         ==========
@@ -305,10 +304,10 @@ class ValuationMCSAmerican(OptionValuation):
 
     def present_value(
         self,
-        random_seed: Optional[int] = None,
+        random_seed: int | None = None,
         full: bool = False,
         deg: int = 2,
-    ) -> Tuple[float, np.ndarray] | float:
+    ) -> tuple[float, np.ndarray] | float:
         """
         Parameters
         ==========

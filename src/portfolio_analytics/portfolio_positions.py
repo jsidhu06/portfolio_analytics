@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, Tuple, Type, Union
+from typing import Sequence, Type
 import numpy as np
 import pandas as pd
 from .stochastic_processes import (
@@ -51,7 +51,7 @@ class DerivativesPosition:
         self,
         name: str,
         quantity: int,
-        contract_size: Union[int, float],
+        contract_size: int | float,
         underlying: PathSimulation,
         mar_env: MarketEnvironment,
         otype: str,
@@ -121,7 +121,7 @@ class DerivativesPortfolio:
         market environment for the valuation
     assets: dict[str,MarketEnvironment]
         dictionary of market environments for the assets
-    correlations: Sequence[Tuple[str, str, float]], optional
+    correlations: Sequence[tuple[str, str, float]], optional
         list of tuples with pairwise correlations between assets
     random_seed: int, optional
         random number generator seed
@@ -140,8 +140,8 @@ class DerivativesPortfolio:
         positions: dict[str, DerivativesPosition],
         val_env: MarketEnvironment,
         assets: dict[str, MarketEnvironment],
-        correlations: Optional[Sequence[Tuple[str, str, float]]] = None,
-        random_seed: Optional[int] = None,
+        correlations: Sequence[tuple[str, str, float]] | None = None,
+        random_seed: int | None = None,
     ):
         self.name = name
         self.positions = positions
@@ -261,7 +261,7 @@ class DerivativesPortfolio:
             print(self.positions[pos])
             print(bar)
 
-    def get_statistics(self, random_seed: Optional[int] = None):
+    def get_statistics(self, random_seed: int | None = None):
         """Provides portfolio statistics."""
         res_list = []
         # iterate over all positions in portfolio
