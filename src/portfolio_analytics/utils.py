@@ -1,10 +1,10 @@
-# pylint: disable=missing-docstring, invalid-name, too-many-arguments
+"Helper functions and classes for deriatives valuation" ""
 import numpy as np
 
-SECONDS_IN_DAY = 86400.0
+SECONDS_IN_DAY = 86400
 
 
-def calculate_year_fraction(start_date, end_date, day_count=365.0):
+def calculate_year_fraction(start_date, end_date, day_count=365):
     """Calculate year fraction between two dates.
 
     Parameters
@@ -27,7 +27,7 @@ def calculate_year_fraction(start_date, end_date, day_count=365.0):
     return year_fraction
 
 
-def get_year_deltas(date_list, day_count=365.0):
+def get_year_deltas(date_list, day_count=365):
     """Return vector of floats with day deltas in year fractions.
     Initial value normalized to zero.
 
@@ -63,13 +63,12 @@ def sn_random_numbers(shape, antithetic=True, moment_matching=True, random_seed=
         generation of antithetic variates
     moment_matching: Boolean
         matching of first and second moments
-    random_seed: Boolean
-        flag to fix the seed
+    random_seed: int, optional
+        random number generator seed
 
     Results
     =======
-    ran: (o, n, m) array of (pseudo)random numbers if o>1,
-    else (n, m) array
+    ran: (o, n, m) array of (pseudo)random numbers if o>1, else (n, m) array
     """
     if random_seed is not None:
         np.random.seed(random_seed)
@@ -79,102 +78,7 @@ def sn_random_numbers(shape, antithetic=True, moment_matching=True, random_seed=
     else:
         ran = np.random.standard_normal(shape)
     if moment_matching:
-        ran = (ran - np.mean(ran)) / np.std(ran)
+        ran = (ran - np.mean(ran)) / np.std(ran)  # note this is population std dev
     if shape[0] == 1:
         return ran[0]
     return ran
-
-
-class ConstantShortRate:
-    """Class for constant short rate discounting.
-
-    Attributes
-    ==========
-    name: string
-        name of the object
-    short_rate: float (positive)
-        constant rate for discounting
-
-    Methods
-    =======
-    get_discount_factors:
-        get discount factors given a list/array of datetime objects
-        or year fractions
-    """
-
-    def __init__(self, name, short_rate):
-        self.name = name
-        self.short_rate = short_rate
-        if short_rate < 0:
-            raise ValueError("Short rate negative.")
-            # this is debatable given recent market realities
-
-    def get_discount_factors(self, date_list, dtobjects=True):
-        """Get discount factors for given date list."""
-        if dtobjects is True:
-            dlist = get_year_deltas(date_list)
-        else:
-            dlist = np.array(date_list)
-        dflist = np.exp(-self.short_rate * dlist)
-        return np.array((date_list, dflist)).T
-
-
-class MarketEnvironment:
-    """Class to model a market environment relevant for valuation.
-
-    Attributes
-    ==========
-    name: string
-        name of the market environment
-    pricing_date: datetime object
-        date of the market environment
-
-    Methods
-    =======
-    add_constant:
-        adds a constant (e.g. model parameter)
-    get_constant:
-        gets a constant
-    add_list:
-        adds a list (e.g. underlyings)
-    get_list:
-        gets a list
-    add_curve:
-        adds a market curve (e.g. yield curve)
-    get_curve:
-        gets a market curve
-    add_environment:
-        adds and overwrites whole market environments
-        with constants, lists, and curves
-    """
-
-    def __init__(self, name, pricing_date):
-        self.name = name
-        self.pricing_date = pricing_date
-        self.constants = {}
-        self.lists = {}
-        self.curves = {}
-
-    def add_constant(self, key, constant):
-        self.constants[key] = constant
-
-    def get_constant(self, key):
-        return self.constants[key]
-
-    def add_list(self, key, list_object):
-        self.lists[key] = list_object
-
-    def get_list(self, key):
-        return self.lists[key]
-
-    def add_curve(self, key, curve):
-        self.curves[key] = curve
-
-    def get_curve(self, key):
-        return self.curves[key]
-
-    def add_environment(self, env):
-        # overwrites existing values, if they exist
-        self.constants.update(env.constants)
-        self.lists.update(env.lists)
-        self.curves.update(env.curves)

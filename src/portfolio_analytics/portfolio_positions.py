@@ -1,15 +1,27 @@
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple, Type, Union
 import numpy as np
 import pandas as pd
-from .stochastic_processes import GeometricBrownianMotion, SquareRootDiffusion, JumpDiffusion
-from .valuation import ValuationMCSEuropean, ValuationMCSAmerican
+from .stochastic_processes import (
+    PathSimulation,
+    GeometricBrownianMotion,
+    SquareRootDiffusion,
+    JumpDiffusion,
+)
+from .valuation import OptionValuation, ValuationMCSEuropean, ValuationMCSAmerican
 from .utils import MarketEnvironment, sn_random_numbers
 
 # models available for risk factor modeling
-MODELS = {"gbm": GeometricBrownianMotion, "jd": JumpDiffusion, "srd": SquareRootDiffusion}
+MODELS: dict[str, Type[PathSimulation]] = {
+    "gbm": GeometricBrownianMotion,
+    "jd": JumpDiffusion,
+    "srd": SquareRootDiffusion,
+}
 
 # allowed exercise types
-OTYPES = {"European": ValuationMCSEuropean, "American": ValuationMCSAmerican}
+OTYPES: dict[str, Type[OptionValuation]] = {
+    "European": ValuationMCSEuropean,
+    "American": ValuationMCSAmerican,
+}
 
 
 class DerivativesPosition:
@@ -32,14 +44,23 @@ class DerivativesPosition:
         valuation class to use
     side: str
         'call' or 'put' for options
-
-    Methods
-    =======
-    get_info:
-        prints information about the derivative position
     """
 
-    def __init__(self, name, quantity, contract_size, underlying, mar_env, otype, side):
+    def __init__(
+        self,
+        name: str,
+        quantity: int,
+        contract_size: Union[int, float],
+        underlying: PathSimulation,
+        mar_env: MarketEnvironment,
+        otype: str,
+        side: str,
+    ):
+        if side not in ("call", "put"):
+            raise ValueError(f"side must be 'call' or 'put', received '{side}'")
+        if otype not in OTYPES.keys():
+            raise ValueError(f"otype must be one of {list(OTYPES.keys())}, received '{otype}'")
+
         self.name = name
         self.quantity = quantity
         self.contract_size = contract_size
@@ -95,12 +116,12 @@ class DerivativesPortfolio:
         name of the object
     positions: dict[str,DerivativesPosition]
         dictionary of positions (instances of DerivativesPosition class)
-    val_env: market_environment
+    val_env: MarketEnvironment
         market environment for the valuation
-    assets: dict
+    assets: dict[str,MarketEnvironment]
         dictionary of market environments for the assets
-    correlations: list
-        correlations between assets
+    correlations: Sequence[Tuple[str, str, float]], optional
+        list of tuples with pairwise correlations between assets
     random_seed: int, optional
         random number generator seed
 
@@ -115,9 +136,9 @@ class DerivativesPortfolio:
     def __init__(
         self,
         name: str,
-        positions: Dict[str, DerivativesPosition],
+        positions: dict[str, DerivativesPosition],
         val_env: MarketEnvironment,
-        assets: Dict[str, MarketEnvironment],
+        assets: dict[str, MarketEnvironment],
         correlations: Optional[Sequence[Tuple[str, str, float]]] = None,
         random_seed: Optional[int] = None,
     ):
@@ -125,11 +146,11 @@ class DerivativesPortfolio:
         self.positions = positions
         self.val_env = val_env
         self.assets = assets
-        self.underlyings = set()
+        self.underlyings = set()  # Set[str]
         self.correlations = correlations
         self.time_grid = None
-        self.underlying_objects = {}  # Dict[str, PathSimulation]
-        self.valuation_objects = {}  # Dict[str,OptionValuation]
+        self.underlying_objects: dict[str, PathSimulation] = {}
+        self.valuation_objects: dict[str, OptionValuation] = {}
         self.random_seed = random_seed
         self.special_dates = []
         for pos in self.positions:
@@ -243,7 +264,7 @@ class DerivativesPortfolio:
         """Provides portfolio statistics."""
         res_list = []
         # iterate over all positions in portfolio
-        for pos, value in self.valuation_objects.items():  # Dict[str,OptionValuation]
+        for pos, value in self.valuation_objects.items():
             p: DerivativesPosition = self.positions[pos]
             pv = value.present_value(random_seed=random_seed)
             res_list.append(

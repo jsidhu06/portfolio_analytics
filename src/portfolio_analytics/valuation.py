@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Optional
 import numpy as np
+from .stochastic_processes import PathSimulation
+from .market_environment import MarketEnvironment
 
 
 class OptionValuation(ABC):
@@ -10,9 +12,9 @@ class OptionValuation(ABC):
     ==========
     name: str
         name of the object
-    underlying: instance of simulation class
+    underlying: PathSimulation
         object modeling the single risk factor
-    mar_env: instance of market_environment
+    mar_env: MarketEnvironment
         market environment data for valuation
     side: str
         'call' or 'put' for the option type
@@ -27,7 +29,9 @@ class OptionValuation(ABC):
         returns the Vega of the derivative
     """
 
-    def __init__(self, name, underlying, mar_env, side: str):
+    def __init__(
+        self, name: str, underlying: PathSimulation, mar_env: MarketEnvironment, side: str
+    ):
         if side not in ("call", "put"):
             raise ValueError(f"side must be 'call' or 'put', received '{side}'")
         self.name = name
@@ -130,11 +134,9 @@ class OptionValuation(ABC):
         finally:
             # reset volatility value of simulation object
             self.underlying.volatility = initial_vol
+
         vega = (value_right - value_left) / (2 * epsilon)
         return vega
-
-
-# PayoffFunc = Callable[[Dict[str, np.ndarray | float | int]], np.ndarray]
 
 
 class ValuationMCSEuropean(OptionValuation):
@@ -197,7 +199,7 @@ class ValuationMCSEuropean(OptionValuation):
         discount_factor = self.discount_curve.get_discount_factors(
             (self.pricing_date, self.maturity)
         )[-1, 1]
-        result = discount_factor * np.sum(cash_flow) / len(cash_flow)
+        result = discount_factor * np.mean(cash_flow)
         if full:
             return result, discount_factor * cash_flow
         else:
@@ -211,9 +213,9 @@ class ValuationMCSAmerican(OptionValuation):
     ==========
     name: str
         name of the object
-    underlying: instance of simulation class
+    underlying: PathSimulation
         object modeling the single risk factor
-    mar_env: instance of market_environment
+    mar_env: MarketEnvironment
         market environment data for valuation
     side: str
         'call' or 'put' for the option type
@@ -279,8 +281,9 @@ class ValuationMCSAmerican(OptionValuation):
             predicted_cv = np.zeros_like(instrument_values[t])
             predicted_cv[itm] = np.polyval(coefficients, instrument_values[t][itm])
             V[t] = np.where(intrinsic_values[t] > predicted_cv, intrinsic_values[t], df * V[t + 1])
-        df = discount_factors[1, 1] / discount_factors[0, 1]
-        result = df * np.mean(V[1])
+
+        discount_factor = discount_factors[1, 1] / discount_factors[0, 1]
+        result = discount_factor * np.mean(V[1])
         if full:
-            return result, df * np.mean(V[1])
+            return result, discount_factor * np.mean(V[1])
         return result

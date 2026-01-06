@@ -1,8 +1,11 @@
-from typing import Optional
+"Path simulation classes for various stochastic processes"
+
+from typing import Optional, Union
 from abc import ABC, abstractmethod
 import datetime as dt
 import numpy as np
 import pandas as pd
+from .market_environment import MarketEnvironment
 from .utils import calculate_year_fraction, sn_random_numbers
 
 
@@ -13,7 +16,7 @@ class PathSimulation(ABC):
     ==========
     name: str
         name of the object
-    mar_env: instance of market_environment
+    mar_env: MarketEnvironment
         market environment data for simulation
     corr: bool
         True if correlated with other model object
@@ -26,7 +29,7 @@ class PathSimulation(ABC):
         returns the current instrument values (array)
     """
 
-    def __init__(self, name: str, mar_env, corr: bool):
+    def __init__(self, name: str, mar_env: MarketEnvironment, corr: bool = False):
         self.name = name
         self.pricing_date = mar_env.pricing_date
         self.initial_value = mar_env.get_constant("initial_value")
@@ -52,12 +55,13 @@ class PathSimulation(ABC):
             self.rn_set = mar_env.get_list("rn_set")[self.name]
             self.random_numbers = mar_env.get_list("random_numbers")
 
-    def generate_time_grid(self):
+    def generate_time_grid(self) -> None:
+        "Generate time grid for simulation of stochastic process"
         start = self.pricing_date
         end = self.final_date
-        # pandas date_range function
-        # freq = e.g. 'B' for Business Day,
-        # 'W' for Weekly, 'M' for Monthly
+        # pandas date_range function; see
+        # https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases
+        # for frequencies
         time_grid = list(pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime())
         # enhance time_grid by start, end, and special_dates
         if start not in time_grid:
@@ -75,7 +79,8 @@ class PathSimulation(ABC):
             time_grid.sort()
         self.time_grid = np.array(time_grid)
 
-    def get_instrument_values(self, random_seed: Optional[int] = None, day_count=365.0):
+    def get_instrument_values(self, random_seed: Optional[int] = None, day_count=365) -> None:
+        "Get instrument values matrix; generate paths if not yet available"
         if self.instrument_values is None:
             # only initiate simulation if there are no instrument values
             self.generate_paths(random_seed=random_seed, day_count=day_count)
@@ -85,7 +90,8 @@ class PathSimulation(ABC):
         return self.instrument_values
 
     @abstractmethod
-    def generate_paths(self, random_seed: Optional[int] = None, day_count: float = 365.0) -> None:
+    def generate_paths(self, random_seed: Optional[int] = None, day_count: float = 365) -> None:
+        "Generate paths for the stochastic process"
         raise NotImplementedError("Subclasses must implement generate_paths method")
 
 
@@ -97,7 +103,7 @@ class GeometricBrownianMotion(PathSimulation):
     ==========
     name: string
         name of the object
-    mar_env: instance of market_environment
+    mar_env: MarketEnvironment
         market environment data for simulation
     corr: Boolean
         True if correlated with other model simulation object
@@ -109,9 +115,6 @@ class GeometricBrownianMotion(PathSimulation):
     generate_paths:
         returns Monte Carlo paths given the market environment
     """
-
-    def __init__(self, name: str, mar_env, corr: bool = False):
-        super().__init__(name, mar_env, corr)
 
     def update(
         self,
@@ -130,7 +133,9 @@ class GeometricBrownianMotion(PathSimulation):
         # reset instrument values to None
         self.instrument_values = None
 
-    def generate_paths(self, random_seed: Optional[int] = None, day_count=365.0) -> None:
+    def generate_paths(
+        self, random_seed: Optional[int] = None, day_count: Union[int, float] = 365
+    ) -> None:
         "Generate geometric Brownian motion paths"
         if self.time_grid is None:
             # method from generic simulation class
@@ -138,12 +143,12 @@ class GeometricBrownianMotion(PathSimulation):
         # number of dates (timesteps) for time grid
         M = len(self.time_grid)
         # number of paths
-        num_paths = self.paths  # noqa:E741
+        num_paths = self.paths
         # ndarray initialization for path simulation
         paths = np.zeros((M, num_paths))
         # initialize first date with initial_value
         paths[0] = self.initial_value
-        if not self.correlated:
+        if self.correlated is False:
             # if not correlated, generate random numbers
             rand = sn_random_numbers(
                 (1, M, num_paths), random_seed=random_seed
@@ -163,10 +168,11 @@ class GeometricBrownianMotion(PathSimulation):
                 ran = np.dot(self.cholesky_matrix, rand[:, t, :])
                 ran = ran[self.rn_set]
 
+            # difference between two dates as year fraction
             delta_t = calculate_year_fraction(
                 self.time_grid[t - 1], self.time_grid[t], day_count=day_count
             )
-            # difference between two dates as year fraction
+
             paths[t] = paths[t - 1] * np.exp(
                 (short_rate - 0.5 * self.volatility**2) * delta_t
                 + self.volatility * np.sqrt(delta_t) * ran
@@ -183,7 +189,7 @@ class SquareRootDiffusion(PathSimulation):
     ==========
     name : string
         name of the object
-    mar_env : instance of market_environment
+    mar_env : MarketEnvironment
         market environment data for simulation
     corr : Boolean
         True if correlated with other model object
@@ -217,7 +223,7 @@ class SquareRootDiffusion(PathSimulation):
             self.final_date = final_date
         self.instrument_values = None
 
-    def generate_paths(self, random_seed: Optional[int] = None, day_count=365.0):
+    def generate_paths(self, random_seed: Optional[int] = None, day_count: Union[int, float] = 365):
         if self.time_grid is None:
             self.generate_time_grid()
         M = len(self.time_grid)
@@ -259,7 +265,7 @@ class JumpDiffusion(PathSimulation):
     ==========
     name: str
         name of the object
-    mar_env: instance of market_environment
+    mar_env: MarketEnvironment
         market environment data for simulation
     corr: bool
         True if correlated with other model object
@@ -296,7 +302,7 @@ class JumpDiffusion(PathSimulation):
             self.final_date = final_date
         self.instrument_values = None
 
-    def generate_paths(self, random_seed: Optional[int] = None, day_count=365.0):
+    def generate_paths(self, random_seed: Optional[int] = None, day_count: Union[int, float] = 365):
         if self.time_grid is None:
             # method from generic simulation class
             self.generate_time_grid()
@@ -316,7 +322,7 @@ class JumpDiffusion(PathSimulation):
             # in market environment
             sn1 = self.random_numbers
 
-        # standard normally distributed pseudorandom numbers
+        # standard normally distributed pseudo-random numbers
         # for the jump component
         sn2 = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
 
@@ -333,12 +339,13 @@ class JumpDiffusion(PathSimulation):
                 # only with correlation in portfolio context
                 ran = np.dot(self.cholesky_matrix, sn1[:, t, :])
                 ran = ran[self.rn_set]
+
+            # difference between two dates as year fraction
             delta_t = calculate_year_fraction(
                 self.time_grid[t - 1], self.time_grid[t], day_count=day_count
             )
-            # difference between two dates as year fraction
-            poi = np.random.poisson(self.lamb * delta_t, num_paths)
             # Poisson-distributed pseudorandom numbers for jump component
+            poi = np.random.poisson(self.lamb * delta_t, num_paths)
             drift = (short_rate - rj - 0.5 * self.volatility**2) * delta_t
             diffusion = self.volatility * np.sqrt(delta_t) * ran
             diffusion_factor = np.exp(drift + diffusion)
