@@ -50,6 +50,7 @@ class OptionValuation(ABC):
         self.underlying.special_dates.extend([self.pricing_date, self.maturity])
 
     def update(self, initial_value=None, volatility=None, strike=None, maturity=None):
+        "Update selected valuation parameters if not None and reset instrument values to None"
         if initial_value is not None:
             self.underlying.update(initial_value=initial_value)
         if volatility is not None:
@@ -93,6 +94,7 @@ class OptionValuation(ABC):
         raise NotImplementedError("Method present_value() not implemented")
 
     def delta(self, epsilon: Optional[float] = None, random_seed: Optional[int] = None):
+        "Calculate option delta using central difference approximation"
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
         # central difference approximation
@@ -118,8 +120,8 @@ class OptionValuation(ABC):
         return delta
 
     def vega(self, epsilon: float = 0.01, random_seed: Optional[int] = None):
-        if epsilon < self.underlying.volatility / 50.0:
-            epsilon = self.underlying.volatility / 50.0
+        "Calculate option vega using central difference approximation"
+        epsilon = max(epsilon, self.underlying.volatility / 50.0)
         # central-difference approximation
         initial_vol = self.underlying.volatility
         try:
@@ -202,8 +204,7 @@ class ValuationMCSEuropean(OptionValuation):
         result = discount_factor * np.mean(cash_flow)
         if full:
             return result, discount_factor * cash_flow
-        else:
-            return result
+        return result
 
 
 class ValuationMCSAmerican(OptionValuation):
@@ -249,7 +250,10 @@ class ValuationMCSAmerican(OptionValuation):
         return instrument_values, payoff, time_index_start, time_index_end
 
     def present_value(
-        self, random_seed: Optional[int] = None, deg: int = 2, full: bool = False
+        self,
+        random_seed: Optional[int] = None,
+        full: bool = False,
+        deg: int = 2,
     ) -> Tuple[float, np.ndarray] | float:
         """
         Parameters

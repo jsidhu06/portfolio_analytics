@@ -211,6 +211,7 @@ class SquareRootDiffusion(PathSimulation):
     def update(
         self, initial_value=None, volatility=None, kappa=None, theta=None, final_date=None
     ) -> None:
+        "Update parameters"
         if initial_value is not None:
             self.initial_value = initial_value
         if volatility is not None:

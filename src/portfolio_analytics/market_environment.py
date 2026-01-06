@@ -1,3 +1,4 @@
+# pylint: disable=too-few-public-methods, missing-function-docstring
 """Model market environments for valuation."""
 
 

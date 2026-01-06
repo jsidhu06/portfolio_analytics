@@ -8,7 +8,8 @@ from .stochastic_processes import (
     JumpDiffusion,
 )
 from .valuation import OptionValuation, ValuationMCSEuropean, ValuationMCSAmerican
-from .utils import MarketEnvironment, sn_random_numbers
+from .market_environment import MarketEnvironment
+from .utils import sn_random_numbers
 
 # models available for risk factor modeling
 MODELS: dict[str, Type[PathSimulation]] = {
@@ -58,7 +59,7 @@ class DerivativesPosition:
     ):
         if side not in ("call", "put"):
             raise ValueError(f"side must be 'call' or 'put', received '{side}'")
-        if otype not in OTYPES.keys():
+        if otype not in OTYPES:
             raise ValueError(f"otype must be one of {list(OTYPES.keys())}, received '{otype}'")
 
         self.name = name
