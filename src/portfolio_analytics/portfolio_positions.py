@@ -1,9 +1,9 @@
-from typing import Optional
+from typing import Dict, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 from .stochastic_processes import GeometricBrownianMotion, SquareRootDiffusion, JumpDiffusion
 from .valuation import ValuationMCSEuropean, ValuationMCSAmerican
-from .utils import sn_random_numbers
+from .utils import MarketEnvironment, sn_random_numbers
 
 # models available for risk factor modeling
 MODELS = {"gbm": GeometricBrownianMotion, "jd": JumpDiffusion, "srd": SquareRootDiffusion}
@@ -113,7 +113,13 @@ class DerivativesPortfolio:
     """
 
     def __init__(
-        self, name, positions, val_env, assets, correlations=None, random_seed: Optional[int] = None
+        self,
+        name: str,
+        positions: Dict[str, DerivativesPosition],
+        val_env: MarketEnvironment,
+        assets: Dict[str, MarketEnvironment],
+        correlations: Optional[Sequence[Tuple[str, str, float]]] = None,
+        random_seed: Optional[int] = None,
     ):
         self.name = name
         self.positions = positions
