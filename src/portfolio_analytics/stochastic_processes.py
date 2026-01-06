@@ -79,19 +79,52 @@ class PathSimulation(ABC):
             time_grid.sort()
         self.time_grid = np.array(time_grid)
 
-    def get_instrument_values(self, random_seed: Optional[int] = None, day_count=365) -> None:
-        "Get instrument values matrix; generate paths if not yet available"
+    def get_instrument_values(
+        self, random_seed: Optional[int] = None, day_count_convention: float = 365.0
+    ) -> np.ndarray:
+        """Get instrument values matrix; generate paths if not yet available.
+
+        Parameters
+        ==========
+        random_seed: int, optional
+            random seed for path generation
+        day_count_convention: float, default 365.0
+            day count convention (365, 360, etc.)
+
+        Returns
+        =======
+        instrument_values: np.ndarray
+            simulated instrument value paths
+        """
         if self.instrument_values is None:
             # only initiate simulation if there are no instrument values
-            self.generate_paths(random_seed=random_seed, day_count=day_count)
+            self.generate_paths(random_seed=random_seed, day_count_convention=day_count_convention)
         elif random_seed is not None:
             # also initiate resimulation when random_seed is not None
-            self.generate_paths(random_seed=random_seed, day_count=day_count)
+            self.generate_paths(random_seed=random_seed, day_count_convention=day_count_convention)
         return self.instrument_values
 
     @abstractmethod
-    def generate_paths(self, random_seed: Optional[int] = None, day_count: float = 365) -> None:
-        "Generate paths for the stochastic process"
+    def generate_paths(
+        self, random_seed: Optional[int] = None, day_count_convention: float = 365.0
+    ) -> None:
+        """Generate paths for the stochastic process.
+
+        Subclasses must implement this method to define their specific
+        path generation logic.
+
+        Parameters
+        ==========
+        random_seed: int, optional
+            random seed for reproducibility
+        day_count_convention: float, default 365.0
+            day count convention for time calculations
+
+        Raises
+        ======
+        NotImplementedError
+            if subclass does not implement this method
+        """
         raise NotImplementedError("Subclasses must implement generate_paths method")
 
 
@@ -134,9 +167,25 @@ class GeometricBrownianMotion(PathSimulation):
         self.instrument_values = None
 
     def generate_paths(
-        self, random_seed: Optional[int] = None, day_count: Union[int, float] = 365
+        self, random_seed: Optional[int] = None, day_count_convention: Union[int, float] = 365
     ) -> None:
-        "Generate geometric Brownian motion paths"
+        """Generate geometric Brownian motion paths.
+
+        Implements the classic Black-Scholes-Merton model:
+        dS_t = mu * S_t * dt + sigma * S_t * dW_t
+
+        Parameters
+        ==========
+        random_seed: int, optional
+            random seed for reproducibility
+        day_count_convention: int or float, default 365
+            day count convention for time calculations
+
+        Notes
+        =====
+        The drift term (mu) is derived from the risk-free rate
+        to ensure the model is calibrated to the discount curve.
+        """
         if self.time_grid is None:
             # method from generic simulation class
             self.generate_time_grid()
@@ -170,7 +219,7 @@ class GeometricBrownianMotion(PathSimulation):
 
             # difference between two dates as year fraction
             delta_t = calculate_year_fraction(
-                self.time_grid[t - 1], self.time_grid[t], day_count=day_count
+                self.time_grid[t - 1], self.time_grid[t], day_count_convention=day_count_convention
             )
 
             paths[t] = paths[t - 1] * np.exp(
@@ -224,7 +273,26 @@ class SquareRootDiffusion(PathSimulation):
             self.final_date = final_date
         self.instrument_values = None
 
-    def generate_paths(self, random_seed: Optional[int] = None, day_count: Union[int, float] = 365):
+    def generate_paths(
+        self, random_seed: Optional[int] = None, day_count_convention: Union[int, float] = 365
+    ) -> None:
+        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths.
+
+        Implements the CIR model for mean-reverting interest rates:
+        dr_t = kappa * (theta - r_t) * dt + sigma * sqrt(r_t) * dW_t
+
+        Parameters
+        ==========
+        random_seed: int, optional
+            random seed for reproducibility
+        day_count_convention: int or float, default 365
+            day count convention for time calculations
+
+        Notes
+        =====
+        Uses full truncation Euler discretization to ensure paths
+        remain non-negative (consistent with interest rate interpretation).
+        """
         if self.time_grid is None:
             self.generate_time_grid()
         M = len(self.time_grid)
@@ -241,7 +309,7 @@ class SquareRootDiffusion(PathSimulation):
 
         for t in range(1, len(self.time_grid)):
             delta_t = calculate_year_fraction(
-                self.time_grid[t - 1], self.time_grid[t], day_count=day_count
+                self.time_grid[t - 1], self.time_grid[t], day_count_convention=day_count_convention
             )
             if self.correlated is False:
                 ran = rand[t]
@@ -303,7 +371,27 @@ class JumpDiffusion(PathSimulation):
             self.final_date = final_date
         self.instrument_values = None
 
-    def generate_paths(self, random_seed: Optional[int] = None, day_count: Union[int, float] = 365):
+    def generate_paths(
+        self, random_seed: Optional[int] = None, day_count_convention: Union[int, float] = 365
+    ) -> None:
+        """Generate Merton jump diffusion paths.
+
+        Implements the Merton (1976) model that combines geometric
+        Brownian motion with random jump events:
+        dS_t / S_t = (mu - lambda * E[J - 1]) * dt + sigma * dW_t + (J - 1) * dN_t
+
+        Parameters
+        ==========
+        random_seed: int, optional
+            random seed for reproducibility
+        day_count_convention: int or float, default 365
+            day count convention for time calculations
+
+        Notes
+        =====
+        Requires parameters lambda (jump intensity), mu (jump mean),
+        and delta (jump volatility) to be set in market environment.
+        """
         if self.time_grid is None:
             # method from generic simulation class
             self.generate_time_grid()
@@ -343,7 +431,7 @@ class JumpDiffusion(PathSimulation):
 
             # difference between two dates as year fraction
             delta_t = calculate_year_fraction(
-                self.time_grid[t - 1], self.time_grid[t], day_count=day_count
+                self.time_grid[t - 1], self.time_grid[t], day_count_convention=day_count_convention
             )
             # Poisson-distributed pseudorandom numbers for jump component
             poi = np.random.poisson(self.lamb * delta_t, num_paths)

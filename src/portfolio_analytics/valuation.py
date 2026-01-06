@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
+import datetime as dt
 import numpy as np
 from .stochastic_processes import PathSimulation
 from .market_environment import MarketEnvironment
@@ -49,8 +50,34 @@ class OptionValuation(ABC):
         # provide pricing_date and maturity to underlying
         self.underlying.special_dates.extend([self.pricing_date, self.maturity])
 
-    def update(self, initial_value=None, volatility=None, strike=None, maturity=None):
-        "Update selected valuation parameters if not None and reset instrument values to None"
+    def update(
+        self,
+        initial_value: Optional[float] = None,
+        volatility: Optional[float] = None,
+        strike: Optional[float] = None,
+        maturity: Optional[dt.datetime] = None,
+    ) -> None:
+        """Update selected valuation parameters if not None.
+
+        This method propagates changes to the underlying stochastic process
+        and resets cached instrument values to force recalculation.
+
+        Parameters
+        ==========
+        initial_value: float, optional
+            new spot price for the underlying
+        volatility: float, optional
+            new volatility (annualized) for the underlying
+        strike: float, optional
+            new strike price for the option
+        maturity: datetime, optional
+            new maturity date for the option
+
+        Notes
+        =====
+        If maturity is updated, it is automatically added to the time grid
+        if not already present, and cached values are reset.
+        """
         if initial_value is not None:
             self.underlying.update(initial_value=initial_value)
         if volatility is not None:
@@ -65,31 +92,58 @@ class OptionValuation(ABC):
                 self.underlying.instrument_values = None
 
     @abstractmethod
-    def generate_payoff(self, random_seed: Optional[int] = None) -> None:
-        """
+    def generate_payoff(self, random_seed: Optional[int] = None) -> Tuple:
+        """Generate payoff at maturity for the derivative.
+
+        This abstract method must be implemented by subclasses to define
+        how the derivative's intrinsic value is calculated at maturity.
+
         Parameters
         ==========
         random_seed: int, optional
-            random seed for path generation
+            random seed for path generation to ensure reproducibility
+
+        Returns
+        =======
+        payoff_data: tuple
+            subclass-specific payoff structure containing instrument values
+            and intrinsic values
+
+        Raises
+        ======
+        NotImplementedError
+            if subclass does not implement this method
         """
         raise NotImplementedError("Method generate_payoff() not implemented")
 
     @abstractmethod
     def present_value(
         self, random_seed: Optional[int] = None, full: bool = False
-    ) -> Tuple[float, np.ndarray] | float:
-        """
+    ) -> Union[float, Tuple[float, np.ndarray]]:
+        """Calculate present value of the derivative.
+
+        This abstract method must be implemented by subclasses to define
+        their specific valuation methodology.
+
         Parameters
         ==========
         random_seed: int, optional
-            random seed for path generation
-        full: bool, optional
-            set to True to return full discount present value payoff vector
+            random seed for path generation to ensure reproducibility
+        full: bool, default False
+            if False, return scalar present value
+            if True, return tuple of (pv, full_payoff_array)
+
 
         Returns
         =======
-        present_value: float
-            present value of the derivative
+        present_value: float or tuple
+            if full=False: scalar present value
+            if full=True: tuple of (pv, discounted_payoff_array)
+
+        Raises
+        ======
+        NotImplementedError
+            if subclass does not implement this method
         """
         raise NotImplementedError("Method present_value() not implemented")
 
@@ -229,7 +283,7 @@ class ValuationMCSAmerican(OptionValuation):
         returns the present value of the derivative
     """
 
-    def generate_payoff(self, random_seed: Optional[int] = None) -> None:
+    def generate_payoff(self, random_seed: Optional[int] = None) -> Tuple:
         """
         Parameters
         ==========
