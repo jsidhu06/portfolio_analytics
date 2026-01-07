@@ -1,7 +1,6 @@
 "Path simulation classes for various stochastic processes"
 
 from abc import ABC, abstractmethod
-import datetime as dt
 import numpy as np
 import pandas as pd
 from .market_environment import MarketEnvironment
@@ -95,13 +94,11 @@ class PathSimulation(ABC):
         instrument_values: np.ndarray
             simulated instrument value paths
         """
-        if self.instrument_values is None:
-            # only initiate simulation if there are no instrument values
-            self.generate_paths(random_seed=random_seed, day_count_convention=day_count_convention)
-        elif random_seed is not None:
-            # also initiate resimulation when random_seed is not None
-            self.generate_paths(random_seed=random_seed, day_count_convention=day_count_convention)
-        return self.instrument_values
+
+        instrument_values = self.generate_paths(
+            random_seed=random_seed, day_count_convention=day_count_convention
+        )
+        return instrument_values
 
     @abstractmethod
     def generate_paths(
@@ -142,28 +139,9 @@ class GeometricBrownianMotion(PathSimulation):
 
     Methods
     =======
-    update:
-        updates parameters
     generate_paths:
         returns Monte Carlo paths given the market environment
     """
-
-    def update(
-        self,
-        initial_value: float | None = None,
-        volatility: float | None = None,
-        final_date: dt.datetime | None = None,
-    ) -> None:
-        """Update parameters of the GBM model."""
-        if initial_value is not None:
-            self.initial_value = initial_value
-        if volatility is not None:
-            self.volatility = volatility
-        if final_date is not None:
-            self.final_date = final_date
-
-        # reset instrument values to None
-        self.instrument_values = None
 
     def generate_paths(
         self, random_seed: int | None = None, day_count_convention: int | float = 365
@@ -227,6 +205,7 @@ class GeometricBrownianMotion(PathSimulation):
             )
             # generate simulated values for the respective date
         self.instrument_values = paths
+        return paths
 
 
 class SquareRootDiffusion(PathSimulation):
@@ -256,25 +235,9 @@ class SquareRootDiffusion(PathSimulation):
         self.kappa = mar_env.get_constant("kappa")
         self.theta = mar_env.get_constant("theta")
 
-    def update(
-        self, initial_value=None, volatility=None, kappa=None, theta=None, final_date=None
-    ) -> None:
-        "Update parameters"
-        if initial_value is not None:
-            self.initial_value = initial_value
-        if volatility is not None:
-            self.volatility = volatility
-        if kappa is not None:
-            self.kappa = kappa
-        if theta is not None:
-            self.theta = theta
-        if final_date is not None:
-            self.final_date = final_date
-        self.instrument_values = None
-
     def generate_paths(
         self, random_seed: int | None = None, day_count_convention: int | float = 365
-    ) -> None:
+    ) -> np.ndarray:
         """Generate Cox-Ingersoll-Ross (square-root diffusion) paths.
 
         Implements the CIR model for mean-reverting interest rates:
@@ -323,6 +286,7 @@ class SquareRootDiffusion(PathSimulation):
             paths[t] = np.maximum(0, paths_[t])
 
         self.instrument_values = paths
+        return paths
 
 
 class JumpDiffusion(PathSimulation):
@@ -353,26 +317,9 @@ class JumpDiffusion(PathSimulation):
         self.mu = mar_env.get_constant("mu")
         self.delt = mar_env.get_constant("delta")
 
-    def update(
-        self, initial_value=None, volatility=None, lamb=None, mu=None, delta=None, final_date=None
-    ):
-        if initial_value is not None:
-            self.initial_value = initial_value
-        if volatility is not None:
-            self.volatility = volatility
-        if lamb is not None:
-            self.lamb = lamb
-        if mu is not None:
-            self.mu = mu
-        if delta is not None:
-            self.delt = delta
-        if final_date is not None:
-            self.final_date = final_date
-        self.instrument_values = None
-
     def generate_paths(
         self, random_seed: int | None = None, day_count_convention: int | float = 365
-    ) -> None:
+    ) -> np.ndarray:
         """Generate Merton jump diffusion paths.
 
         Implements the Merton (1976) model that combines geometric
@@ -443,3 +390,4 @@ class JumpDiffusion(PathSimulation):
             paths[t] = paths[t - 1] * (diffusion_factor + jump_factor)
 
         self.instrument_values = paths
+        return paths
