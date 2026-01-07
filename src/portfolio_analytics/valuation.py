@@ -51,9 +51,9 @@ class OptionValuation(ABC):
 
     def update(
         self,
-        initial_value: float | None = None,
+        initial_value: int | float | None = None,
         volatility: float | None = None,
-        strike: float | None = None,
+        strike: int | float | None = None,
         maturity: dt.datetime | None = None,
     ) -> None:
         """Update selected valuation parameters if not None.
@@ -63,11 +63,11 @@ class OptionValuation(ABC):
 
         Parameters
         ==========
-        initial_value: float, optional
+        initial_value: int or float, optional
             new spot price for the underlying
         volatility: float, optional
             new volatility (annualized) for the underlying
-        strike: float, optional
+        strike: int or float, optional
             new strike price for the option
         maturity: datetime, optional
             new maturity date for the option
@@ -313,10 +313,10 @@ class ValuationMCSAmerican(OptionValuation):
         ==========
         random_seed: int, optional
             random seed for path generation
-        deg: int
-            degree of polynomial for regression
         full: bool
             return also full 1d array of present values
+        deg: int
+            degree of polynomial for regression
         """
         instrument_values, intrinsic_values, time_index_start, time_index_end = (
             self.generate_payoff(random_seed=random_seed)
