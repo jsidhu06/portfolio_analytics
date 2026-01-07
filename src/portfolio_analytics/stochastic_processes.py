@@ -1,10 +1,55 @@
 "Path simulation classes for various stochastic processes"
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Protocol
+import datetime as dt
 import numpy as np
 import pandas as pd
-from .market_environment import MarketEnvironment
+from .market_environment import MarketData, CorrelationContext
 from .utils import calculate_year_fraction, sn_random_numbers
+
+
+@dataclass(frozen=True)
+class SimulationConfig:
+    paths: int
+    frequency: str
+    final_date: dt.datetime
+    day_count_convention: int | float = 365
+    time_grid: np.ndarray | None = None  # optional portfolio override
+    special_dates: list[dt.datetime] = field(default_factory=list)
+
+
+class DiffusionParams(Protocol):
+    initial_value: int | float
+    volatility: float
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GBMParams:
+    initial_value: float
+    volatility: float
+
+
+@dataclass(frozen=True, slots=True)
+class JDParams:
+    initial_value: float
+    volatility: float
+    jump_intensity: float  # lambda (per year)
+    jump_mean: float  # mu_J (mean of log jump size)
+    jump_std: float  # delta_J (std of log jump size)
+
+
+@dataclass(frozen=True, slots=True)
+class SRDParams:
+    initial_value: float
+    volatility: float
+    kappa: float  # mean reversion speed
+    theta: float  # long-run mean
+
+
+def _rng(seed: int | None) -> np.random.Generator:
+    return np.random.default_rng(seed)
 
 
 class PathSimulation(ABC):
@@ -13,11 +58,17 @@ class PathSimulation(ABC):
     Attributes
     ==========
     name: str
-        name of the object
-    mar_env: MarketEnvironment
-        market environment data for simulation
-    corr: bool
-        True if correlated with other model object
+        Name of the simulation object (typically the underlying identifier).
+    market_data: MarketData
+        Market data required for simulation (pricing date, discount curve, currency).
+    process_params:
+        Model-specific parameters for the stochastic process
+        (e.g. GBMParams, JDParams, SRDParams).
+    sim: SimulationConfig
+        Simulation configuration (paths, frequency, time grid, special dates).
+    correlation_context: CorrelationContext or None
+        Shared correlation/scenario context used in multi-asset simulations.
+        If None, the process is simulated independently.
 
     Methods
     =======
@@ -27,31 +78,43 @@ class PathSimulation(ABC):
         returns the current instrument values (array)
     """
 
-    def __init__(self, name: str, mar_env: MarketEnvironment, corr: bool = False):
+    def __init__(
+        self,
+        name: str,
+        market_data: MarketData,
+        process_params: DiffusionParams,
+        sim: SimulationConfig,
+        corr: CorrelationContext | None = None,
+    ):
         self.name = name
-        self.pricing_date = mar_env.pricing_date
-        self.initial_value = mar_env.get_constant("initial_value")
-        self.volatility = mar_env.get_constant("volatility")
-        self.final_date = mar_env.get_constant("final_date")
-        self.currency = mar_env.get_constant("currency")
-        self.frequency = mar_env.get_constant("frequency")
-        self.paths = mar_env.get_constant("paths")
-        self.discount_curve = mar_env.get_curve("discount_curve")
-        # if time_grid in mar_env take that object
-        # (for portfolio valuation)
-        self.time_grid = mar_env.get_list("time_grid") if "time_grid" in mar_env.lists else None
-        self.special_dates = (
-            mar_env.get_list("special_dates") if "special_dates" in mar_env.lists else []
-        )
-        self.instrument_values = None
-        self.correlated = corr
+        self.pricing_date = market_data.pricing_date
+        self.currency = market_data.currency
+        self.discount_curve = market_data.discount_curve
 
-        if corr is True:
+        self.initial_value = process_params.initial_value
+        self.volatility = process_params.volatility
+
+        self.paths = sim.paths
+        self.frequency = sim.frequency
+        self.day_count_convention = sim.day_count_convention
+        self.time_grid = sim.time_grid
+        self.special_dates = sim.special_dates
+
+        # horizon / final_date logic
+        if self.time_grid is not None:
+            self.final_date = max(self.time_grid)
+        else:
+            self.final_date = sim.final_date
+
+        self.instrument_values = None
+        self.correlation_context = corr
+
+        if corr is not None:
             # only needed in a portfolio context when
             # risk factors are correlated
-            self.cholesky_matrix = mar_env.get_list("cholesky_matrix")
-            self.rn_set = mar_env.get_list("rn_set")[self.name]
-            self.random_numbers = mar_env.get_list("random_numbers")
+            self.cholesky_matrix = corr.cholesky_matrix
+            self.rn_set = corr.rn_set[self.name]
+            self.random_numbers = corr.random_numbers
 
     def generate_time_grid(self) -> None:
         "Generate time grid for simulation of stochastic process"
@@ -77,17 +140,13 @@ class PathSimulation(ABC):
             time_grid.sort()
         self.time_grid = np.array(time_grid)
 
-    def get_instrument_values(
-        self, random_seed: int | None = None, day_count_convention: float = 365.0
-    ) -> np.ndarray:
-        """Get instrument values matrix; generate paths if not yet available.
+    def get_instrument_values(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate paths and get instrument values matrix
 
         Parameters
         ==========
         random_seed: int, optional
             random seed for path generation
-        day_count_convention: float, default 365.0
-            day count convention (365, 360, etc.)
 
         Returns
         =======
@@ -95,14 +154,13 @@ class PathSimulation(ABC):
             simulated instrument value paths
         """
 
-        instrument_values = self.generate_paths(
-            random_seed=random_seed, day_count_convention=day_count_convention
-        )
+        instrument_values = self.generate_paths(random_seed=random_seed)
         return instrument_values
 
     @abstractmethod
     def generate_paths(
-        self, random_seed: int | None = None, day_count_convention: float = 365.0
+        self,
+        random_seed: int | None = None,
     ) -> None:
         """Generate paths for the stochastic process.
 
@@ -113,8 +171,6 @@ class PathSimulation(ABC):
         ==========
         random_seed: int, optional
             random seed for reproducibility
-        day_count_convention: float, default 365.0
-            day count convention for time calculations
 
         Raises
         ======
@@ -127,25 +183,9 @@ class PathSimulation(ABC):
 class GeometricBrownianMotion(PathSimulation):
     """Class to generate simulated paths based on
     the Black-Scholes-Merton geometric Brownian motion model.
-
-    Attributes
-    ==========
-    name: string
-        name of the object
-    mar_env: MarketEnvironment
-        market environment data for simulation
-    corr: Boolean
-        True if correlated with other model simulation object
-
-    Methods
-    =======
-    generate_paths:
-        returns Monte Carlo paths given the market environment
     """
 
-    def generate_paths(
-        self, random_seed: int | None = None, day_count_convention: int | float = 365
-    ) -> None:
+    def generate_paths(self, random_seed: int | None = None) -> None:
         """Generate geometric Brownian motion paths.
 
         Implements the classic Black-Scholes-Merton model:
@@ -155,8 +195,6 @@ class GeometricBrownianMotion(PathSimulation):
         ==========
         random_seed: int, optional
             random seed for reproducibility
-        day_count_convention: int or float, default 365
-            day count convention for time calculations
 
         Notes
         =====
@@ -171,10 +209,10 @@ class GeometricBrownianMotion(PathSimulation):
         # number of paths
         num_paths = self.paths
         # ndarray initialization for path simulation
-        paths = np.zeros((M, num_paths))
+        paths = np.zeros((M, num_paths), dtype=float)
         # initialize first date with initial_value
         paths[0] = self.initial_value
-        if self.correlated is False:
+        if self.correlation_context is None:
             # if not correlated, generate random numbers
             rand = sn_random_numbers(
                 (1, M, num_paths), random_seed=random_seed
@@ -183,97 +221,82 @@ class GeometricBrownianMotion(PathSimulation):
             # if correlated, use random number object as provided
             # in market environment
             rand = self.random_numbers
-        short_rate = self.discount_curve.short_rate
+
         # get short rate for drift of process
-        for t in range(1, len(self.time_grid)):
+        short_rate = self.discount_curve.short_rate
+
+        for t in range(1, M):
             # select the right time slice from the relevant
             # random number set
-            if not self.correlated:
+            if self.correlation_context is None:
                 ran = rand[t]  # shape (num_paths,)
             else:
                 ran = np.dot(self.cholesky_matrix, rand[:, t, :])
-                ran = ran[self.rn_set]
+                ran = ran[self.rn_set]  # shape (num_paths,)
 
             # difference between two dates as year fraction
             delta_t = calculate_year_fraction(
-                self.time_grid[t - 1], self.time_grid[t], day_count_convention=day_count_convention
+                self.time_grid[t - 1],
+                self.time_grid[t],
+                day_count_convention_convention=self.day_count_convention,
             )
 
-            paths[t] = paths[t - 1] * np.exp(
-                (short_rate - 0.5 * self.volatility**2) * delta_t
-                + self.volatility * np.sqrt(delta_t) * ran
-            )
+            drift = (short_rate - 0.5 * self.volatility**2) * delta_t
+            diffusion = self.volatility * np.sqrt(delta_t) * ran
             # generate simulated values for the respective date
+            paths[t] = paths[t - 1] * np.exp(drift + diffusion)
+
         self.instrument_values = paths
         return paths
 
 
 class SquareRootDiffusion(PathSimulation):
-    """Class to generate simulated paths based on
-    the Cox-Ingersoll-Ross (1985) square-root diffusion model.
+    """Cox–Ingersoll–Ross (1985) square-root diffusion (CIR/SRD).
 
-    Attributes
-    ==========
-    name : string
-        name of the object
-    mar_env : MarketEnvironment
-        market environment data for simulation
-    corr : Boolean
-        True if correlated with other model object
+    Model (under chosen measure):
+        dX_t = kappa*(theta - X_t) dt + sigma*sqrt(X_t) dW_t
 
-    Methods
-    =======
-    update :
-        updates parameters
-    generate_paths :
-        returns Monte Carlo paths given the market environment
+    Uses full truncation Euler to preserve non-negativity.
     """
 
-    def __init__(self, name, mar_env, corr=False):
-        super().__init__(name, mar_env, corr)
-        # additional parameters needed
-        self.kappa = mar_env.get_constant("kappa")
-        self.theta = mar_env.get_constant("theta")
+    def __init__(
+        self,
+        name: str,
+        market_data: MarketData,
+        process_params,  # should provide initial_value, volatility, kappa, theta
+        sim: SimulationConfig,
+        corr: CorrelationContext | None = None,
+    ):
+        super().__init__(name, market_data, process_params, sim, corr=corr)
+        self.kappa = process_params.kappa
+        self.theta = process_params.theta
 
-    def generate_paths(
-        self, random_seed: int | None = None, day_count_convention: int | float = 365
-    ) -> np.ndarray:
-        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths.
-
-        Implements the CIR model for mean-reverting interest rates:
-        dr_t = kappa * (theta - r_t) * dt + sigma * sqrt(r_t) * dW_t
-
-        Parameters
-        ==========
-        random_seed: int, optional
-            random seed for reproducibility
-        day_count_convention: int or float, default 365
-            day count convention for time calculations
-
-        Notes
-        =====
-        Uses full truncation Euler discretization to ensure paths
-        remain non-negative (consistent with interest rate interpretation).
-        """
+    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
         if self.time_grid is None:
             self.generate_time_grid()
+
         M = len(self.time_grid)
         num_paths = self.paths
-        paths = np.zeros((M, num_paths))
-        paths_ = np.zeros_like(paths)
-        paths[0] = self.initial_value
-        paths_[0] = self.initial_value
 
-        if self.correlated is False:
+        paths = np.zeros((M, num_paths), dtype=float)
+        paths_hat = np.zeros_like(paths)
+
+        paths[0] = self.initial_value
+        paths_hat[0] = self.initial_value
+
+        if self.correlation_context is None:
             rand = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
         else:
             rand = self.random_numbers
 
-        for t in range(1, len(self.time_grid)):
+        for t in range(1, M):
             delta_t = calculate_year_fraction(
-                self.time_grid[t - 1], self.time_grid[t], day_count_convention=day_count_convention
+                self.time_grid[t - 1],
+                self.time_grid[t],
+                day_count_convention=self.day_count_convention,
             )
-            if self.correlated is False:
+            if self.correlation_context is None:
                 ran = rand[t]
             else:
                 ran = np.dot(self.cholesky_matrix, rand[:, t, :])
@@ -282,112 +305,96 @@ class SquareRootDiffusion(PathSimulation):
             # full truncation Euler discretization
             mean_reversion = self.kappa * (self.theta - paths[t - 1, :]) * delta_t
             diffusion = np.sqrt(paths[t - 1, :]) * self.volatility * np.sqrt(delta_t) * ran
-            paths_[t] = paths_[t - 1] + mean_reversion + diffusion
-            paths[t] = np.maximum(0, paths_[t])
+            paths_hat[t] = paths_hat[t - 1] + mean_reversion + diffusion
+            paths[t] = np.maximum(0, paths_hat[t])
 
         self.instrument_values = paths
         return paths
 
 
 class JumpDiffusion(PathSimulation):
-    """Class to generate simulated paths based on
-    the Merton (1976) jump diffusion model.
+    """Merton (1976) jump diffusion (lognormal jumps).
 
-    Attributes
-    ==========
-    name: str
-        name of the object
-    mar_env: MarketEnvironment
-        market environment data for simulation
-    corr: bool
-        True if correlated with other model object
+    Risk-neutral discretisation (per step Δt):
+        S_{t+Δt} = S_t * exp((r - λk - 0.5σ^2)Δt + σ√Δt Z)
+                        * exp( Σ_{i=1}^{N} Y_i )
 
-    Methods
-    =======
-    update:
-        updates parameters
-    generate_paths:
-        returns Monte Carlo paths given the market environment
+    where:
+        N ~ Poisson(λΔt)
+        Y_i ~ Normal(μ, δ^2)
+        k = E[e^Y - 1] = exp(μ + 0.5δ^2) - 1
     """
 
-    def __init__(self, name, mar_env, corr=False):
-        super().__init__(name, mar_env, corr)
-        # additional parameters needed
-        self.lamb = mar_env.get_constant("lambda")
-        self.mu = mar_env.get_constant("mu")
-        self.delt = mar_env.get_constant("delta")
+    def __init__(
+        self,
+        name: str,
+        market_data: MarketData,
+        process_params,  # expects: initial_value, volatility, lamb, mu, delta
+        sim: SimulationConfig,
+        corr: CorrelationContext | None = None,
+    ):
+        super().__init__(name, market_data, process_params, sim, corr=corr)
+        self.lamb = process_params.lamb  # jump intensity (per year)
+        self.mu = process_params.mu  # mean of log jump size
+        self.delta = process_params.delta  # std of log jump size
 
-    def generate_paths(
-        self, random_seed: int | None = None, day_count_convention: int | float = 365
-    ) -> np.ndarray:
-        """Generate Merton jump diffusion paths.
-
-        Implements the Merton (1976) model that combines geometric
-        Brownian motion with random jump events:
-        dS_t / S_t = (mu - lambda * E[J - 1]) * dt + sigma * dW_t + (J - 1) * dN_t
-
-        Parameters
-        ==========
-        random_seed: int, optional
-            random seed for reproducibility
-        day_count_convention: int or float, default 365
-            day count convention for time calculations
-
-        Notes
-        =====
-        Requires parameters lambda (jump intensity), mu (jump mean),
-        and delta (jump volatility) to be set in market environment.
-        """
+    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        # TO DO: Check these calcs
         if self.time_grid is None:
-            # method from generic simulation class
             self.generate_time_grid()
-        # number of dates for time grid
+
         M = len(self.time_grid)
-        # number of paths
         num_paths = self.paths
+
         # ndarray initialization for path simulation
-        paths = np.zeros((M, num_paths))
+        paths = np.zeros((M, num_paths), dtype=float)
         # initialize first date with initial_value
         paths[0] = self.initial_value
-        if self.correlated is False:
-            # if not correlated, generate random numbers
-            sn1 = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
-        else:
-            # if correlated, use random number object as provided
-            # in market environment
-            sn1 = self.random_numbers
+        # risk-free rate (adjust if your curve API differs)
+        r = float(self.discount_curve.short_rate)
 
-        # standard normally distributed pseudo-random numbers
-        # for the jump component
-        sn2 = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
+        lam = self.lamb
+        mu_j = self.mu
+        sig_j = self.delta
+        vol = self.volatility
 
-        rj = self.lamb * (np.exp(self.mu + 0.5 * self.delt**2) - 1)
+        # compensator k = E[e^Y - 1]
+        k = np.exp(mu_j + 0.5 * sig_j**2) - 1.0
 
-        short_rate = self.discount_curve.short_rate
+        rng = np.random.default_rng(random_seed)
 
-        for t in range(1, len(self.time_grid)):
-            # select the right time slice from the relevant
-            # random number set
-            if self.correlated is False:
-                ran = sn1[t]
-            else:
-                # only with correlation in portfolio context
-                ran = np.dot(self.cholesky_matrix, sn1[:, t, :])
-                ran = ran[self.rn_set]
-
-            # difference between two dates as year fraction
+        for t in range(1, M):
             delta_t = calculate_year_fraction(
-                self.time_grid[t - 1], self.time_grid[t], day_count_convention=day_count_convention
+                self.time_grid[t - 1],
+                self.time_grid[t],
+                day_count_convention=self.day_count_convention,
             )
-            # Poisson-distributed pseudorandom numbers for jump component
-            poi = np.random.poisson(self.lamb * delta_t, num_paths)
-            drift = (short_rate - rj - 0.5 * self.volatility**2) * delta_t
-            diffusion = self.volatility * np.sqrt(delta_t) * ran
-            diffusion_factor = np.exp(drift + diffusion)
 
-            jump_size = self.mu + self.delt * sn2[t]
-            jump_factor = (np.exp(jump_size) - 1.0) * poi
-            paths[t] = paths[t - 1] * (diffusion_factor + jump_factor)
+            # Diffusion shock Z
+            if self.correlation_context is not None:
+                # random_numbers shape is (n_assets, M, num_paths)
+                z = self.correlation_context.random_numbers[:, t, :]  # (N,I)
+                ran_all = self.correlation_context.cholesky_matrix @ z  # (N,I)
+                Z = ran_all[self.rn_set]  # (I,)
+            else:
+                Z = rng.standard_normal(num_paths)  # (I,)
+
+            # Diffusion multiplier
+            drift = (r - lam * k - 0.5 * vol**2) * delta_t
+            diffusion = vol * np.sqrt(delta_t) * Z
+            diffusion_multiplier = np.exp(drift + diffusion)
+
+            # Jump multiplier: exp(sum of jump sizes)
+            N = rng.poisson(lam * delta_t, size=num_paths)  # number of jumps in (t-1, t]
+            # sum of N normals: Normal(N*mu, N*delta^2)
+            jump_sum = np.where(
+                N > 0,
+                N * mu_j + np.sqrt(N) * sig_j * rng.standard_normal(num_paths),
+                0.0,
+            )
+            jump_multiplier = np.exp(jump_sum)
+
+            paths[t] = paths[t - 1] * diffusion_multiplier * jump_multiplier
 
         self.instrument_values = paths
         return paths
