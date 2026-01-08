@@ -1,12 +1,12 @@
 """Helper functions and classes for derivatives valuation."""
 
+from datetime import datetime
 import numpy as np
-from typing import List
 
 SECONDS_IN_DAY = 86400
 
 
-def calculate_year_fraction(start_date, end_date, day_count_convention: float = 365.0) -> float:
+def calculate_year_fraction(start_date, end_date, day_count_convention: int | float = 365) -> float:
     """Calculate year fraction between two dates.
 
     This is a fundamental calculation in finance for time-value of money,
@@ -18,7 +18,7 @@ def calculate_year_fraction(start_date, end_date, day_count_convention: float = 
         starting date
     end_date: datetime
         ending date
-    day_count_convention: float, default 365.0
+    day_count_convention: int or float, default 365
         number of days per year (day count convention):
         - 365: Actual/365 Fixed
         - 360: 30/360 (US)
@@ -42,7 +42,9 @@ def calculate_year_fraction(start_date, end_date, day_count_convention: float = 
     return year_fraction
 
 
-def get_year_deltas(date_list: List, day_count_convention: float = 365.0) -> np.ndarray:
+def get_year_deltas(
+    date_list: list[datetime], day_count_convention: int | float = 365
+) -> np.ndarray:
     """Return vector of floats with day deltas in year fractions.
 
     Initial value is normalized to zero. Useful for discount factor
@@ -52,13 +54,13 @@ def get_year_deltas(date_list: List, day_count_convention: float = 365.0) -> np.
     ==========
     date_list: list or array-like
         collection of datetime objects
-    day_count_convention: float, default 365.0
+    day_count_convention: int or float, default 365
         number of days per year (day count convention)
 
     Returns
     =======
     delta_list: np.ndarray
-        array of year fractions, first element is always 0.0
+        array of year fractions, first element is always 0
     """
     start = min(date_list)
     delta_list = [calculate_year_fraction(start, date, day_count_convention) for date in date_list]

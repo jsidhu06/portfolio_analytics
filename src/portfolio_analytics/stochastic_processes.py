@@ -238,7 +238,7 @@ class GeometricBrownianMotion(PathSimulation):
             delta_t = calculate_year_fraction(
                 self.time_grid[t - 1],
                 self.time_grid[t],
-                day_count_convention_convention=self.day_count_convention,
+                day_count_convention=self.day_count_convention,
             )
 
             drift = (short_rate - 0.5 * self.volatility**2) * delta_t
