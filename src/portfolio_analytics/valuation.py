@@ -1,4 +1,3 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import datetime as dt
@@ -11,26 +10,36 @@ class OptionType(Enum):
     PUT = "put"
 
 
+class ExerciseType(Enum):
+    EUROPEAN = "european"
+    AMERICAN = "american"
+
+
 @dataclass(frozen=True, slots=True)
 class OptionSpec:
     """Contract specification for a vanilla option."""
 
     option_type: OptionType  # CALL / PUT
+    exercise_type: ExerciseType  # EUROPEAN / AMERICAN
     strike: float | None  # allow None for strike-less products
     maturity: dt.datetime
     currency: str
     contract_size: int | float = 100
 
     def __post_init__(self):
-        """Validate option_type is an OptionType enum."""
+        """Validate option_type and exercise_type are valid enums."""
         if not isinstance(self.option_type, OptionType):
             raise TypeError(
                 f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
+        if not isinstance(self.exercise_type, ExerciseType):
+            raise TypeError(
+                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
+            )
 
 
-class OptionValuation(ABC):
-    """Base class for single-factor option valuation.
+class OptionValuation:
+    """Single-factor option valuation dispatcher.
 
     Attributes
     ==========
@@ -69,72 +78,35 @@ class OptionValuation(ABC):
         self.strike = spec.strike
         self.currency = spec.currency
         self.option_type = spec.option_type
+        self.exercise_type = spec.exercise_type
         self.contract_size = spec.contract_size
 
         # Optional sanity check: maturity must be after pricing date
         if self.maturity <= self.pricing_date:
             raise ValueError("Option maturity must be after pricing_date.")
-            # provide pricing_date and maturity to underlying
+        # provide pricing_date and maturity to underlying
         self.underlying.special_dates.extend([self.pricing_date, self.maturity])
 
-    @abstractmethod
-    def generate_payoff(self, random_seed: int | None = None) -> tuple:
-        """Generate payoff at maturity for the derivative.
+        # Dispatch to appropriate implementation
+        if spec.exercise_type == ExerciseType.EUROPEAN:
+            self._impl = _EuropeanValuation(self)
+        elif spec.exercise_type == ExerciseType.AMERICAN:
+            self._impl = _AmericanValuation(self)
+        else:
+            raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
 
-        This abstract method must be implemented by subclasses to define
-        how the derivative's intrinsic value is calculated at maturity.
+    def generate_payoff(self, random_seed: int | None = None):
+        """Generate payoff at maturity for the derivative."""
+        return self._impl.generate_payoff(random_seed)
 
-        Parameters
-        ==========
-        random_seed: int, optional
-            random seed for path generation to ensure reproducibility
-
-        Returns
-        =======
-        payoff_data: tuple
-            subclass-specific payoff structure containing instrument values
-            and intrinsic values
-
-        Raises
-        ======
-        NotImplementedError
-            if subclass does not implement this method
-        """
-        raise NotImplementedError("Method generate_payoff() not implemented")
-
-    @abstractmethod
     def present_value(
-        self, random_seed: int | None = None, full: bool = False
+        self, random_seed: int | None = None, full: bool = False, **kwargs
     ) -> float | tuple[float, np.ndarray]:
-        """Calculate present value of the derivative.
-
-        This abstract method must be implemented by subclasses to define
-        their specific valuation methodology.
-
-        Parameters
-        ==========
-        random_seed: int, optional
-            random seed for path generation to ensure reproducibility
-        full: bool, default False
-            if False, return scalar present value
-            if True, return tuple of (pv, full_payoff_array)
-
-
-        Returns
-        =======
-        present_value: float or tuple
-            if full=False: scalar present value
-            if full=True: tuple of (pv, discounted_payoff_array)
-
-        Raises
-        ======
-        NotImplementedError
-            if subclass does not implement this method
-        """
-        raise NotImplementedError("Method present_value() not implemented")
+        """Calculate present value of the derivative."""
+        return self._impl.present_value(random_seed, full, **kwargs)
 
     def delta(self, epsilon: float | None = None, random_seed: int | None = None):
-        "Calculate option delta using central difference approximation"
+        """Calculate option delta using central difference approximation."""
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
         # central difference approximation
@@ -160,7 +132,7 @@ class OptionValuation(ABC):
         return delta
 
     def vega(self, epsilon: float = 0.01, random_seed: int | None = None):
-        "Calculate option vega using central difference approximation"
+        """Calculate option vega using central difference approximation."""
         epsilon = max(epsilon, self.underlying.volatility / 50.0)
         # central-difference approximation
         initial_vol = self.underlying.volatility
@@ -181,27 +153,30 @@ class OptionValuation(ABC):
         return vega
 
 
-class ValuationMCSEuropean(OptionValuation):
-    """Monte Carlo European option valuation."""
+class _EuropeanValuation:
+    """Implementation of European option valuation using Monte Carlo."""
+
+    def __init__(self, parent: OptionValuation):
+        self.parent = parent
 
     def generate_payoff(self, random_seed: int | None = None) -> np.ndarray:
         """Generate payoff vector at maturity (one value per path)."""
-        paths = self.underlying.get_instrument_values(random_seed=random_seed)
-        time_grid = self.underlying.time_grid
+        paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
+        time_grid = self.parent.underlying.time_grid
 
         # locate indices
-        idx_end = np.where(time_grid == self.maturity)[0]
+        idx_end = np.where(time_grid == self.parent.maturity)[0]
         if idx_end.size == 0:
             raise ValueError("maturity not in underlying time_grid.")
         time_index_end = int(idx_end[0])
 
         maturity_value = paths[time_index_end]
 
-        K = self.strike
+        K = self.parent.strike
         if K is None:
             raise ValueError("strike is required for vanilla European call/put payoff.")
 
-        if self.option_type is OptionType.CALL:
+        if self.parent.option_type is OptionType.CALL:
             payoff = np.maximum(maturity_value - K, 0.0)
         else:
             payoff = np.maximum(K - maturity_value, 0.0)
@@ -212,40 +187,49 @@ class ValuationMCSEuropean(OptionValuation):
         self,
         random_seed: int | None = None,
         full: bool = False,
+        **kwargs,
     ) -> float | tuple[float, np.ndarray]:
         """Return PV (and optionally pathwise discounted PVs)."""
         cash_flow = self.generate_payoff(random_seed=random_seed)
 
         # discount factor from pricing_date to maturity
-        df = float(
-            self.discount_curve.get_discount_factors((self.pricing_date, self.maturity))[-1, 1]
-        )
+        discount_factor = self.parent.discount_curve.get_discount_factors(
+            (self.parent.pricing_date, self.parent.maturity)
+        )[-1, 1]
 
-        pv_pathwise = df * cash_flow
-        pv = float(np.mean(pv_pathwise))
+        pv_pathwise = discount_factor * cash_flow
+        pv = np.mean(pv_pathwise)
 
         if full:
             return pv, pv_pathwise
         return pv
 
 
-class ValuationMCSAmerican(OptionValuation):
-    """Monte Carlo Simulation American option valuation class."""
+class _AmericanValuation:
+    """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""
+
+    def __init__(self, parent: OptionValuation):
+        self.parent = parent
 
     def generate_payoff(
         self, random_seed: int | None = None
     ) -> tuple[np.ndarray, np.ndarray, int, int]:
-        """
+        """Generate payoff paths and indices.
+
         Parameters
         ==========
         random_seed: int, optional
             random seed for path generation
+
+        Returns
+        =======
+        tuple of (instrument_values, payoff, time_index_start, time_index_end)
         """
-        paths = self.underlying.get_instrument_values(random_seed=random_seed)
-        time_grid = self.underlying.time_grid
+        paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
+        time_grid = self.parent.underlying.time_grid
         # locate indices
-        idx_start = np.where(time_grid == self.pricing_date)[0]
-        idx_end = np.where(time_grid == self.maturity)[0]
+        idx_start = np.where(time_grid == self.parent.pricing_date)[0]
+        idx_end = np.where(time_grid == self.parent.maturity)[0]
         if idx_start.size == 0:
             raise ValueError("Pricing date not in underlying time_grid.")
         if idx_end.size == 0:
@@ -256,11 +240,11 @@ class ValuationMCSAmerican(OptionValuation):
 
         instrument_values = paths[time_index_start : time_index_end + 1]
 
-        K = self.strike
+        K = self.parent.strike
         if K is None:
             raise ValueError("strike is required for vanilla American call/put payoff.")
 
-        if self.option_type is OptionType.CALL:
+        if self.parent.option_type is OptionType.CALL:
             payoff = np.maximum(instrument_values - K, 0)
         else:
             payoff = np.maximum(K - instrument_values, 0)
@@ -272,8 +256,10 @@ class ValuationMCSAmerican(OptionValuation):
         random_seed: int | None = None,
         full: bool = False,
         deg: int = 2,
+        **kwargs,
     ) -> tuple[float, np.ndarray] | float:
-        """
+        """Calculate PV using Longstaff-Schwartz regression method.
+
         Parameters
         ==========
         random_seed: int, optional
@@ -282,26 +268,36 @@ class ValuationMCSAmerican(OptionValuation):
             return also full 1d array of present values
         deg: int
             degree of polynomial for regression
+
+        Returns
+        =======
+        float or tuple of (pv, pathwise_discounted_values)
         """
         instrument_values, intrinsic_values, time_index_start, time_index_end = (
             self.generate_payoff(random_seed=random_seed)
         )
-        time_list = self.underlying.time_grid[time_index_start : time_index_end + 1]
-        discount_factors = self.discount_curve.get_discount_factors(time_list, dtobjects=True)
+        time_list = self.parent.underlying.time_grid[time_index_start : time_index_end + 1]
+        discount_factors = self.parent.discount_curve.get_discount_factors(
+            time_list, dtobjects=True
+        )
         V = np.zeros_like(intrinsic_values)
         V[-1] = intrinsic_values[-1]
         for t in range(len(time_list) - 2, 0, -1):
-            df = discount_factors[t + 1, 1] / discount_factors[t, 1]
+            discount_factor = discount_factors[t + 1, 1] / discount_factors[t, 1]
             itm = intrinsic_values[t] > 0
             S_itm = instrument_values[t][itm]
-            V_itm = df * V[t + 1][itm]
+            V_itm = discount_factor * V[t + 1][itm]
             if len(S_itm) > 0:
                 coefficients = np.polyfit(S_itm, V_itm, deg=deg)
             else:
                 coefficients = np.zeros(deg + 1)
             predicted_cv = np.zeros_like(instrument_values[t])
             predicted_cv[itm] = np.polyval(coefficients, instrument_values[t][itm])
-            V[t] = np.where(intrinsic_values[t] > predicted_cv, intrinsic_values[t], df * V[t + 1])
+            V[t] = np.where(
+                intrinsic_values[t] > predicted_cv,
+                intrinsic_values[t],
+                discount_factor * V[t + 1],
+            )
 
         discount_factor = discount_factors[1, 1] / discount_factors[0, 1]
         result = discount_factor * np.mean(V[1])
