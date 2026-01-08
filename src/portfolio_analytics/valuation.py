@@ -1,94 +1,81 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
 import datetime as dt
 import numpy as np
 from .stochastic_processes import PathSimulation
-from .market_environment import MarketEnvironment
+
+
+class OptionType(Enum):
+    CALL = "call"
+    PUT = "put"
+
+
+@dataclass(frozen=True, slots=True)
+class OptionSpec:
+    """Contract specification for a vanilla option."""
+
+    option_type: OptionType  # CALL / PUT
+    strike: float | None  # allow None for strike-less products
+    maturity: dt.datetime
+    currency: str
+    contract_size: int | float = 100
+
+    def __post_init__(self):
+        """Validate option_type is an OptionType enum."""
+        if not isinstance(self.option_type, OptionType):
+            raise TypeError(
+                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
+            )
 
 
 class OptionValuation(ABC):
-    """Basic class for single-factor option valuation.
+    """Base class for single-factor option valuation.
 
     Attributes
     ==========
     name: str
-        name of the object
+        Name of the valuation object/trade.
     underlying: PathSimulation
-        object modeling the single risk factor
-    mar_env: MarketEnvironment
-        market environment data for valuation
-    side: str
-        'call' or 'put' for the option type
+        Stochastic process simulator for the underlying risk factor.
+    spec: OptionSpec
+        Contract terms (type, strike, maturity, currency, contract_size).
+    pricing_date: datetime
+        Pricing date (taken from MarketData via underlying).
+    discount_curve:
+        Discount curve used for valuation (taken from MarketData).
 
     Methods
     =======
-    update:
-        updates selected valuation parameters
+    present_value:
+        Returns the present value of the derivative.
     delta:
-        returns the Delta of the derivative
+        Numerical delta.
     vega:
-        returns the Vega of the derivative
+        Numerical vega.
     """
 
-    def __init__(
-        self, name: str, underlying: PathSimulation, mar_env: MarketEnvironment, side: str
-    ):
-        if side not in ("call", "put"):
-            raise ValueError(f"side must be 'call' or 'put', received '{side}'")
+    def __init__(self, name: str, underlying: PathSimulation, spec: OptionSpec):
         self.name = name
-        self.side = side
-        self.pricing_date = mar_env.pricing_date
-        self.strike = mar_env.constants.get("strike")  # strike is optional
-        self.maturity = mar_env.get_constant("maturity")
-        self.currency = mar_env.get_constant("currency")
-
-        # simulation parameters and discount curve from simulation object
-        self.frequency = underlying.frequency
-        self.paths = underlying.paths
-        self.discount_curve = underlying.discount_curve
         self.underlying = underlying
-        # provide pricing_date and maturity to underlying
+        self.spec = spec
+
+        # Pricing date + discount curve come from the underlying's MarketData
+        self.pricing_date = underlying.pricing_date
+        self.discount_curve = underlying.discount_curve
+
+        # Convenience aliases
+        self.maturity = spec.maturity
+        self.strike = spec.strike
+        self.currency = spec.currency
+        self.option_type = spec.option_type
+        self.contract_size = spec.contract_size
+
+        # Optional sanity check: maturity must be after pricing date
+        if self.maturity <= self.pricing_date:
+            raise ValueError("Option maturity must be after pricing_date.")
+            # provide pricing_date and maturity to underlying
         self.underlying.special_dates.extend([self.pricing_date, self.maturity])
-
-    def update(
-        self,
-        initial_value: int | float | None = None,
-        volatility: float | None = None,
-        strike: int | float | None = None,
-        maturity: dt.datetime | None = None,
-    ) -> None:
-        """Update selected valuation parameters if not None.
-
-        This method propagates changes to the underlying stochastic process
-        and resets cached instrument values to force recalculation.
-
-        Parameters
-        ==========
-        initial_value: int or float, optional
-            new spot price for the underlying
-        volatility: float, optional
-            new volatility (annualized) for the underlying
-        strike: int or float, optional
-            new strike price for the option
-        maturity: datetime, optional
-            new maturity date for the option
-
-        Notes
-        =====
-        If maturity is updated, it is automatically added to the time grid
-        if not already present, and cached values are reset.
-        """
-        if initial_value is not None:
-            self.underlying.update(initial_value=initial_value)
-        if volatility is not None:
-            self.underlying.update(volatility=volatility)
-        if strike is not None:
-            self.strike = strike
-        if maturity is not None:
-            self.maturity = maturity
-            # add new maturity date if not in time_grid
-            if maturity not in self.underlying.time_grid:
-                self.underlying.special_dates.append(maturity)
-                self.underlying.instrument_values = None
 
     @abstractmethod
     def generate_payoff(self, random_seed: int | None = None) -> tuple:
@@ -195,94 +182,59 @@ class OptionValuation(ABC):
 
 
 class ValuationMCSEuropean(OptionValuation):
-    """Monte Carlo Simulation European option valuation class.
+    """Monte Carlo European option valuation."""
 
-    Attributes
-    ==========
-    name: str
-        name of the object
-    underlying: instance of simulation class
-        object modeling the single risk factor
-    mar_env: instance of market_environment
-        market environment data for valuation
-
-    Methods
-    =======
-    generate_payoff:
-        generates the payoff at maturity
-    present_value:
-        returns the present value of the derivative
-    """
-
-    def generate_payoff(self, random_seed: int | None = None) -> None:
-        """
-        Parameters
-        ==========
-        random_seed: int, optional
-            random seed for path generation
-        """
-
+    def generate_payoff(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate payoff vector at maturity (one value per path)."""
         paths = self.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.underlying.time_grid
-        time_index_start = int(np.where(time_grid == self.pricing_date)[0][0])
-        time_index_end = int(np.where(time_grid == self.maturity)[0][0])
-        instrument_values = paths[time_index_start : time_index_end + 1]
+
+        # locate indices
+        idx_end = np.where(time_grid == self.maturity)[0]
+        if idx_end.size == 0:
+            raise ValueError("maturity not in underlying time_grid.")
+        time_index_end = int(idx_end[0])
+
         maturity_value = paths[time_index_end]
 
-        if self.side == "call":
-            payoff = np.maximum(maturity_value - self.strike, 0)
-        else:
-            payoff = np.maximum(self.strike - maturity_value, 0)
+        K = self.strike
+        if K is None:
+            raise ValueError("strike is required for vanilla European call/put payoff.")
 
-        return instrument_values, payoff, time_index_start, time_index_end
+        if self.option_type is OptionType.CALL:
+            payoff = np.maximum(maturity_value - K, 0.0)
+        else:
+            payoff = np.maximum(K - maturity_value, 0.0)
+
+        return payoff
 
     def present_value(
-        self, random_seed: int | None = None, full: bool = False
-    ) -> tuple[float, np.ndarray] | float:
-        """
-        Parameters
-        ==========
-        accuracy: int
-            number of decimals in returned result
-        random_seed: int, optional
-            random seed for path generation
-        full: bool
-            return also full 1d array of present values
-        """
-        # for european optionss we only need the payoff
-        cash_flow = self.generate_payoff(random_seed=random_seed)[1]
-        discount_factor = self.discount_curve.get_discount_factors(
-            (self.pricing_date, self.maturity)
-        )[-1, 1]
-        result = discount_factor * np.mean(cash_flow)
+        self,
+        random_seed: int | None = None,
+        full: bool = False,
+    ) -> float | tuple[float, np.ndarray]:
+        """Return PV (and optionally pathwise discounted PVs)."""
+        cash_flow = self.generate_payoff(random_seed=random_seed)
+
+        # discount factor from pricing_date to maturity
+        df = float(
+            self.discount_curve.get_discount_factors((self.pricing_date, self.maturity))[-1, 1]
+        )
+
+        pv_pathwise = df * cash_flow
+        pv = float(np.mean(pv_pathwise))
+
         if full:
-            return result, discount_factor * cash_flow
-        return result
+            return pv, pv_pathwise
+        return pv
 
 
 class ValuationMCSAmerican(OptionValuation):
-    """Monte Carlo Simulation American option valuation class.
+    """Monte Carlo Simulation American option valuation class."""
 
-    Attributes
-    ==========
-    name: str
-        name of the object
-    underlying: PathSimulation
-        object modeling the single risk factor
-    mar_env: MarketEnvironment
-        market environment data for valuation
-    side: str
-        'call' or 'put' for the option type
-
-    Methods
-    =======
-    generate_payoff:
-        generates the payoff at maturity
-    present_value:
-        returns the present value of the derivative
-    """
-
-    def generate_payoff(self, random_seed: int | None = None) -> tuple:
+    def generate_payoff(
+        self, random_seed: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray, int, int]:
         """
         Parameters
         ==========
@@ -291,14 +243,27 @@ class ValuationMCSAmerican(OptionValuation):
         """
         paths = self.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.underlying.time_grid
-        time_index_start = int(np.where(time_grid == self.pricing_date)[0][0])
-        time_index_end = int(np.where(time_grid == self.maturity)[0][0])
+        # locate indices
+        idx_start = np.where(time_grid == self.pricing_date)[0]
+        idx_end = np.where(time_grid == self.maturity)[0]
+        if idx_start.size == 0:
+            raise ValueError("Pricing date not in underlying time_grid.")
+        if idx_end.size == 0:
+            raise ValueError("maturity not in underlying time_grid.")
+
+        time_index_start = int(idx_start[0])
+        time_index_end = int(idx_end[0])
+
         instrument_values = paths[time_index_start : time_index_end + 1]
 
-        if self.side == "call":
-            payoff = np.maximum(instrument_values - self.strike, 0)
+        K = self.strike
+        if K is None:
+            raise ValueError("strike is required for vanilla American call/put payoff.")
+
+        if self.option_type is OptionType.CALL:
+            payoff = np.maximum(instrument_values - K, 0)
         else:
-            payoff = np.maximum(self.strike - instrument_values, 0)
+            payoff = np.maximum(K - instrument_values, 0)
 
         return instrument_values, payoff, time_index_start, time_index_end
 
@@ -328,11 +293,10 @@ class ValuationMCSAmerican(OptionValuation):
         for t in range(len(time_list) - 2, 0, -1):
             df = discount_factors[t + 1, 1] / discount_factors[t, 1]
             itm = intrinsic_values[t] > 0
-            # itm = [True for _ in range(intrinsic_values.shape[1])]  # consider all paths
-            X = instrument_values[t][itm]
-            Y = df * V[t + 1][itm]
-            if len(X) > 0:
-                coefficients = np.polyfit(X, Y, deg=deg)
+            S_itm = instrument_values[t][itm]
+            V_itm = df * V[t + 1][itm]
+            if len(S_itm) > 0:
+                coefficients = np.polyfit(S_itm, V_itm, deg=deg)
             else:
                 coefficients = np.zeros(deg + 1)
             predicted_cv = np.zeros_like(instrument_values[t])

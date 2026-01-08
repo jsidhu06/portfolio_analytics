@@ -48,10 +48,6 @@ class SRDParams:
     theta: float  # long-run mean
 
 
-def _rng(seed: int | None) -> np.random.Generator:
-    return np.random.default_rng(seed)
-
-
 class PathSimulation(ABC):
     """Providing base methods for simulation classes.
 
