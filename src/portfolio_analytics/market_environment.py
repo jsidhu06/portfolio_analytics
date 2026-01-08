@@ -1,6 +1,11 @@
 # pylint: disable=too-few-public-methods, missing-function-docstring
 """Model market environments for valuation."""
 
+from dataclasses import dataclass
+import datetime as dt
+import numpy as np
+from .rates import ConstantShortRate
+
 
 class MarketEnvironment:
     """Class to model a market environment relevant for valuation.
@@ -63,3 +68,21 @@ class MarketEnvironment:
         self.constants.update(env.constants)
         self.lists.update(env.lists)
         self.curves.update(env.curves)
+
+
+@dataclass(frozen=True, slots=True)
+class MarketData:
+    """Market data required for valuation/simulation."""
+
+    pricing_date: dt.datetime
+    discount_curve: ConstantShortRate
+    currency: str
+
+
+@dataclass(frozen=True, slots=True)
+class CorrelationContext:
+    """Shared correlation/scenario context for multi-asset simulation."""
+
+    cholesky_matrix: np.ndarray  # shape (n_assets, n_assets)
+    random_numbers: np.ndarray  # shape (n_assets, n_time_intervals, n_paths)
+    rn_set: dict[str, int]  # maps asset name -> index in random_numbers
