@@ -5,6 +5,7 @@ from .stochastic_processes import PathSimulation
 from .enums import OptionType, ExerciseType, PricingMethod
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
+from .rates import ConstantShortRate
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,28 @@ class OptionSpec:
             )
 
 
+class UnderlyingData:
+    """Minimal data container for option valuation underlying asset.
+
+    Used when pricing with methods that don't require full stochastic process simulation
+    (e.g., binomial trees). Contains only essential parameters: spot price, volatility,
+    pricing date, and discount curve.
+    """
+
+    def __init__(
+        self,
+        initial_value: float,
+        volatility: float,
+        pricing_date: dt.datetime,
+        discount_curve: ConstantShortRate,
+    ):
+        self.initial_value = initial_value
+        self.volatility = volatility
+        self.pricing_date = pricing_date
+        self.discount_curve = discount_curve
+        self.special_dates = []  # For compatibility with valuation methods
+
+
 class OptionValuation:
     """Single-factor option valuation dispatcher.
 
@@ -39,16 +62,18 @@ class OptionValuation:
     ==========
     name: str
         Name of the valuation object/trade.
-    underlying: PathSimulation
-        Stochastic process simulator for the underlying risk factor.
+    underlying: PathSimulation | UnderlyingData
+        Stochastic process simulator (Monte Carlo) or minimal data container (Binomial).
+        For Monte Carlo: must be PathSimulation instance.
+        For Binomial: can be PathSimulation or UnderlyingData.
     spec: OptionSpec
         Contract terms (type, exercise type, strike, maturity, currency, contract_size).
     pricing_method: PricingMethod
         Valuation methodology to use (Monte Carlo, Binomial, BSM, etc).
     pricing_date: datetime
-        Pricing date (taken from MarketData via underlying).
+        Pricing date (taken from underlying).
     discount_curve:
-        Discount curve used for valuation (taken from MarketData).
+        Discount curve used for valuation (taken from underlying).
 
     Methods
     =======
@@ -63,7 +88,7 @@ class OptionValuation:
     def __init__(
         self,
         name: str,
-        underlying: PathSimulation,
+        underlying: PathSimulation | UnderlyingData,
         spec: OptionSpec,
         pricing_method: PricingMethod,
     ):
@@ -71,7 +96,7 @@ class OptionValuation:
         self.underlying = underlying
         self.spec = spec
 
-        # Pricing date + discount curve come from the underlying's MarketData
+        # Pricing date + discount curve come from the underlying
         self.pricing_date = underlying.pricing_date
         self.discount_curve = underlying.discount_curve
 
@@ -87,13 +112,23 @@ class OptionValuation:
         # Optional sanity check: maturity must be after pricing date
         if self.maturity <= self.pricing_date:
             raise ValueError("Option maturity must be after pricing_date.")
-        # provide pricing_date and maturity to underlying
-        self.underlying.special_dates.extend([self.pricing_date, self.maturity])
+
+        # Only add special dates for PathSimulation (Monte Carlo)
+        if isinstance(underlying, PathSimulation):
+            underlying.special_dates.extend([self.pricing_date, self.maturity])
 
         # Validate pricing_method
         if not isinstance(pricing_method, PricingMethod):
             raise TypeError(
                 f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
+            )
+
+        # Validate that MC requires PathSimulation
+        if pricing_method == PricingMethod.MONTE_CARLO and not isinstance(
+            underlying, PathSimulation
+        ):
+            raise TypeError(
+                "Monte Carlo pricing requires underlying to be a PathSimulation instance"
             )
 
         # Dispatch to appropriate pricing method implementation
@@ -140,7 +175,7 @@ class OptionValuation:
         """
         return self._impl.present_value(full=full, **kwargs)
 
-    def delta(self, epsilon: float | None = None, random_seed: int | None = None):
+    def delta(self, epsilon: float | None = None, **kwargs) -> float:
         """Calculate option delta using central difference approximation."""
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
@@ -149,11 +184,11 @@ class OptionValuation:
         try:
             # calculate left value for numerical Delta
             self.underlying.initial_value -= epsilon
-            value_left = self.present_value(random_seed=random_seed)
+            value_left = self.present_value(**kwargs)
             # numerical underlying value for right value
             self.underlying.initial_value += 2 * epsilon
             # calculate right value for numerical delta
-            value_right = self.present_value(random_seed=random_seed)
+            value_right = self.present_value(**kwargs)
         finally:
             # reset the initial_value of the simulation object
             self.underlying.initial_value = initial_spot
@@ -166,20 +201,19 @@ class OptionValuation:
             return 1.0
         return delta
 
-    def vega(self, epsilon: float = 0.01, random_seed: int | None = None):
+    def vega(self, epsilon: float = 0.01, **kwargs) -> float:
         """Calculate option vega using central difference approximation."""
-        epsilon = max(epsilon, self.underlying.volatility / 50.0)
         # central-difference approximation
         initial_vol = self.underlying.volatility
         try:
             # calculate the left value for numerical Vega
             self.underlying.volatility -= epsilon
-            value_left = self.present_value(random_seed=random_seed)
+            value_left = self.present_value(**kwargs)
             # numerical volatility value for right value
             # update the simulation object
             self.underlying.volatility += 2 * epsilon
             # calculate the right value for numerical Vega
-            value_right = self.present_value(random_seed=random_seed)
+            value_right = self.present_value(**kwargs)
         finally:
             # reset volatility value of simulation object
             self.underlying.volatility = initial_vol
