@@ -4,6 +4,7 @@ import numpy as np
 from .stochastic_processes import PathSimulation
 from .enums import OptionType, ExerciseType, PricingMethod
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
+from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,18 +104,41 @@ class OptionValuation:
                 self._impl = _MCAmerianValuation(self)
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
+        elif pricing_method == PricingMethod.BINOMIAL:
+            if spec.exercise_type == ExerciseType.EUROPEAN:
+                self._impl = _BinomialEuropeanValuation(self)
+            elif spec.exercise_type == ExerciseType.AMERICAN:
+                self._impl = _BinomialAmericanValuation(self)
+            else:
+                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
         else:
             raise ValueError(f"Pricing method {pricing_method} not yet implemented")
 
-    def generate_payoff(self, random_seed: int | None = None):
-        """Generate payoff at maturity for the derivative."""
-        return self._impl.generate_payoff(random_seed)
+    def generate_payoff(self, **kwargs):
+        """Generate payoff at maturity for the derivative.
 
-    def present_value(
-        self, random_seed: int | None = None, full: bool = False, **kwargs
-    ) -> float | tuple[float, np.ndarray]:
-        """Calculate present value of the derivative."""
-        return self._impl.present_value(random_seed, full, **kwargs)
+        Parameters
+        ==========
+        **kwargs:
+            Method-specific parameters:
+            - MCS: random_seed (int, optional)
+            - Binomial: num_steps (int, optional)
+        """
+        return self._impl.generate_payoff(**kwargs)
+
+    def present_value(self, *, full: bool = False, **kwargs) -> float | tuple[float, np.ndarray]:
+        """Calculate present value of the derivative.
+
+        Parameters
+        ==========
+        full: bool
+            Return full result with values at all nodes/paths
+        **kwargs:
+            Method-specific parameters:
+            - MCS: random_seed (int, optional), deg (int, optional, American only)
+            - Binomial: num_steps (int, optional)
+        """
+        return self._impl.present_value(full=full, **kwargs)
 
     def delta(self, epsilon: float | None = None, random_seed: int | None = None):
         """Calculate option delta using central difference approximation."""

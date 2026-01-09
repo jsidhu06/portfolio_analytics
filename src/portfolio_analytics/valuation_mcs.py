@@ -10,8 +10,9 @@ class _MCEuropeanValuation:
     def __init__(self, parent):
         self.parent = parent
 
-    def generate_payoff(self, random_seed: int | None = None) -> np.ndarray:
+    def generate_payoff(self, **kwargs) -> np.ndarray:
         """Generate payoff vector at maturity (one value per path)."""
+        random_seed = kwargs.get("random_seed")
         paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.parent.underlying.time_grid
 
@@ -36,11 +37,11 @@ class _MCEuropeanValuation:
 
     def present_value(
         self,
-        random_seed: int | None = None,
         full: bool = False,
         **kwargs,
     ) -> float | tuple[float, np.ndarray]:
         """Return PV (and optionally pathwise discounted PVs)."""
+        random_seed = kwargs.get("random_seed")
         cash_flow = self.generate_payoff(random_seed=random_seed)
 
         # discount factor from pricing_date to maturity
@@ -51,7 +52,7 @@ class _MCEuropeanValuation:
         )
 
         pv_pathwise = discount_factor * cash_flow
-        pv = float(np.mean(pv_pathwise))
+        pv = np.mean(pv_pathwise)
 
         if full:
             return pv, pv_pathwise
@@ -64,9 +65,7 @@ class _MCAmerianValuation:
     def __init__(self, parent):
         self.parent = parent
 
-    def generate_payoff(
-        self, random_seed: int | None = None
-    ) -> tuple[np.ndarray, np.ndarray, int, int]:
+    def generate_payoff(self, **kwargs) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate payoff paths and indices.
 
         Parameters
@@ -78,6 +77,7 @@ class _MCAmerianValuation:
         =======
         tuple of (instrument_values, payoff, time_index_start, time_index_end)
         """
+        random_seed = kwargs.get("random_seed")
         paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.parent.underlying.time_grid
         # locate indices
@@ -106,7 +106,6 @@ class _MCAmerianValuation:
 
     def present_value(
         self,
-        random_seed: int | None = None,
         full: bool = False,
         deg: int = 2,
         **kwargs,
@@ -115,17 +114,19 @@ class _MCAmerianValuation:
 
         Parameters
         ==========
-        random_seed: int, optional
-            random seed for path generation
         full: bool
             return also full 1d array of present values
         deg: int
             degree of polynomial for regression
+        **kwargs:
+            random_seed: int, optional
+                random seed for path generation
 
         Returns
         =======
         float or tuple of (pv, pathwise_discounted_values)
         """
+        random_seed = kwargs.get("random_seed")
         instrument_values, intrinsic_values, time_index_start, time_index_end = (
             self.generate_payoff(random_seed=random_seed)
         )
