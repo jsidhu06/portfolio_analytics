@@ -325,14 +325,14 @@ class JumpDiffusion(PathSimulation):
         self,
         name: str,
         market_data: MarketData,
-        process_params,  # expects: initial_value, volatility, lamb, mu, delta
+        process_params,  # expects: initial_value, volatility, jump_intensity, jump_mean, jump_std
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):
         super().__init__(name, market_data, process_params, sim, corr=corr)
-        self.lamb = process_params.lamb  # jump intensity (per year)
-        self.mu = process_params.mu  # mean of log jump size
-        self.delta = process_params.delta  # std of log jump size
+        self.jump_intensity = process_params.jump_intensity  # lambda (per year)
+        self.jump_mean = process_params.jump_mean  # mu_J (mean of log jump size)
+        self.jump_std = process_params.jump_std  # delta_J (std of log jump size)
 
     def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         # TO DO: Check these calcs
@@ -349,9 +349,9 @@ class JumpDiffusion(PathSimulation):
         # risk-free rate (adjust if your curve API differs)
         r = float(self.discount_curve.short_rate)
 
-        lam = self.lamb
-        mu_j = self.mu
-        sig_j = self.delta
+        lam = self.jump_intensity
+        mu_j = self.jump_mean
+        sig_j = self.jump_std
         vol = self.volatility
 
         # compensator k = E[e^Y - 1]

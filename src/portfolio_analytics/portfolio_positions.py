@@ -6,9 +6,14 @@ from .stochastic_processes import (
     GeometricBrownianMotion,
     SquareRootDiffusion,
     JumpDiffusion,
+    GBMParams,
+    JDParams,
+    SRDParams,
+    SimulationConfig,
 )
-from .valuation import OptionValuation, ValuationMCSEuropean, ValuationMCSAmerican
-from .market_environment import MarketEnvironment
+from .valuation import OptionValuation, OptionSpec, UnderlyingConfig
+from .enums import OptionType, ExerciseType, PricingMethod
+from .market_environment import MarketEnvironment, MarketData, CorrelationContext
 from .utils import sn_random_numbers
 
 # models available for risk factor modeling
@@ -18,10 +23,23 @@ MODELS: dict[str, Type[PathSimulation]] = {
     "srd": SquareRootDiffusion,
 }
 
-# allowed exercise types
-OTYPES: dict[str, Type[OptionValuation]] = {
-    "European": ValuationMCSEuropean,
-    "American": ValuationMCSAmerican,
+# parameter types for each model
+MODEL_PARAMS: dict[str, type] = {
+    "gbm": GBMParams,
+    "jd": JDParams,
+    "srd": SRDParams,
+}
+
+# mapping of string option types to enums
+OPTION_TYPES: dict[str, OptionType] = {
+    "call": OptionType.CALL,
+    "put": OptionType.PUT,
+}
+
+# mapping of string exercise types to enums
+EXERCISE_TYPES: dict[str, ExerciseType] = {
+    "european": ExerciseType.EUROPEAN,
+    "american": ExerciseType.AMERICAN,
 }
 
 
@@ -30,45 +48,31 @@ class DerivativesPosition:
 
     Attributes
     ==========
-
     name: str
         name of the object
     quantity: float
         number of assets/derivatives making up the position
-    contract_size: int
-        size of one contract (e.g. number of shares per option contract)
     underlying: str
         name of asset/risk factor for the derivative
-    mar_env: instance of market_environment
-        constants, lists, and curves relevant for valuation_class
-    otype: str
-        valuation class to use
-    side: str
-        'call' or 'put' for options
+    spec: OptionSpec
+        Contract specification (type, exercise type, strike, maturity, etc.)
+    market_data: MarketData
+        Market data (pricing date, discount curve, currency)
     """
 
     def __init__(
         self,
         name: str,
         quantity: int,
-        contract_size: int | float,
-        underlying: PathSimulation,
-        mar_env: MarketEnvironment,
-        otype: str,
-        side: str,
+        underlying: str,
+        spec: OptionSpec,
+        market_data: MarketData,
     ):
-        if side not in ("call", "put"):
-            raise ValueError(f"side must be 'call' or 'put', received '{side}'")
-        if otype not in OTYPES:
-            raise ValueError(f"otype must be one of {list(OTYPES.keys())}, received '{otype}'")
-
         self.name = name
         self.quantity = quantity
-        self.contract_size = contract_size
         self.underlying = underlying
-        self.mar_env = mar_env
-        self.otype = otype
-        self.side = side
+        self.spec = spec
+        self.market_data = market_data
 
     def __str__(self) -> str:
         lines = []
@@ -82,25 +86,18 @@ class DerivativesPosition:
         lines.append("UNDERLYING")
         lines.append(f"{self.underlying}\n")
 
-        lines.append("MARKET ENVIRONMENT")
+        lines.append("MARKET DATA")
+        lines.append(f"Pricing Date: {self.market_data.pricing_date}")
+        lines.append(f"Currency: {self.market_data.currency}")
+        lines.append(f"Discount Curve: {self.market_data.discount_curve.name}")
 
-        lines.append("\n**Constants**")
-        for key, value in self.mar_env.constants.items():
-            lines.append(f"{key}: {value}")
-
-        lines.append("\n**Lists**")
-        for key, value in self.mar_env.lists.items():
-            lines.append(f"{key}: {value}")
-
-        lines.append("\n**Curves**")
-        for key in self.mar_env.curves.keys():
-            lines.append(f"{key}")
-
-        lines.append("\nOPTION TYPE")
-        lines.append(f"{self.otype}\n")
-
-        lines.append("SIDE")
-        lines.append(f"{self.side}")
+        lines.append("\nOPTION SPECIFICATION")
+        lines.append(f"Type: {self.spec.option_type.value}")
+        lines.append(f"Exercise: {self.spec.exercise_type.value}")
+        lines.append(f"Strike: {self.spec.strike}")
+        lines.append(f"Maturity: {self.spec.maturity}")
+        lines.append(f"Currency: {self.spec.currency}")
+        lines.append(f"Contract Size: {self.spec.contract_size}")
 
         return "\n".join(lines)
 
@@ -119,8 +116,8 @@ class DerivativesPortfolio:
         dictionary of positions (instances of DerivativesPosition class)
     val_env: MarketEnvironment
         market environment for the valuation
-    assets: dict[str,MarketEnvironment]
-        dictionary of market environments for the assets
+    underlyings: dict[str,UnderlyingConfig]
+        dictionary of underlying asset configurations
     correlations: Sequence[tuple[str, str, float]], optional
         list of tuples with pairwise correlations between assets
     random_seed: int, optional
@@ -139,15 +136,15 @@ class DerivativesPortfolio:
         name: str,
         positions: dict[str, DerivativesPosition],
         val_env: MarketEnvironment,
-        assets: dict[str, MarketEnvironment],
+        underlyings: dict[str, UnderlyingConfig],
         correlations: Sequence[tuple[str, str, float]] | None = None,
         random_seed: int | None = None,
     ):
         self.name = name
         self.positions = positions
         self.val_env = val_env
-        self.assets = assets
-        self.underlyings = set()  # Set[str]
+        self.underlyings_config = underlyings
+        self.underlying_names: set[str] = set(underlyings.keys())
         self.correlations = correlations
         self.time_grid = None
         self.underlying_objects: dict[str, PathSimulation] = {}
@@ -157,15 +154,12 @@ class DerivativesPortfolio:
         for pos in self.positions:
             # determine earliest starting_date
             self.val_env.constants["starting_date"] = min(
-                self.val_env.constants["starting_date"], positions[pos].mar_env.pricing_date
+                self.val_env.constants["starting_date"], positions[pos].market_data.pricing_date
             )
             # determine latest date of relevance
             self.val_env.constants["final_date"] = max(
-                self.val_env.constants["final_date"], positions[pos].mar_env.constants["maturity"]
+                self.val_env.constants["final_date"], positions[pos].spec.maturity
             )
-            # collect all underlyings and
-            # add to set (avoids redundancy)
-            self.underlyings.add(positions[pos].underlying)
 
         # generate general time grid
         start = self.val_env.constants["starting_date"]
@@ -176,7 +170,7 @@ class DerivativesPortfolio:
             ).to_pydatetime()
         )
         for pos in self.positions:
-            maturity_date = positions[pos].mar_env.constants["maturity"]
+            maturity_date = positions[pos].spec.maturity
             if maturity_date not in time_grid:
                 time_grid.insert(0, maturity_date)
                 self.special_dates.append(maturity_date)
@@ -193,7 +187,7 @@ class DerivativesPortfolio:
 
         if correlations is not None:
             # take care of correlations
-            ul_list = sorted(self.underlyings)
+            ul_list = sorted(self.underlying_names)
             correlation_matrix = np.zeros((len(ul_list), len(ul_list)))
             np.fill_diagonal(correlation_matrix, 1.0)
             correlation_matrix = pd.DataFrame(correlation_matrix, index=ul_list, columns=ul_list)
@@ -208,7 +202,7 @@ class DerivativesPortfolio:
             # dictionary with index positions for the
             # slice of the random number array to be used by
             # respective underlying
-            rn_set = {asset: ul_list.index(asset) for asset in self.underlyings}
+            rn_set = {asset: ul_list.index(asset) for asset in self.underlying_names}
 
             # random numbers array, to be used by
             # all underlyings (if correlations exist)
@@ -223,33 +217,74 @@ class DerivativesPortfolio:
             self.val_env.add_list("random_numbers", random_numbers)
             self.val_env.add_list("rn_set", rn_set)
 
-        for asset in self.underlyings:
-            # select market environment of asset
-            mar_env = self.assets[asset]
-            # add valuation environment to market environment
-            mar_env.add_environment(val_env)
-            # select right simulation class
-            model = MODELS.get(mar_env.constants["model"])
+        for asset_name, asset_config in self.underlyings_config.items():
+            # Get the model class for this underlying
+            model = MODELS.get(asset_config.model)
             if model is None:
-                raise ValueError(f"Model must be one of {list(MODELS.keys())}")
-            # instantiate simulation object
-            if correlations is not None:
-                self.underlying_objects[asset] = model(asset, mar_env, corr=True)
+                raise ValueError(
+                    f"Model '{asset_config.model}' not found. Must be one of {list(MODELS.keys())}"
+                )
+
+            # Construct process parameters based on model type
+            if asset_config.model == "gbm":
+                process_params = GBMParams(
+                    initial_value=asset_config.initial_value,
+                    volatility=asset_config.volatility,
+                )
+            elif asset_config.model == "jd":
+                process_params = JDParams(
+                    initial_value=asset_config.initial_value,
+                    volatility=asset_config.volatility,
+                    jump_intensity=asset_config.jump_intensity,
+                    jump_mean=asset_config.jump_mean,
+                    jump_std=asset_config.jump_std,
+                )
+            elif asset_config.model == "srd":
+                process_params = SRDParams(
+                    initial_value=asset_config.initial_value,
+                    volatility=asset_config.volatility,
+                    kappa=asset_config.kappa,
+                    theta=asset_config.theta,
+                )
             else:
-                self.underlying_objects[asset] = model(asset, mar_env, corr=False)
+                raise ValueError(f"Unknown model type: {asset_config.model}")
+
+            # Construct SimulationConfig
+            sim_config = SimulationConfig(
+                paths=self.val_env.constants["paths"],
+                frequency=self.val_env.constants["frequency"],
+                final_date=self.val_env.constants["final_date"],
+                day_count_convention=self.val_env.constants.get("day_count_convention", 365),
+                time_grid=self.time_grid,
+                special_dates=self.special_dates,
+            )
+
+            # Construct CorrelationContext if correlations exist
+            if correlations is not None:
+                corr_context = CorrelationContext(
+                    cholesky_matrix=self.val_env.get_list("cholesky_matrix"),
+                    random_numbers=self.val_env.get_list("random_numbers"),
+                    rn_set=self.val_env.get_list("rn_set"),
+                )
+            else:
+                corr_context = None
+
+            # Instantiate the PathSimulation object
+            self.underlying_objects[asset_name] = model(
+                name=asset_name,
+                market_data=asset_config.market_data,
+                process_params=process_params,
+                sim=sim_config,
+                corr=corr_context,
+            )
 
         for pos in positions:
-            # select right valuation class (European, American)
-            val_class = OTYPES[positions[pos].otype]
-            # pick market environment and add valuation environment
-            mar_env = positions[pos].mar_env
-            mar_env.add_environment(self.val_env)
-            # instantiate valuation class
-            self.valuation_objects[pos] = val_class(
+            # instantiate valuation class with Monte Carlo pricing
+            self.valuation_objects[pos] = OptionValuation(
                 name=positions[pos].name,
-                mar_env=mar_env,
                 underlying=self.underlying_objects[positions[pos].underlying],
-                side=positions[pos].side,
+                spec=positions[pos].spec,
+                pricing_method=PricingMethod.MONTE_CARLO,
             )
 
     def get_positions(self):
@@ -274,17 +309,17 @@ class DerivativesPortfolio:
                     p.quantity,
                     # calculate all present values for the single instruments
                     pv,
-                    value.currency,
+                    p.spec.currency,
                     # single instrument contact size
-                    p.contract_size,
+                    p.spec.contract_size,
                     # underlying spot price
-                    self.assets[p.underlying].get_constant("initial_value"),
+                    self.underlyings_config[p.underlying].initial_value,
                     # single instrument value times quantity
-                    pv * p.contract_size * p.quantity,
+                    pv * p.spec.contract_size * p.quantity,
                     # calculate Delta of position
-                    value.delta(random_seed=random_seed) * p.contract_size * p.quantity,
+                    value.delta(random_seed=random_seed) * p.spec.contract_size * p.quantity,
                     # calculate Vega of position
-                    value.vega(random_seed=random_seed) * p.contract_size * p.quantity,
+                    value.vega(random_seed=random_seed) * p.spec.contract_size * p.quantity,
                 ]
             )
         # generate a pandas DataFrame object with all results

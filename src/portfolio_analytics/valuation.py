@@ -6,6 +6,7 @@ from .enums import OptionType, ExerciseType, PricingMethod
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
 from .rates import ConstantShortRate
+from .market_environment import MarketData
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,51 @@ class OptionSpec:
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
+
+
+@dataclass
+class UnderlyingConfig:
+    """Configuration for an underlying asset in portfolio simulations.
+
+    Specifies the stochastic process model and its parameters for a particular
+    underlying asset. Used to instantiate PathSimulation objects in portfolio context.
+
+    Attributes
+    ==========
+    name: str
+        Name/identifier of the underlying asset (e.g., 'STOCK', 'INDEX')
+    model: str
+        Stochastic process model type: 'gbm', 'jd', or 'srd'
+    market_data: MarketData
+        Market data (pricing date, discount curve, currency)
+    initial_value: float
+        Initial spot price or rate
+    volatility: float
+        Volatility of the process
+    jump_intensity: float
+        Jump intensity lambda (for 'jd' model only)
+    jump_mean: float
+        Mean of jump size log returns (for 'jd' model only)
+    jump_std: float
+        Standard deviation of jump size log returns (for 'jd' model only)
+    kappa: float
+        Mean reversion speed (for 'srd' model only)
+    theta: float
+        Long-run mean level (for 'srd' model only)
+    """
+
+    name: str
+    model: str  # 'gbm', 'jd', 'srd'
+    market_data: MarketData
+    initial_value: float
+    volatility: float
+    # Optional JD (Jump Diffusion) parameters
+    jump_intensity: float = 0.0
+    jump_mean: float = 0.0
+    jump_std: float = 0.0
+    # Optional SRD (Square Root Diffusion / CIR) parameters
+    kappa: float = 0.1
+    theta: float = 0.05
 
 
 class UnderlyingData:

@@ -182,7 +182,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         full: bool
             return also full option value matrix
         **kwargs:
-            num_steps: int, optional (default: 100)
+            num_steps: int, optional (default: 500)
                 number of steps in the binomial tree
 
         Returns
