@@ -13,7 +13,7 @@ from .stochastic_processes import (
 )
 from .valuation import OptionValuation, OptionSpec, UnderlyingConfig
 from .enums import OptionType, ExerciseType, PricingMethod
-from .market_environment import MarketEnvironment, MarketData, CorrelationContext
+from .market_environment import MarketData, CorrelationContext, ValuationEnvironment
 from .utils import sn_random_numbers
 
 # models available for risk factor modeling
@@ -114,8 +114,8 @@ class DerivativesPortfolio:
         name of the object
     positions: dict[str,DerivativesPosition]
         dictionary of positions (instances of DerivativesPosition class)
-    val_env: MarketEnvironment
-        market environment for the valuation
+    val_env: ValuationEnvironment
+        valuation environment for the portfolio
     underlyings: dict[str,UnderlyingConfig]
         dictionary of underlying asset configurations
     correlations: Sequence[tuple[str, str, float]], optional
@@ -135,7 +135,7 @@ class DerivativesPortfolio:
         self,
         name: str,
         positions: dict[str, DerivativesPosition],
-        val_env: MarketEnvironment,
+        val_env: ValuationEnvironment,
         underlyings: dict[str, UnderlyingConfig],
         correlations: Sequence[tuple[str, str, float]] | None = None,
         random_seed: int | None = None,
@@ -151,23 +151,21 @@ class DerivativesPortfolio:
         self.valuation_objects: dict[str, OptionValuation] = {}
         self.random_seed = random_seed
         self.special_dates = []
+
+        # Determine earliest starting_date and latest final_date from positions
         for pos in self.positions:
             # determine earliest starting_date
-            self.val_env.constants["starting_date"] = min(
-                self.val_env.constants["starting_date"], positions[pos].market_data.pricing_date
+            self.val_env.starting_date = min(
+                self.val_env.starting_date, positions[pos].market_data.pricing_date
             )
             # determine latest date of relevance
-            self.val_env.constants["final_date"] = max(
-                self.val_env.constants["final_date"], positions[pos].spec.maturity
-            )
+            self.val_env.final_date = max(self.val_env.final_date, positions[pos].spec.maturity)
 
         # generate general time grid
-        start = self.val_env.constants["starting_date"]
-        end = self.val_env.constants["final_date"]
+        start = self.val_env.starting_date
+        end = self.val_env.final_date
         time_grid = list(
-            pd.date_range(
-                start=start, end=end, freq=self.val_env.constants["frequency"]
-            ).to_pydatetime()
+            pd.date_range(start=start, end=end, freq=self.val_env.frequency).to_pydatetime()
         )
         for pos in self.positions:
             maturity_date = positions[pos].spec.maturity
@@ -183,7 +181,10 @@ class DerivativesPortfolio:
         # sort dates in time_grid
         time_grid.sort()
         self.time_grid = np.array(time_grid)
-        self.val_env.add_list("time_grid", self.time_grid)
+
+        # Set time_grid and special_dates in val_env
+        self.val_env.time_grid = self.time_grid
+        self.val_env.special_dates = self.special_dates
 
         if correlations is not None:
             # take care of correlations
@@ -207,15 +208,18 @@ class DerivativesPortfolio:
             # random numbers array, to be used by
             # all underlyings (if correlations exist)
             random_numbers = sn_random_numbers(
-                (len(rn_set), len(self.time_grid), self.val_env.constants["paths"]),
+                (len(rn_set), len(self.time_grid), self.val_env.paths),
                 random_seed=self.random_seed,
             )
 
-            # add all to valuation environment that is
-            # to be shared with every underlying
-            self.val_env.add_list("cholesky_matrix", cholesky_matrix)
-            self.val_env.add_list("random_numbers", random_numbers)
-            self.val_env.add_list("rn_set", rn_set)
+            # Create CorrelationContext
+            corr_context = CorrelationContext(
+                cholesky_matrix=cholesky_matrix,
+                random_numbers=random_numbers,
+                rn_set=rn_set,
+            )
+        else:
+            corr_context = None
 
         for asset_name, asset_config in self.underlyings_config.items():
             # Get the model class for this underlying
@@ -251,23 +255,13 @@ class DerivativesPortfolio:
 
             # Construct SimulationConfig
             sim_config = SimulationConfig(
-                paths=self.val_env.constants["paths"],
-                frequency=self.val_env.constants["frequency"],
-                final_date=self.val_env.constants["final_date"],
-                day_count_convention=self.val_env.constants.get("day_count_convention", 365),
+                paths=self.val_env.paths,
+                frequency=self.val_env.frequency,
+                final_date=self.val_env.final_date,
+                day_count_convention=self.val_env.day_count_convention,
                 time_grid=self.time_grid,
                 special_dates=self.special_dates,
             )
-
-            # Construct CorrelationContext if correlations exist
-            if correlations is not None:
-                corr_context = CorrelationContext(
-                    cholesky_matrix=self.val_env.get_list("cholesky_matrix"),
-                    random_numbers=self.val_env.get_list("random_numbers"),
-                    rn_set=self.val_env.get_list("rn_set"),
-                )
-            else:
-                corr_context = None
 
             # Instantiate the PathSimulation object
             self.underlying_objects[asset_name] = model(
