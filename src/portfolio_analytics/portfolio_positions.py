@@ -148,7 +148,7 @@ class DerivativesPortfolio:
         self.random_seed = random_seed
         self.special_dates = []
 
-        # --- Validate inputs + derive portfolio schedule (do not mutate val_env) ---
+        # Validate inputs + derive portfolio schedule
         if not positions:
             raise ValueError("positions dict must not be empty")
         if not underlyings:

@@ -4,6 +4,7 @@ Cox-Ross-Rubinstein
 
 import numpy as np
 import pandas as pd
+from .valuation import OptionValuation
 from .enums import OptionType
 from .utils import calculate_year_fraction
 
@@ -11,7 +12,7 @@ from .utils import calculate_year_fraction
 class _BinomialValuationBase:
     """Base class for binomial tree option valuation."""
 
-    def __init__(self, parent):
+    def __init__(self, parent: OptionValuation):
         self.parent = parent
 
     def _setup_binomial_parameters(self, num_steps: int) -> tuple:
@@ -24,7 +25,7 @@ class _BinomialValuationBase:
 
         Returns
         =======
-        tuple of (delta_t, discount_factor, u, d, q, binomial_matrix)
+        tuple of (discount_factor, q, binomial_matrix)
         """
         start = self.parent.pricing_date
         end = self.parent.maturity

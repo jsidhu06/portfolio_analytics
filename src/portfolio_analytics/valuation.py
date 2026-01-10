@@ -92,7 +92,6 @@ class UnderlyingData:
         self.volatility = volatility
         self.pricing_date = pricing_date
         self.discount_curve = discount_curve
-        self.special_dates = []  # For compatibility with valuation methods
 
 
 class OptionValuation:

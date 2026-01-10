@@ -31,7 +31,7 @@ class GBMParams:
     volatility: float
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class JDParams:
     initial_value: float
     volatility: float
@@ -40,7 +40,7 @@ class JDParams:
     jump_std: float  # delta_J (std of log jump size)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SRDParams:
     initial_value: float
     volatility: float
@@ -116,9 +116,6 @@ class PathSimulation(ABC):
         "Generate time grid for simulation of stochastic process"
         start = self.pricing_date
         end = self.final_date
-        # pandas date_range function; see
-        # https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#timeseries-offset-aliases
-        # for frequencies
         time_grid = list(pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime())
         # enhance time_grid by start, end, and special_dates
         if start not in time_grid:
@@ -130,10 +127,8 @@ class PathSimulation(ABC):
         if self.special_dates:
             # add all special dates
             time_grid.extend(self.special_dates)
-            # delete duplicates
-            time_grid = list(set(time_grid))
-            # sort list
-            time_grid.sort()
+            # delete duplicates and sort
+            time_grid = sorted(set(time_grid))
         self.time_grid = np.array(time_grid)
 
     def get_instrument_values(self, random_seed: int | None = None) -> np.ndarray:
@@ -150,8 +145,8 @@ class PathSimulation(ABC):
             simulated instrument value paths
         """
 
-        instrument_values = self.generate_paths(random_seed=random_seed)
-        return instrument_values
+        self.instrument_values = self.generate_paths(random_seed=random_seed)
+        return self.instrument_values
 
     @abstractmethod
     def generate_paths(
@@ -242,7 +237,6 @@ class GeometricBrownianMotion(PathSimulation):
             # generate simulated values for the respective date
             paths[t] = paths[t - 1] * np.exp(drift + diffusion)
 
-        self.instrument_values = paths
         return paths
 
 
@@ -304,7 +298,6 @@ class SquareRootDiffusion(PathSimulation):
             paths_hat[t] = paths_hat[t - 1] + mean_reversion + diffusion
             paths[t] = np.maximum(0, paths_hat[t])
 
-        self.instrument_values = paths
         return paths
 
 
@@ -392,5 +385,4 @@ class JumpDiffusion(PathSimulation):
 
             paths[t] = paths[t - 1] * diffusion_multiplier * jump_multiplier
 
-        self.instrument_values = paths
         return paths

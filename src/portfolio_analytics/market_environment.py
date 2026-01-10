@@ -94,7 +94,7 @@ class ValuationEnvironment:
 
     This class is intentionally *not* a catch-all for portfolio-derived artifacts.
     Dates like a portfolio simulation start/end, a time grid, or special dates
-    depend on the trades held and should be derived by the portfolio/scheduler.
+    depend on the positions held and should be derived by the portfolio/scheduler.
 
     Attributes
     ==========
