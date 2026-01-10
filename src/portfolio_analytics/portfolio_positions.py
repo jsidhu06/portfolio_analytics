@@ -13,7 +13,7 @@ from .stochastic_processes import (
 )
 from .valuation import OptionValuation, OptionSpec, UnderlyingConfig
 from .enums import OptionType, ExerciseType, PricingMethod
-from .market_environment import MarketData, CorrelationContext, ValuationEnvironment
+from .market_environment import CorrelationContext, ValuationEnvironment
 from .utils import sn_random_numbers
 
 # models available for risk factor modeling
@@ -46,18 +46,19 @@ EXERCISE_TYPES: dict[str, ExerciseType] = {
 class DerivativesPosition:
     """Class to model a derivatives position.
 
+    A position represents a holding of a derivatives contract: a quantity of
+    a specific underlying asset, with contract terms defined by spec.
+
     Attributes
     ==========
     name: str
-        name of the object
-    quantity: float
-        number of assets/derivatives making up the position
+        name/identifier of the position
+    quantity: int
+        number of contracts held
     underlying: str
-        name of asset/risk factor for the derivative
+        name of the risk factor/asset (must match a key in portfolio.underlyings)
     spec: OptionSpec
-        Contract specification (type, exercise type, strike, maturity, etc.)
-    market_data: MarketData
-        Market data (pricing date, discount curve, currency)
+        Contract specification (type, exercise type, strike, maturity, currency, etc.)
     """
 
     def __init__(
@@ -66,13 +67,11 @@ class DerivativesPosition:
         quantity: int,
         underlying: str,
         spec: OptionSpec,
-        market_data: MarketData,
     ):
         self.name = name
         self.quantity = quantity
         self.underlying = underlying
         self.spec = spec
-        self.market_data = market_data
 
     def __str__(self) -> str:
         lines = []
@@ -86,12 +85,7 @@ class DerivativesPosition:
         lines.append("UNDERLYING")
         lines.append(f"{self.underlying}\n")
 
-        lines.append("MARKET DATA")
-        lines.append(f"Pricing Date: {self.market_data.pricing_date}")
-        lines.append(f"Currency: {self.market_data.currency}")
-        lines.append(f"Discount Curve: {self.market_data.discount_curve.name}")
-
-        lines.append("\nOPTION SPECIFICATION")
+        lines.append("OPTION SPECIFICATION")
         lines.append(f"Type: {self.spec.option_type.value}")
         lines.append(f"Exercise: {self.spec.exercise_type.value}")
         lines.append(f"Strike: {self.spec.strike}")
@@ -146,45 +140,61 @@ class DerivativesPortfolio:
         self.underlyings_config = underlyings
         self.underlying_names: set[str] = set(underlyings.keys())
         self.correlations = correlations
+        self.pricing_date = val_env.market_data.pricing_date
+        self.final_date = None
         self.time_grid = None
         self.underlying_objects: dict[str, PathSimulation] = {}
         self.valuation_objects: dict[str, OptionValuation] = {}
         self.random_seed = random_seed
         self.special_dates = []
 
-        # Determine earliest starting_date and latest final_date from positions
-        for pos in self.positions:
-            # determine earliest starting_date
-            self.val_env.starting_date = min(
-                self.val_env.starting_date, positions[pos].market_data.pricing_date
-            )
-            # determine latest date of relevance
-            self.val_env.final_date = max(self.val_env.final_date, positions[pos].spec.maturity)
+        # --- Validate inputs + derive portfolio schedule (do not mutate val_env) ---
+        if not positions:
+            raise ValueError("positions dict must not be empty")
+        if not underlyings:
+            raise ValueError("underlyings dict must not be empty")
 
-        # generate general time grid
-        start = self.val_env.starting_date
-        end = self.val_env.final_date
+        # Validate that each position references a valid underlying
+        for position_name, position in positions.items():
+            if position.underlying not in underlyings:
+                raise ValueError(
+                    f"Position '{position_name}' references underlying '{position.underlying}' "
+                    f"which is not in the underlyings dict. Available underlyings: {list(underlyings.keys())}"
+                )
+
+        position_maturities = [p.spec.maturity for p in positions.values()]
+
+        self.final_date = max(position_maturities)
+
+        # Base grid from starting_date to final_date
         time_grid = list(
-            pd.date_range(start=start, end=end, freq=self.val_env.frequency).to_pydatetime()
+            pd.date_range(
+                start=self.pricing_date,
+                end=self.final_date,
+                freq=self.val_env.frequency,
+            ).to_pydatetime()
         )
-        for pos in self.positions:
-            maturity_date = positions[pos].spec.maturity
-            if maturity_date not in time_grid:
-                time_grid.insert(0, maturity_date)
-                self.special_dates.append(maturity_date)
-        if start not in time_grid:
-            time_grid.insert(0, start)
-        if end not in time_grid:
-            time_grid.append(end)
-        # delete duplicate entries
-        time_grid = list(set(time_grid))
-        # sort dates in time_grid
-        time_grid.sort()
+
+        # special dates are maturity dates that are not in the regular time grid; we add these
+        # to the time grid
+        self.special_dates = set(position_maturities).difference(time_grid)
+
+        # Ensure all key dates are included (pricing dates + maturities)
+        required_dates = set([self.pricing_date, self.final_date] + position_maturities)
+        time_grid.extend(required_dates)
+
+        # Delete duplicates and sort
+        time_grid = sorted(set(time_grid))
         self.time_grid = np.array(time_grid)
 
-        # Set time_grid and special_dates in val_env
-        self.val_env.time_grid = self.time_grid
-        self.val_env.special_dates = self.special_dates
+        # Construct SimulationConfig once (shared across underlyings)
+        sim_config = SimulationConfig(
+            paths=self.val_env.paths,
+            frequency=self.val_env.frequency,
+            final_date=self.final_date,
+            day_count_convention=self.val_env.day_count_convention,
+            time_grid=self.time_grid,
+        )
 
         if correlations is not None:
             # take care of correlations
@@ -253,20 +263,10 @@ class DerivativesPortfolio:
             else:
                 raise ValueError(f"Unknown model type: {asset_config.model}")
 
-            # Construct SimulationConfig
-            sim_config = SimulationConfig(
-                paths=self.val_env.paths,
-                frequency=self.val_env.frequency,
-                final_date=self.val_env.final_date,
-                day_count_convention=self.val_env.day_count_convention,
-                time_grid=self.time_grid,
-                special_dates=self.special_dates,
-            )
-
             # Instantiate the PathSimulation object
             self.underlying_objects[asset_name] = model(
                 name=asset_name,
-                market_data=asset_config.market_data,
+                market_data=self.val_env.market_data,
                 process_params=process_params,
                 sim=sim_config,
                 corr=corr_context,

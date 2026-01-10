@@ -88,41 +88,27 @@ class CorrelationContext:
     rn_set: dict[str, int]  # maps asset name -> index in random_numbers
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ValuationEnvironment:
-    """Valuation environment for derivatives portfolio.
+    """Portfolio-level valuation inputs.
 
-    Contains configuration parameters for Monte Carlo simulation and valuation,
-    along with generated time grid and special dates.
+    This class is intentionally *not* a catch-all for portfolio-derived artifacts.
+    Dates like a portfolio simulation start/end, a time grid, or special dates
+    depend on the trades held and should be derived by the portfolio/scheduler.
 
     Attributes
     ==========
-    pricing_date: datetime
-        valuation/pricing date
-    discount_curve: ConstantShortRate
-        discount rate curve for present value calculations
-    frequency: str
-        time grid frequency (e.g., 'W' for weekly, 'D' for daily)
-    paths: int
-        number of Monte Carlo simulation paths
-    starting_date: datetime
-        start date of simulation period
-    final_date: datetime
-        end date of simulation period
-    day_count_convention: int
-        day count basis (default 365)
-    time_grid: np.ndarray, optional
-        array of datetime objects in simulation time grid
-    special_dates: list[datetime], optional
-        important dates that must be included in time grid (e.g., maturity dates)
+    market_data: MarketData
+        Market data container.
+    paths:
+        Number of Monte Carlo paths.
+    frequency:
+        Time grid frequency (e.g. 'D', 'W', 'M').
+    day_count_convention:
+        Day count basis (default 365).
     """
 
-    pricing_date: dt.datetime
-    discount_curve: ConstantShortRate
-    frequency: str
+    market_data: MarketData
     paths: int
-    starting_date: dt.datetime
-    final_date: dt.datetime
+    frequency: str
     day_count_convention: int = 365
-    time_grid: np.ndarray | None = None
-    special_dates: list[dt.datetime] | None = None

@@ -6,7 +6,6 @@ from .enums import OptionType, ExerciseType, PricingMethod
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
 from .rates import ConstantShortRate
-from .market_environment import MarketData
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,8 +44,6 @@ class UnderlyingConfig:
         Name/identifier of the underlying asset (e.g., 'STOCK', 'INDEX')
     model: str
         Stochastic process model type: 'gbm', 'jd', or 'srd'
-    market_data: MarketData
-        Market data (pricing date, discount curve, currency)
     initial_value: float
         Initial spot price or rate
     volatility: float
@@ -65,7 +62,6 @@ class UnderlyingConfig:
 
     name: str
     model: str  # 'gbm', 'jd', 'srd'
-    market_data: MarketData
     initial_value: float
     volatility: float
     # Optional JD (Jump Diffusion) parameters
