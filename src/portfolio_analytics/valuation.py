@@ -5,6 +5,7 @@ from .stochastic_processes import PathSimulation
 from .enums import OptionType, ExerciseType, PricingMethod
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
+from .valuation_bsm import _BSMEuropeanValuation
 from .rates import ConstantShortRate
 
 
@@ -187,8 +188,18 @@ class OptionValuation:
                 self._impl = _BinomialAmericanValuation(self)
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
+        elif pricing_method == PricingMethod.BSM_CONTINUOUS:
+            if spec.exercise_type == ExerciseType.EUROPEAN:
+                self._impl = _BSMEuropeanValuation(self)
+            elif spec.exercise_type == ExerciseType.AMERICAN:
+                raise NotImplementedError(
+                    "BSM is only applicable to European option valuation. "
+                    "Select a different pricing method for American options such as Binomial or Monte Carlo."
+                )
+            else:
+                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
         else:
-            raise ValueError(f"Pricing method {pricing_method} not yet implemented")
+            raise ValueError(f"Pricing method {pricing_method.name} not yet implemented")
 
     def generate_payoff(self, **kwargs):
         """Generate payoff at maturity for the derivative.
