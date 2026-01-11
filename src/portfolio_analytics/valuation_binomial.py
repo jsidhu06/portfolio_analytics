@@ -2,17 +2,20 @@
 Cox-Ross-Rubinstein
 """
 
+from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
-from .valuation import OptionValuation
 from .enums import OptionType
 from .utils import calculate_year_fraction
+
+if TYPE_CHECKING:
+    from .valuation import OptionValuation
 
 
 class _BinomialValuationBase:
     """Base class for binomial tree option valuation."""
 
-    def __init__(self, parent: OptionValuation):
+    def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
     def _setup_binomial_parameters(self, num_steps: int) -> tuple:

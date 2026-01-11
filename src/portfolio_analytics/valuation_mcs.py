@@ -1,14 +1,17 @@
 """Monte Carlo Simulation option valuation implementations."""
 
+from typing import TYPE_CHECKING
 import numpy as np
-from .valuation import OptionValuation
 from .enums import OptionType
+
+if TYPE_CHECKING:
+    from .valuation import OptionValuation
 
 
 class _MCEuropeanValuation:
     """Implementation of European option valuation using Monte Carlo."""
 
-    def __init__(self, parent: OptionValuation):
+    def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
     def generate_payoff(self, **kwargs) -> np.ndarray:
@@ -63,7 +66,7 @@ class _MCEuropeanValuation:
 class _MCAmerianValuation:
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""
 
-    def __init__(self, parent: OptionValuation):
+    def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
     def generate_payoff(self, **kwargs) -> tuple[np.ndarray, np.ndarray, int, int]:
