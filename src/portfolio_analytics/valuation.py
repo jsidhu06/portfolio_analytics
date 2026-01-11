@@ -65,12 +65,12 @@ class UnderlyingConfig:
     initial_value: float
     volatility: float
     # Optional JD (Jump Diffusion) parameters
-    jump_intensity: float = 0.0
-    jump_mean: float = 0.0
-    jump_std: float = 0.0
+    jump_intensity: float | None = None
+    jump_mean: float | None = None
+    jump_std: float | None = None
     # Optional SRD (Square Root Diffusion / CIR) parameters
-    kappa: float = 0.1
-    theta: float = 0.05
+    kappa: float | None = None
+    theta: float | None = None
 
 
 class UnderlyingData:

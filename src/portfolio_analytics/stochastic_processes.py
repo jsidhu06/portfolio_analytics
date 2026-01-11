@@ -39,6 +39,12 @@ class JDParams:
     jump_mean: float  # mu_J (mean of log jump size)
     jump_std: float  # delta_J (std of log jump size)
 
+    def __post_init__(self):
+        if self.jump_intensity is None or self.jump_mean is None or self.jump_std is None:
+            raise ValueError(
+                "JDParams requires jump_intensity, jump_mean, and jump_std to be not None"
+            )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SRDParams:
@@ -46,6 +52,10 @@ class SRDParams:
     volatility: float
     kappa: float  # mean reversion speed
     theta: float  # long-run mean
+
+    def __post_init__(self):
+        if self.kappa is None or self.theta is None:
+            raise ValueError("SRDParams requires kappa and theta to be not None")
 
 
 class PathSimulation(ABC):
