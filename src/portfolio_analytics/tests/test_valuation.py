@@ -360,12 +360,16 @@ class TestBSMValuation:
         self.csr = ConstantShortRate("csr", self.rate)
         self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
 
-        self.ud = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-        )
+        underlying_params = {
+            "initial_value": self.spot,
+            "volatility": self.volatility,
+            "pricing_date": self.pricing_date,
+            "discount_curve": self.csr,
+        }
+
+        self.ud = UnderlyingData(**underlying_params)
+
+        self.ud_div = UnderlyingData(**{**underlying_params, "dividend_yield": 0.03})
 
     def test_bsm_call_option_atm(self):
         """Test BSM pricing for ATM call option (basic sanity check)."""
@@ -478,14 +482,21 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_WITH_DIV",
+            name="ZERO_DIVIDEND",
             underlying=self.ud,
             spec=call_spec,
             pricing_method=PricingMethod.BSM_CONTINUOUS,
         )
 
-        pv_no_div = valuation.present_value(dividend_yield=0.0)
-        pv_with_div = valuation.present_value(dividend_yield=0.02)
+        valuation_div = OptionValuation(
+            name="POSITIVE_DIVIDEND",
+            underlying=self.ud_div,
+            spec=call_spec,
+            pricing_method=PricingMethod.BSM_CONTINUOUS,
+        )
+
+        pv_no_div = valuation.present_value()
+        pv_with_div = valuation_div.present_value()
 
         # Call value should decrease with dividend yield
         assert pv_with_div < pv_no_div

@@ -79,7 +79,7 @@ class UnderlyingData:
 
     Used when pricing with methods that don't require full stochastic process simulation
     (e.g., binomial trees). Contains only essential parameters: spot price, volatility,
-    pricing date, and discount curve.
+    pricing date, discount curve, and continuous dividend yield (optional, default 0.0).
     """
 
     def __init__(
@@ -88,11 +88,13 @@ class UnderlyingData:
         volatility: float,
         pricing_date: dt.datetime,
         discount_curve: ConstantShortRate,
+        dividend_yield: float = 0.0,
     ):
         self.initial_value = initial_value
         self.volatility = volatility
         self.pricing_date = pricing_date
         self.discount_curve = discount_curve
+        self.dividend_yield = dividend_yield
 
 
 class OptionValuation:

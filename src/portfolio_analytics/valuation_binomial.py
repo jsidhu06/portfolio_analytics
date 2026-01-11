@@ -28,7 +28,7 @@ class _BinomialValuationBase:
 
         Returns
         =======
-        tuple of (discount_factor, q, binomial_matrix)
+        tuple of (discount_factor, p, binomial_matrix)
         """
         start = self.parent.pricing_date
         end = self.parent.maturity
@@ -39,9 +39,10 @@ class _BinomialValuationBase:
         r = self.parent.discount_curve.short_rate
         discount_factor = np.exp(-r * delta_t)
         sigma = self.parent.underlying.volatility
+        dividend_yield = self.parent.underlying.dividend_yield
         u = np.exp(sigma * np.sqrt(delta_t))
         d = 1 / u
-        q = (np.exp(r * delta_t) - d) / (u - d)
+        p = (np.exp((r - dividend_yield) * delta_t) - d) / (u - d)
 
         # Build binomial tree of stock prices
         up = np.arange(num_steps + 1)
@@ -51,7 +52,7 @@ class _BinomialValuationBase:
         S_0 = self.parent.underlying.initial_value
         binomial_matrix = S_0 * np.exp(sigma * np.sqrt(delta_t) * (up - down))
 
-        return discount_factor, q, binomial_matrix
+        return discount_factor, p, binomial_matrix
 
     def _get_intrinsic_values(self, instrument_values: np.ndarray) -> np.ndarray:
         """Calculate intrinsic values at each node.
@@ -91,7 +92,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
             option values at each node in the tree
         """
         num_steps = kwargs.get("num_steps", 500)
-        discount_factor, q, binomial_matrix = self._setup_binomial_parameters(num_steps)
+        discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
 
         # Initialize with intrinsic values at maturity
         V = self._get_intrinsic_values(binomial_matrix)
@@ -100,7 +101,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         z = 0
         for i in range(num_steps - 1, -1, -1):
             V[0 : num_steps - z, i] = (
-                q * V[0 : num_steps - z, i + 1] + (1 - q) * V[1 : num_steps - z + 1, i + 1]
+                p * V[0 : num_steps - z, i + 1] + (1 - p) * V[1 : num_steps - z + 1, i + 1]
             ) * discount_factor
             z += 1
 
@@ -152,7 +153,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
             option values at each node in the tree
         """
         num_steps = kwargs.get("num_steps", 500)
-        discount_factor, q, binomial_matrix = self._setup_binomial_parameters(num_steps)
+        discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
 
         # Initialize with intrinsic values at maturity
         V = self._get_intrinsic_values(binomial_matrix)
@@ -163,7 +164,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         for i in range(num_steps - 1, -1, -1):
             # Calculate continuation values
             continuation = (
-                q * V[0 : num_steps - z, i + 1] + (1 - q) * V[1 : num_steps - z + 1, i + 1]
+                p * V[0 : num_steps - z, i + 1] + (1 - p) * V[1 : num_steps - z + 1, i + 1]
             ) * discount_factor
 
             # American option: take max of intrinsic vs continuation value

@@ -74,24 +74,21 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         Parameters
         ==========
         **kwargs:
-            dividend_yield: float, optional (default: 0.0)
-                continuous dividend yield
+            placeholder for compatibility with other pricing methods
+            No BSM specific parameters currently
 
         Returns
         =======
         float
             option payoff value
         """
-        # TO DO: The current implementation is for testing purposes. In future, we will
-        # likely make dividend_yield a param and attr of the UnderlyingData class.
-        # This will require amending MCS and Binomial calcs to handle a continuous dividend yield.
-        dividend_yield = kwargs.get("dividend_yield", 0.0)
 
         # Extract parameters from parent OptionValuation object
         spot = self.parent.underlying.initial_value
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate
+        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
