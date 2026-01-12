@@ -255,6 +255,30 @@ class OptionValuation:
             return 1.0
         return delta
 
+    def gamma(self, epsilon: float | None = None, **kwargs) -> float:
+        """Calculate option gamma using central difference approximation."""
+        if epsilon is None:
+            epsilon = self.underlying.initial_value / 100
+        # central-difference approximation
+        initial_spot = self.underlying.initial_value
+        try:
+            # calculate left value for numerical Gamma
+            self.underlying.initial_value -= epsilon
+            value_left = self.present_value(**kwargs)
+            # numerical underlying value for right value
+            self.underlying.initial_value += 2 * epsilon
+            # calculate right value for numerical gamma
+            value_right = self.present_value(**kwargs)
+            # reset to initial spot for center value
+            self.underlying.initial_value = initial_spot
+            value_center = self.present_value(**kwargs)
+        finally:
+            # reset the initial_value of the simulation object
+            self.underlying.initial_value = initial_spot
+
+        gamma = (value_right - 2 * value_center + value_left) / (epsilon**2)
+        return gamma
+
     def vega(self, epsilon: float = 0.01, **kwargs) -> float:
         """Calculate option vega using central difference approximation."""
         # central-difference approximation
