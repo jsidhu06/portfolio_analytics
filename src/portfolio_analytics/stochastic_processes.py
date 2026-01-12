@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Protocol
 import datetime as dt
 import numpy as np
 import pandas as pd
@@ -18,12 +17,6 @@ class SimulationConfig:
     day_count_convention: int | float = 365
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: list[dt.datetime] = field(default_factory=list)
-
-
-class DiffusionParams(Protocol):
-    initial_value: int | float
-    volatility: float
-    dividend_yield: float = 0.0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -91,7 +84,7 @@ class PathSimulation(ABC):
         self,
         name: str,
         market_data: MarketData,
-        process_params: DiffusionParams,
+        process_params: GBMParams | JDParams | SRDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):
