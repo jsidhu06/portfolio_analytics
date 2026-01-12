@@ -23,12 +23,14 @@ class SimulationConfig:
 class DiffusionParams(Protocol):
     initial_value: int | float
     volatility: float
+    dividend_yield: float = 0.0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GBMParams:
     initial_value: float
     volatility: float
+    dividend_yield: float = 0.0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -38,6 +40,7 @@ class JDParams:
     jump_intensity: float  # lambda (per year)
     jump_mean: float  # mu_J (mean of log jump size)
     jump_std: float  # delta_J (std of log jump size)
+    dividend_yield: float = 0.0
 
     def __post_init__(self):
         if self.jump_intensity is None or self.jump_mean is None or self.jump_std is None:
@@ -99,6 +102,8 @@ class PathSimulation(ABC):
 
         self.initial_value = process_params.initial_value
         self.volatility = process_params.volatility
+        if isinstance(process_params, (GBMParams, JDParams)):
+            self.dividend_yield = process_params.dividend_yield
 
         self.paths = sim.paths
         self.frequency = sim.frequency
@@ -242,7 +247,8 @@ class GeometricBrownianMotion(PathSimulation):
                 day_count_convention=self.day_count_convention,
             )
 
-            drift = (short_rate - 0.5 * self.volatility**2) * delta_t
+            drift = (short_rate - self.dividend_yield - 0.5 * self.volatility**2) * delta_t
+
             diffusion = self.volatility * np.sqrt(delta_t) * ran
             # generate simulated values for the respective date
             paths[t] = paths[t - 1] * np.exp(drift + diffusion)
@@ -379,7 +385,7 @@ class JumpDiffusion(PathSimulation):
                 Z = rng.standard_normal(num_paths)  # (I,)
 
             # Diffusion multiplier
-            drift = (r - lam * k - 0.5 * vol**2) * delta_t
+            drift = (r - self.dividend_yield - lam * k - 0.5 * vol**2) * delta_t
             diffusion = vol * np.sqrt(delta_t) * Z
             diffusion_multiplier = np.exp(drift + diffusion)
 
