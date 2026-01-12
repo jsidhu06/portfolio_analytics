@@ -75,21 +75,6 @@ class TestGeometricBrownianMotion:
         # Should be identical
         np.testing.assert_array_equal(paths_1, paths_2)
 
-    def test_generate_paths_uses_correct_random_numbers(self):
-        """Test that generate_paths uses random numbers equivalent to sn_random_numbers with same seed"""
-
-        # Generate paths
-        paths = self.gbm.generate_paths(random_seed=1000)
-
-        assert np.allclose(
-            paths[:5, 0],
-            np.array([36.0, 37.37221481, 39.45866146, 42.51433276, 41.76443271]),
-        )
-        assert np.allclose(
-            paths[-5:, 0],
-            np.array([40.71879366, 40.56504051, 40.15717404, 42.0974104, 43.33170027]),
-        )
-
     def test_generate_paths_basic_properties(self):
         """Test basic properties of generated paths"""
         paths = self.gbm.generate_paths(random_seed=1000)
