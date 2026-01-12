@@ -18,3 +18,8 @@ class PricingMethod(Enum):
     BINOMIAL = "binomial"
     BSM_CONTINUOUS = "bsm_continuous"
     BSM_DISCRETE = "bsm_discrete"
+
+
+class GreekCalculationMethod(Enum):
+    ANALYTICAL = "analytical"
+    NUMERICAL = "numerical"

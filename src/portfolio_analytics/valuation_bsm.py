@@ -139,3 +139,132 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         if full:
             return pv, pv
         return pv
+
+    def delta(self, **kwargs) -> float:
+        """Calculate analytical delta for European option using closed-form BSM formula.
+
+        delta = N(d1) for calls
+        delta = N(d1) - 1 for puts
+
+        Where N() is the cumulative standard normal distribution.
+
+        Returns
+        =======
+        float
+            analytical delta of the option
+        """
+        # Extract parameters from parent OptionValuation object
+        spot = self.parent.underlying.initial_value
+        strike = self.parent.strike
+        volatility = self.parent.underlying.volatility
+        risk_free_rate = self.parent.discount_curve.short_rate
+        dividend_yield = self.parent.underlying.dividend_yield
+
+        # Calculate time to maturity in years
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+        )
+
+        # Calculate d1
+        d1, _ = self._calculate_d_values(
+            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
+        )
+
+        # Adjust for dividend yield
+        if self.parent.option_type is OptionType.CALL:
+            delta = np.exp(-dividend_yield * time_to_maturity) * norm.cdf(d1)
+        else:  # PUT
+            delta = np.exp(-dividend_yield * time_to_maturity) * (norm.cdf(d1) - 1)
+
+        return delta
+
+    def gamma(self, **kwargs) -> float:
+        """Calculate analytical gamma for European option using closed-form BSM formula.
+
+        gamma = N'(d1) / (S * sigma * sqrt(T-t))
+
+        Where N'() is the standard normal probability density function.
+
+        Returns
+        =======
+        float
+            analytical gamma of the option
+        """
+        # Extract parameters from parent OptionValuation object
+        spot = self.parent.underlying.initial_value
+        strike = self.parent.strike
+        volatility = self.parent.underlying.volatility
+        risk_free_rate = self.parent.discount_curve.short_rate
+        dividend_yield = self.parent.underlying.dividend_yield
+
+        # Calculate time to maturity in years
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+        )
+
+        if time_to_maturity <= 0:
+            return 0.0
+
+        # Calculate d1
+        d1, _ = self._calculate_d_values(
+            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
+        )
+
+        # Standard normal PDF evaluated at d1
+        n_prime_d1 = norm.pdf(d1)
+
+        # Adjust for dividend yield
+        gamma = (
+            np.exp(-dividend_yield * time_to_maturity)
+            * n_prime_d1
+            / (spot * volatility * np.sqrt(time_to_maturity))
+        )
+
+        return gamma
+
+    def vega(self, **kwargs) -> float:
+        """Calculate analytical vega for European option using closed-form BSM formula.
+
+        vega = S * N'(d1) * sqrt(T-t) / 100
+
+        Where N'() is the standard normal probability density function.
+        Vega is expressed as a 1% point change in volatility (hence the division by 100).
+
+        Returns
+        =======
+        float
+            analytical vega of the option (per 1% point change in volatility)
+        """
+        # Extract parameters from parent OptionValuation object
+        spot = self.parent.underlying.initial_value
+        strike = self.parent.strike
+        volatility = self.parent.underlying.volatility
+        risk_free_rate = self.parent.discount_curve.short_rate
+        dividend_yield = self.parent.underlying.dividend_yield
+
+        # Calculate time to maturity in years
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+        )
+
+        if time_to_maturity <= 0:
+            return 0.0
+
+        # Calculate d1
+        d1, _ = self._calculate_d_values(
+            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
+        )
+
+        # Standard normal PDF evaluated at d1
+        n_prime_d1 = norm.pdf(d1)
+
+        # Vega is per 1% change in volatility
+        vega = (
+            spot
+            * np.exp(-dividend_yield * time_to_maturity)
+            * n_prime_d1
+            * np.sqrt(time_to_maturity)
+            / 100
+        )
+
+        return vega

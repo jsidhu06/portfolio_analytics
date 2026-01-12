@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import datetime as dt
 import numpy as np
 from .stochastic_processes import PathSimulation
-from .enums import OptionType, ExerciseType, PricingMethod
+from .enums import OptionType, ExerciseType, PricingMethod, GreekCalculationMethod
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
 from .valuation_bsm import _BSMEuropeanValuation
@@ -124,9 +124,14 @@ class OptionValuation:
     present_value:
         Returns the present value of the derivative.
     delta:
-        Numerical delta.
+        Calculate option delta. For BSM: defaults to analytical closed-form formula,
+        can be overridden with greek_calc_method kwarg.
+    gamma:
+        Calculate option gamma. For BSM: defaults to analytical closed-form formula,
+        can be overridden with greek_calc_method kwarg.
     vega:
-        Numerical vega.
+        Calculate option vega. For BSM: defaults to analytical closed-form formula,
+        can be overridden with greek_calc_method kwarg.
     """
 
     def __init__(
@@ -229,8 +234,65 @@ class OptionValuation:
         """
         return self._impl.present_value(full=full, **kwargs)
 
-    def delta(self, epsilon: float | None = None, **kwargs) -> float:
-        """Calculate option delta using central difference approximation."""
+    def delta(
+        self,
+        epsilon: float | None = None,
+        greek_calc_method: GreekCalculationMethod | None = None,
+        **kwargs,
+    ) -> float:
+        """Calculate option delta.
+
+        For BSM pricing method:
+        - Uses analytical closed-form formula by default
+        - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
+        For other pricing methods:
+        - Always uses numerical central difference approximation (greek_calc_method ignored)
+
+        Parameters
+        ==========
+        epsilon: float, optional
+            Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
+        greek_calc_method: GreekCalculationMethod, optional
+            Method for calculating delta. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
+            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
+            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+        **kwargs:
+            Method-specific parameters for present_value calculation
+
+        Returns
+        =======
+        float
+            option delta
+        """
+        # Determine which method to use
+        if greek_calc_method is None:
+            # Default to analytical for BSM, numerical for others
+            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+        else:
+            if not isinstance(greek_calc_method, GreekCalculationMethod):
+                raise TypeError(
+                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+                )
+            use_analytical = (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            )
+            # Validate that analytical is only used with BSM
+            if (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+            ):
+                raise ValueError(
+                    "Analytical greeks are only available for BSM_CONTINUOUS pricing method. "
+                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
+                )
+
+        # Use analytical formula for BSM if specified
+        if use_analytical:
+            return self._impl.delta(**kwargs)
+
+        # Otherwise use numerical approximation
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
         # central difference approximation
@@ -255,8 +317,65 @@ class OptionValuation:
             return 1.0
         return delta
 
-    def gamma(self, epsilon: float | None = None, **kwargs) -> float:
-        """Calculate option gamma using central difference approximation."""
+    def gamma(
+        self,
+        epsilon: float | None = None,
+        greek_calc_method: GreekCalculationMethod | None = None,
+        **kwargs,
+    ) -> float:
+        """Calculate option gamma.
+
+        For BSM pricing method:
+        - Uses analytical closed-form formula by default
+        - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
+        For other pricing methods:
+        - Always uses numerical central difference approximation (greek_calc_method ignored)
+
+        Parameters
+        ==========
+        epsilon: float, optional
+            Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
+        greek_calc_method: GreekCalculationMethod, optional
+            Method for calculating gamma. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
+            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
+            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+        **kwargs:
+            Method-specific parameters for present_value calculation
+
+        Returns
+        =======
+        float
+            option gamma
+        """
+        # Determine which method to use
+        if greek_calc_method is None:
+            # Default to analytical for BSM, numerical for others
+            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+        else:
+            if not isinstance(greek_calc_method, GreekCalculationMethod):
+                raise TypeError(
+                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+                )
+            use_analytical = (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            )
+            # Validate that analytical is only used with BSM
+            if (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+            ):
+                raise ValueError(
+                    "Analytical greeks are only available for BSM_CONTINUOUS pricing method. "
+                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
+                )
+
+        # Use analytical formula for BSM if specified
+        if use_analytical:
+            return self._impl.gamma(**kwargs)
+
+        # Otherwise use numerical approximation
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
         # central-difference approximation
@@ -279,8 +398,65 @@ class OptionValuation:
         gamma = (value_right - 2 * value_center + value_left) / (epsilon**2)
         return gamma
 
-    def vega(self, epsilon: float = 0.01, **kwargs) -> float:
-        """Calculate option vega using central difference approximation."""
+    def vega(
+        self,
+        epsilon: float = 0.01,
+        greek_calc_method: GreekCalculationMethod | None = None,
+        **kwargs,
+    ) -> float:
+        """Calculate option vega.
+
+        For BSM pricing method:
+        - Uses analytical closed-form formula by default
+        - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
+        For other pricing methods:
+        - Always uses numerical central difference approximation (greek_calc_method ignored)
+
+        Parameters
+        ==========
+        epsilon: float, default 0.01
+            Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
+        greek_calc_method: GreekCalculationMethod, optional
+            Method for calculating vega. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
+            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
+            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+        **kwargs:
+            Method-specific parameters for present_value calculation
+
+        Returns
+        =======
+        float
+            option vega
+        """
+        # Determine which method to use
+        if greek_calc_method is None:
+            # Default to analytical for BSM, numerical for others
+            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+        else:
+            if not isinstance(greek_calc_method, GreekCalculationMethod):
+                raise TypeError(
+                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+                )
+            use_analytical = (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            )
+            # Validate that analytical is only used with BSM
+            if (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+            ):
+                raise ValueError(
+                    "Analytical greeks are only available for BSM_CONTINUOUS pricing method. "
+                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
+                )
+
+        # Use analytical formula for BSM if specified
+        if use_analytical:
+            return self._impl.vega(**kwargs)
+
+        # Otherwise use numerical approximation
         # central-difference approximation
         initial_vol = self.underlying.volatility
         try:
@@ -296,5 +472,5 @@ class OptionValuation:
             # reset volatility value of simulation object
             self.underlying.volatility = initial_vol
 
-        vega = (value_right - value_left) / (2 * epsilon)
+        vega = (value_right - value_left) / (2 * epsilon) / 100  # per 1% point change in vol
         return vega
