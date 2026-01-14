@@ -5,6 +5,7 @@ import datetime as dt
 import numpy as np
 from portfolio_analytics.valuation import (
     OptionSpec,
+    CondorSpec,
     UnderlyingConfig,
     UnderlyingData,
     OptionValuation,
@@ -14,7 +15,7 @@ from portfolio_analytics.valuation_binomial import (
     _BinomialEuropeanValuation,
 )
 from portfolio_analytics.valuation_mcs import _MCEuropeanValuation
-from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod
+from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod, PositionSide
 from portfolio_analytics.stochastic_processes import (
     GeometricBrownianMotion,
     GBMParams,
@@ -86,6 +87,29 @@ class TestOptionSpec:
         )
         with pytest.raises(AttributeError):
             spec.strike = 105.0
+
+
+class TestCondorSpec:
+    def test_valid_condor_spec_creation(self):
+        spec = CondorSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            strikes=(50.0, 90.0, 110.0, 150.0),
+            maturity=dt.datetime(2026, 12, 31),
+            currency="USD",
+            side=PositionSide.LONG,
+            contract_size=100,
+        )
+        assert spec.option_type == OptionType.CONDOR
+        assert spec.strike is None
+
+    def test_invalid_strike_order_raises(self):
+        with pytest.raises(ValueError, match="K1 < K2"):
+            CondorSpec(
+                exercise_type=ExerciseType.EUROPEAN,
+                strikes=(90.0, 50.0, 110.0, 150.0),
+                maturity=dt.datetime(2026, 12, 31),
+                currency="USD",
+            )
 
 
 class TestUnderlyingConfig:
@@ -281,6 +305,151 @@ class TestOptionValuation:
                 spec=invalid_spec,
                 pricing_method=PricingMethod.BSM_CONTINUOUS,
             )
+
+    def test_binomial_condor_equals_sum_of_legs(self):
+        """Condor PV should equal PV of its 4 legs under the same binomial model."""
+        ud = UnderlyingData(
+            initial_value=90.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+
+        strikes = (50.0, 90.0, 110.0, 150.0)
+        condor_spec = CondorSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            strikes=strikes,
+            maturity=self.maturity,
+            currency="USD",
+            side=PositionSide.LONG,
+        )
+        condor_val = OptionValuation(
+            name="CONDOR",
+            underlying=ud,
+            spec=condor_spec,
+            pricing_method=PricingMethod.BINOMIAL,
+        )
+
+        k1, k2, k3, k4 = strikes
+        leg_specs = [
+            (OptionType.PUT, k1, -1.0),
+            (OptionType.PUT, k2, +1.0),
+            (OptionType.CALL, k3, +1.0),
+            (OptionType.CALL, k4, -1.0),
+        ]
+        leg_pv = 0.0
+        for opt_type, k, w in leg_specs:
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.EUROPEAN,
+                strike=k,
+                maturity=self.maturity,
+                currency="USD",
+            )
+            leg_val = OptionValuation(
+                name=f"LEG_{opt_type.value}_{k}",
+                underlying=ud,
+                spec=leg_spec,
+                pricing_method=PricingMethod.BINOMIAL,
+            )
+            leg_pv += w * leg_val.present_value(num_steps=2000)
+
+        condor_pv = condor_val.present_value(num_steps=2000)
+        assert np.isclose(condor_pv, leg_pv, rtol=1e-3, atol=0)
+
+    def test_mcs_condor_equals_sum_of_legs(self):
+        """Condor PV should equal PV of its 4 legs under the same binomial model."""
+
+        simulation_config = SimulationConfig(
+            paths=200_000, frequency="W", day_count_convention=365, final_date=self.maturity
+        )
+        process_params = GBMParams(initial_value=90, volatility=0.2)
+        gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
+
+        strikes = (50.0, 90.0, 110.0, 150.0)
+        condor_spec = CondorSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            strikes=strikes,
+            maturity=self.maturity,
+            currency="USD",
+            side=PositionSide.LONG,
+        )
+        condor_val = OptionValuation(
+            name="CONDOR",
+            underlying=gbm,
+            spec=condor_spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        )
+
+        k1, k2, k3, k4 = strikes
+        leg_specs = [
+            (OptionType.PUT, k1, -1.0),
+            (OptionType.PUT, k2, +1.0),
+            (OptionType.CALL, k3, +1.0),
+            (OptionType.CALL, k4, -1.0),
+        ]
+        leg_pv = 0.0
+        for opt_type, k, w in leg_specs:
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.EUROPEAN,
+                strike=k,
+                maturity=self.maturity,
+                currency="USD",
+            )
+            leg_val = OptionValuation(
+                name=f"LEG_{opt_type.value}_{k}",
+                underlying=gbm,
+                spec=leg_spec,
+                pricing_method=PricingMethod.MONTE_CARLO,
+            )
+            leg_pv += w * leg_val.present_value(random_seed=42)
+
+        condor_pv = condor_val.present_value(random_seed=42)
+        assert np.isclose(condor_pv, leg_pv, rtol=1e-3, atol=0)
+
+    def test_binomial_mcs_condor_equivalence(self):
+        """Condor PV via binomial should approx equal PV via MCS under same params."""
+        initial_value, volatility = 90, 0.2
+
+        ud = UnderlyingData(
+            initial_value=initial_value,
+            volatility=volatility,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+        simulation_config = SimulationConfig(
+            paths=200_000, frequency="W", day_count_convention=365, final_date=self.maturity
+        )
+        process_params = GBMParams(initial_value=initial_value, volatility=volatility)
+        gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
+
+        strikes = (50.0, 90.0, 110.0, 150.0)
+        condor_spec = CondorSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            strikes=strikes,
+            maturity=self.maturity,
+            currency="USD",
+            side=PositionSide.LONG,
+        )
+
+        binomial_pv = OptionValuation(
+            name="CONDOR",
+            underlying=ud,
+            spec=condor_spec,
+            pricing_method=PricingMethod.BINOMIAL,
+        ).present_value(num_steps=2500)
+
+        mcs_pv = OptionValuation(
+            name="CONDOR",
+            underlying=gbm,
+            spec=condor_spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        ).present_value(random_seed=42)
+
+        assert np.isclose(binomial_pv, mcs_pv, rtol=0.01)
 
     def test_option_valuation_invalid_pricing_method_type(self):
         """Test that OptionValuation validates pricing_method is PricingMethod enum."""

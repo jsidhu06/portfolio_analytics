@@ -2,7 +2,13 @@ from dataclasses import dataclass
 import datetime as dt
 import numpy as np
 from .stochastic_processes import PathSimulation
-from .enums import OptionType, ExerciseType, PricingMethod, GreekCalculationMethod
+from .enums import (
+    OptionType,
+    ExerciseType,
+    PricingMethod,
+    GreekCalculationMethod,
+    PositionSide,
+)
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
 from .valuation_bsm import _BSMEuropeanValuation
@@ -30,6 +36,71 @@ class OptionSpec:
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class CondorSpec:
+    """Contract specification for a 4-leg condor (European).
+
+    Definition (strikes ordered):
+    - Short put  at K1
+    - Long  put  at K2
+    - Long  call at K3
+    - Short call at K4
+
+    With $K_1 < K_2 < K_3 < K_4$, the payoff is
+    $\max(K_2-S,0)-\max(K_1-S,0)+\max(S-K_3,0)-\max(S-K_4,0)$,
+    and is multiplied by +1 for LONG and -1 for SHORT.
+    """
+
+    exercise_type: ExerciseType
+    strikes: tuple[float, float, float, float]
+    maturity: dt.datetime
+    currency: str
+    side: PositionSide = PositionSide.LONG
+    contract_size: int | float = 100
+
+    # Kept for compatibility with vanilla valuation interfaces
+    option_type: OptionType = OptionType.CONDOR
+    strike: None = None
+
+    def __post_init__(self):
+        if not isinstance(self.exercise_type, ExerciseType):
+            raise TypeError(
+                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
+            )
+        if self.exercise_type != ExerciseType.EUROPEAN:
+            raise NotImplementedError(
+                "CondorSpec is currently supported for European exercise only."
+            )
+
+        if not isinstance(self.side, PositionSide):
+            raise TypeError(f"side must be PositionSide enum, got {type(self.side).__name__}")
+
+        if not isinstance(self.option_type, OptionType) or self.option_type != OptionType.CONDOR:
+            raise TypeError("CondorSpec.option_type must be OptionType.CONDOR")
+
+        k1, k2, k3, k4 = self.strikes
+        if not (k1 < k2):
+            raise ValueError("Condor strikes must satisfy K1 < K2")
+        if not (k3 < k4):
+            raise ValueError("Condor strikes must satisfy K3 < K4")
+        if not (k2 < k3):
+            raise ValueError("Condor strikes must satisfy K2 < K3")
+
+    def payoff(self, spot: np.ndarray | float) -> np.ndarray:
+        """Vectorized payoff at maturity as a function of spot."""
+        s = np.asarray(spot, dtype=float)
+        k1, k2, k3, k4 = self.strikes
+        payoff = (
+            np.maximum(k2 - s, 0.0)
+            - np.maximum(k1 - s, 0.0)
+            + np.maximum(s - k3, 0.0)
+            - np.maximum(s - k4, 0.0)
+        )
+        if self.side == PositionSide.SHORT:
+            payoff = -payoff
+        return payoff
 
 
 @dataclass
@@ -138,7 +209,7 @@ class OptionValuation:
         self,
         name: str,
         underlying: PathSimulation | UnderlyingData,
-        spec: OptionSpec,
+        spec: OptionSpec | CondorSpec,
         pricing_method: PricingMethod,
     ):
         self.name = name
@@ -157,6 +228,10 @@ class OptionValuation:
         self.exercise_type = spec.exercise_type
         self.pricing_method = pricing_method
         self.contract_size = spec.contract_size
+
+        # Strategy guardrails
+        if self.option_type == OptionType.CONDOR and pricing_method == PricingMethod.BSM_CONTINUOUS:
+            raise NotImplementedError("BSM pricing is not available for condor strategies.")
 
         # Optional sanity check: maturity must be after pricing date
         if self.maturity <= self.pricing_date:

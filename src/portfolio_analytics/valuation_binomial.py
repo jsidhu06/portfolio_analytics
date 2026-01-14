@@ -68,10 +68,24 @@ class _BinomialValuationBase:
             intrinsic values
         """
         K = self.parent.strike
+        if self.parent.option_type in (OptionType.CALL, OptionType.PUT) and K is None:
+            raise ValueError("strike is required for vanilla American call/put payoff.")
+
         if self.parent.option_type is OptionType.CALL:
             return np.maximum(instrument_values - K, 0)
-        else:
+
+        elif self.parent.option_type is OptionType.PUT:
             return np.maximum(K - instrument_values, 0)
+
+        elif self.parent.option_type is OptionType.CONDOR:
+            payoff_fn = getattr(self.parent.spec, "payoff", None)
+            if payoff_fn is None:
+                raise TypeError(
+                    "Condor payoff requires parent.spec.payoff(spot) to be defined (e.g., CondorSpec)"
+                )
+            return payoff_fn(instrument_values)
+        else:
+            raise ValueError("Unsupported option type for binomial valuation.")
 
 
 class _BinomialEuropeanValuation(_BinomialValuationBase):

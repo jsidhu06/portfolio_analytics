@@ -6,6 +6,12 @@ from enum import Enum
 class OptionType(Enum):
     CALL = "call"
     PUT = "put"
+    CONDOR = "condor"
+
+
+class PositionSide(Enum):
+    LONG = "long"
+    SHORT = "short"
 
 
 class ExerciseType(Enum):
