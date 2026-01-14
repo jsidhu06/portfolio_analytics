@@ -50,15 +50,6 @@ class TestGreeksSetup:
             dividend_yield=self.dividend_yield,
         )
 
-        # UnderlyingData with dividend
-        self.ud_div = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=0.03,
-        )
-
         # Market data and GBM for MCS
         self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
         sim_config = SimulationConfig(
@@ -82,6 +73,25 @@ class TestGreeksSetup:
         )
         self.gbm_div = GeometricBrownianMotion(
             "gbm_div", self.market_data, process_params_div, sim_config
+        )
+
+    def _create_underlying_data(self, initial_value=None, volatility=None, dividend_yield=None):
+        """Factory method to create UnderlyingData with sensible defaults.
+
+        Args:
+            initial_value: Override spot price, defaults to self.spot
+            volatility: Override volatility, defaults to self.volatility
+            dividend_yield: Override dividend yield, defaults to self.dividend_yield
+
+        Returns:
+            UnderlyingData instance with specified parameters
+        """
+        return UnderlyingData(
+            initial_value=initial_value if initial_value is not None else self.spot,
+            volatility=volatility if volatility is not None else self.volatility,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=dividend_yield if dividend_yield is not None else self.dividend_yield,
         )
 
 
@@ -133,7 +143,7 @@ class TestDeltaBasicProperties(TestGreeksSetup):
 
     def test_call_delta_itm_close_to_one(self):
         """Test that deep ITM call delta approaches 1."""
-        self.ud.initial_value = 150.0  # Deep ITM
+        ud_itm = self._create_underlying_data(initial_value=150.0)  # Deep ITM
         spec = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -141,13 +151,13 @@ class TestDeltaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        valuation = OptionValuation("call_itm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = OptionValuation("call_itm", ud_itm, spec, PricingMethod.BSM_CONTINUOUS)
         delta = valuation.delta()
         assert delta > 0.95, f"Deep ITM call delta {delta} should be close to 1.0"
 
     def test_call_delta_otm_close_to_zero(self):
         """Test that deep OTM call delta approaches 0."""
-        self.ud.initial_value = 50.0  # Deep OTM
+        ud_otm = self._create_underlying_data(initial_value=50.0)  # Deep OTM
         spec = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -155,13 +165,13 @@ class TestDeltaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        valuation = OptionValuation("call_otm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = OptionValuation("call_otm", ud_otm, spec, PricingMethod.BSM_CONTINUOUS)
         delta = valuation.delta()
         assert delta < 0.05, f"Deep OTM call delta {delta} should be close to 0.0"
 
     def test_put_delta_itm_close_to_negative_one(self):
         """Test that deep ITM put delta approaches -1."""
-        self.ud.initial_value = 50.0  # Deep ITM for put
+        ud_itm = self._create_underlying_data(initial_value=50.0)  # Deep ITM for put
         spec = OptionSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
@@ -169,13 +179,13 @@ class TestDeltaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        valuation = OptionValuation("put_itm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = OptionValuation("put_itm", ud_itm, spec, PricingMethod.BSM_CONTINUOUS)
         delta = valuation.delta()
         assert delta < -0.95, f"Deep ITM put delta {delta} should be close to -1.0"
 
     def test_put_delta_otm_close_to_zero(self):
         """Test that deep OTM put delta approaches 0."""
-        self.ud.initial_value = 150.0  # Deep OTM for put
+        ud_otm = self._create_underlying_data(initial_value=150.0)  # Deep OTM for put
         spec = OptionSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
@@ -183,7 +193,7 @@ class TestDeltaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        valuation = OptionValuation("put_otm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = OptionValuation("put_otm", ud_otm, spec, PricingMethod.BSM_CONTINUOUS)
         delta = valuation.delta()
         assert delta > -0.05, f"Deep OTM put delta {delta} should be close to 0.0"
 
@@ -217,6 +227,7 @@ class TestGammaBasicProperties(TestGreeksSetup):
     def test_gamma_highest_atm(self):
         """Test that gamma is highest for ATM options."""
         # ATM gamma
+        ud_atm = self._create_underlying_data()
         spec_atm = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -224,11 +235,11 @@ class TestGammaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        val_atm = OptionValuation("call_atm", self.ud, spec_atm, PricingMethod.BSM_CONTINUOUS)
+        val_atm = OptionValuation("call_atm", ud_atm, spec_atm, PricingMethod.BSM_CONTINUOUS)
         gamma_atm = val_atm.gamma()
 
         # ITM gamma
-        self.ud.initial_value = 110.0
+        ud_itm = self._create_underlying_data(initial_value=110.0)
         spec_itm = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -236,7 +247,7 @@ class TestGammaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        val_itm = OptionValuation("call_itm", self.ud, spec_itm, PricingMethod.BSM_CONTINUOUS)
+        val_itm = OptionValuation("call_itm", ud_itm, spec_itm, PricingMethod.BSM_CONTINUOUS)
         gamma_itm = val_itm.gamma()
 
         # Gamma should be higher for ATM than ITM
@@ -246,13 +257,6 @@ class TestGammaBasicProperties(TestGreeksSetup):
         """Test that gamma decreases as time to maturity increases."""
         # Short time to maturity
         maturity_short = dt.datetime(2025, 3, 1)  # 2 months
-        ud_short = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=0.0,
-        )
         spec_short = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -260,19 +264,10 @@ class TestGammaBasicProperties(TestGreeksSetup):
             maturity=maturity_short,
             currency="USD",
         )
-        val_short = OptionValuation(
-            "call_short", ud_short, spec_short, PricingMethod.BSM_CONTINUOUS
-        )
+        val_short = OptionValuation("call_short", self.ud, spec_short, PricingMethod.BSM_CONTINUOUS)
         gamma_short = val_short.gamma()
 
         # Long time to maturity
-        ud_long = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=0.0,
-        )
         spec_long = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -280,7 +275,7 @@ class TestGammaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        val_long = OptionValuation("call_long", ud_long, spec_long, PricingMethod.BSM_CONTINUOUS)
+        val_long = OptionValuation("call_long", self.ud, spec_long, PricingMethod.BSM_CONTINUOUS)
         gamma_long = val_long.gamma()
 
         # Gamma should be higher for shorter time to maturity (at ATM)
@@ -316,6 +311,7 @@ class TestVegaBasicProperties(TestGreeksSetup):
     def test_vega_highest_atm(self):
         """Test that vega is highest for ATM options."""
         # ATM vega
+        ud_atm = self._create_underlying_data()
         spec_atm = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -323,11 +319,11 @@ class TestVegaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        val_atm = OptionValuation("call_atm", self.ud, spec_atm, PricingMethod.BSM_CONTINUOUS)
+        val_atm = OptionValuation("call_atm", ud_atm, spec_atm, PricingMethod.BSM_CONTINUOUS)
         vega_atm = val_atm.vega()
 
         # ITM vega
-        self.ud.initial_value = 110.0
+        ud_itm = self._create_underlying_data(initial_value=110.0)
         spec_itm = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -335,7 +331,7 @@ class TestVegaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        val_itm = OptionValuation("call_itm", self.ud, spec_itm, PricingMethod.BSM_CONTINUOUS)
+        val_itm = OptionValuation("call_itm", ud_itm, spec_itm, PricingMethod.BSM_CONTINUOUS)
         vega_itm = val_itm.vega()
 
         # Vega should be higher for ATM than ITM
@@ -345,13 +341,6 @@ class TestVegaBasicProperties(TestGreeksSetup):
         """Test that vega increases as time to maturity increases."""
         # Short time to maturity
         maturity_short = dt.datetime(2025, 3, 1)  # 2 months
-        ud_short = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=0.0,
-        )
         spec_short = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -359,19 +348,10 @@ class TestVegaBasicProperties(TestGreeksSetup):
             maturity=maturity_short,
             currency="USD",
         )
-        val_short = OptionValuation(
-            "call_short", ud_short, spec_short, PricingMethod.BSM_CONTINUOUS
-        )
+        val_short = OptionValuation("call_short", self.ud, spec_short, PricingMethod.BSM_CONTINUOUS)
         vega_short = val_short.vega()
 
         # Long time to maturity
-        ud_long = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=self.dividend_yield,
-        )
         spec_long = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -379,7 +359,7 @@ class TestVegaBasicProperties(TestGreeksSetup):
             maturity=self.maturity,
             currency="USD",
         )
-        val_long = OptionValuation("call_long", ud_long, spec_long, PricingMethod.BSM_CONTINUOUS)
+        val_long = OptionValuation("call_long", self.ud, spec_long, PricingMethod.BSM_CONTINUOUS)
         vega_long = val_long.vega()
 
         # Vega should be higher for longer time to maturity (at ATM)
@@ -463,15 +443,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         bsm_val = OptionValuation("call_bsm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
         delta_bsm = bsm_val.delta()
 
-        # Reset underlying for binomial
-        ud_binomial = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=self.dividend_yield,
-        )
-        binomial_val = OptionValuation("call_binomial", ud_binomial, spec, PricingMethod.BINOMIAL)
+        binomial_val = OptionValuation("call_binomial", self.ud, spec, PricingMethod.BINOMIAL)
         delta_binomial = binomial_val.delta(num_steps=2500)
 
         # Should be close within tolerance
@@ -513,15 +485,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         bsm_val = OptionValuation("call_bsm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
         gamma_bsm = bsm_val.gamma()
 
-        # Reset underlying for binomial
-        ud_binomial = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=0.0,
-        )
-        binomial_val = OptionValuation("call_binomial", ud_binomial, spec, PricingMethod.BINOMIAL)
+        binomial_val = OptionValuation("call_binomial", self.ud, spec, PricingMethod.BINOMIAL)
         gamma_binomial = binomial_val.gamma(num_steps=2500)
 
         # Should be close within tolerance (binomial is numerical so tolerance is larger)
@@ -542,15 +506,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         bsm_val = OptionValuation("call_bsm", self.ud, spec, PricingMethod.BSM_CONTINUOUS)
         vega_bsm = bsm_val.vega()
 
-        # Reset underlying for binomial
-        ud_binomial = UnderlyingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
-            dividend_yield=0.0,
-        )
-        binomial_val = OptionValuation("call_binomial", ud_binomial, spec, PricingMethod.BINOMIAL)
+        binomial_val = OptionValuation("call_binomial", self.ud, spec, PricingMethod.BINOMIAL)
         vega_binomial = binomial_val.vega(num_steps=2500)
 
         # Should be close within tolerance
@@ -577,8 +533,9 @@ class TestGreeksDividendYieldEffect(TestGreeksSetup):
         delta_no_div = val_no_div.delta()
 
         # With dividend yield
+        ud_with_div = self._create_underlying_data(dividend_yield=0.03)
         val_with_div = OptionValuation(
-            "call_with_div", self.ud_div, spec, PricingMethod.BSM_CONTINUOUS
+            "call_with_div", ud_with_div, spec, PricingMethod.BSM_CONTINUOUS
         )
         delta_with_div = val_with_div.delta()
 
@@ -607,8 +564,9 @@ class TestGreeksDividendYieldEffect(TestGreeksSetup):
         delta_no_div = val_no_div.delta()
 
         # With dividend yield
+        ud_with_div = self._create_underlying_data(dividend_yield=0.03)
         val_with_div = OptionValuation(
-            "put_with_div", self.ud_div, spec, PricingMethod.BSM_CONTINUOUS
+            "put_with_div", ud_with_div, spec, PricingMethod.BSM_CONTINUOUS
         )
         delta_with_div = val_with_div.delta()
 
