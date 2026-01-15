@@ -24,6 +24,7 @@ from portfolio_analytics.stochastic_processes import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.valuation_pde_fd import _FDAmericanValuation
 
 
 class TestOptionSpec:
@@ -685,6 +686,107 @@ class TestOptionValuation:
                 spec=american_spec,
                 pricing_method=PricingMethod.BSM_CONTINUOUS,
             )
+
+    def test_dispatcher_creates_fd_impl_for_american(self):
+        ud = UnderlyingData(
+            initial_value=100.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+        spec = OptionSpec(
+            option_type=OptionType.PUT,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        valuation = OptionValuation("PUT_FD", ud, spec, PricingMethod.PDE_FD)
+        assert isinstance(valuation._impl, _FDAmericanValuation)
+
+    def test_american_put_fd_close_to_binomial(self):
+        ud = UnderlyingData(
+            initial_value=100.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+        spec = OptionSpec(
+            option_type=OptionType.PUT,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        fd_val = OptionValuation("put_fd", ud, spec, PricingMethod.PDE_FD)
+        fd_pv = fd_val.present_value(spot_steps=90, time_steps=90, max_iter=20_000)
+
+        tree_val = OptionValuation("put_tree", ud, spec, PricingMethod.BINOMIAL)
+        tree_pv = tree_val.present_value(num_steps=1200)
+
+        # Both are numerical approximations; keep tolerance modest for test stability.
+        assert np.isclose(fd_pv, tree_pv, rtol=0.01)
+
+    def test_american_call_fd_close_to_binomial(self):
+        ud = UnderlyingData(
+            initial_value=100.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.03,
+        )
+        spec = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        fd_val = OptionValuation("call_fd", ud, spec, PricingMethod.PDE_FD)
+        fd_pv = fd_val.present_value(spot_steps=90, time_steps=90, max_iter=20_000)
+
+        tree_val = OptionValuation("call_tree", ud, spec, PricingMethod.BINOMIAL)
+        tree_pv = tree_val.present_value(num_steps=1200)
+
+        # Both are numerical approximations; keep tolerance modest for test stability.
+        assert np.isclose(fd_pv, tree_pv, rtol=0.01)
+
+    def test_american_call_no_dividend_close_to_bsm_european(self):
+        ud = UnderlyingData(
+            initial_value=100.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+        spec_am = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+        spec_eu = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        fd_val = OptionValuation("call_fd", ud, spec_am, PricingMethod.PDE_FD)
+        fd_pv = fd_val.present_value(spot_steps=90, time_steps=90, max_iter=20_000)
+
+        bsm_val = OptionValuation("call_bsm", ud, spec_eu, PricingMethod.BSM_CONTINUOUS)
+        bsm_pv = bsm_val.present_value()
+
+        # American call with no dividends should be near European (no early exercise benefit).
+        assert np.isclose(fd_pv, bsm_pv, atol=1.0)
 
 
 class TestBSMValuation:

@@ -25,6 +25,7 @@ class PricingMethod(Enum):
     BINOMIAL = "binomial"
     BSM_CONTINUOUS = "bsm_continuous"
     BSM_DISCRETE = "bsm_discrete"
+    PDE_FD = "pde_fd"
 
 
 class GreekCalculationMethod(Enum):
