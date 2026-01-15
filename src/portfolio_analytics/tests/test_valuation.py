@@ -6,6 +6,7 @@ import numpy as np
 from portfolio_analytics.valuation import (
     OptionSpec,
     CondorSpec,
+    PayoffSpec,
     UnderlyingConfig,
     UnderlyingData,
     OptionValuation,
@@ -450,6 +451,178 @@ class TestOptionValuation:
         ).present_value(random_seed=42)
 
         assert np.isclose(binomial_pv, mcs_pv, rtol=0.01)
+
+    def test_custom_payoff_single_contract_american_supported(self):
+        """Custom payoff should be priceable as a single American contract.
+
+        This specifically checks that early exercise decisions compare intrinsic vs continuation
+        for the *whole payoff*, not decomposed legs.
+        """
+
+        def capped_payoff(spot: np.ndarray | float) -> np.ndarray:
+            s = np.asarray(spot, dtype=float)
+            return np.minimum(40.0, np.maximum(90.0 - s, 0.0) + np.maximum(s - 110.0, 0.0))
+
+        spec_am = PayoffSpec(
+            exercise_type=ExerciseType.AMERICAN,
+            maturity=self.maturity,
+            currency="USD",
+            payoff_fn=capped_payoff,
+        )
+        spec_eu = PayoffSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            maturity=self.maturity,
+            currency="USD",
+            payoff_fn=capped_payoff,
+        )
+
+        # Binomial (UnderlyingData)
+        ud = UnderlyingData(
+            initial_value=100.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+        pv_binom_am = OptionValuation(
+            name="CUSTOM_AM_BINOM",
+            underlying=ud,
+            spec=spec_am,
+            pricing_method=PricingMethod.BINOMIAL,
+        ).present_value(num_steps=500)
+        pv_binom_eu = OptionValuation(
+            name="CUSTOM_EU_BINOM",
+            underlying=ud,
+            spec=spec_eu,
+            pricing_method=PricingMethod.BINOMIAL,
+        ).present_value(num_steps=500)
+
+        assert pv_binom_am >= pv_binom_eu
+        assert 0.0 <= pv_binom_am <= 40.0 + 1e-8
+
+        # Monte Carlo (PathSimulation) American via LSM
+        gbm_params = GBMParams(initial_value=100.0, volatility=0.2)
+        sim_config = SimulationConfig(paths=20000, frequency="W", final_date=self.maturity)
+        gbm = GeometricBrownianMotion("gbm_custom", self.market_data, gbm_params, sim_config)
+        pv_mcs_am = OptionValuation(
+            name="CUSTOM_AM_MCS",
+            underlying=gbm,
+            spec=spec_am,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        ).present_value(random_seed=42, deg=3)
+        pv_mcs_eu = OptionValuation(
+            name="CUSTOM_EU_MCS",
+            underlying=gbm,
+            spec=spec_eu,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        ).present_value(random_seed=42)
+
+        assert pv_mcs_am >= pv_mcs_eu
+        assert 0.0 <= pv_mcs_am <= 40.0 + 1e-8
+
+    def test_american_condor_is_sum_of_american_legs_binomial(self):
+        """American CondorSpec is valued as an independently exercisable strategy (sum of legs)."""
+        ud = UnderlyingData(
+            initial_value=90.0,
+            volatility=0.2,
+            pricing_date=self.pricing_date,
+            discount_curve=self.csr,
+            dividend_yield=0.0,
+        )
+
+        strikes = (50.0, 90.0, 110.0, 150.0)
+        condor_spec = CondorSpec(
+            exercise_type=ExerciseType.AMERICAN,
+            strikes=strikes,
+            maturity=self.maturity,
+            currency="USD",
+            side=PositionSide.LONG,
+        )
+        condor_val = OptionValuation(
+            name="CONDOR_AM",
+            underlying=ud,
+            spec=condor_spec,
+            pricing_method=PricingMethod.BINOMIAL,
+        )
+
+        k1, k2, k3, k4 = strikes
+        leg_specs = [
+            (OptionType.PUT, k1, -1.0),
+            (OptionType.PUT, k2, +1.0),
+            (OptionType.CALL, k3, +1.0),
+            (OptionType.CALL, k4, -1.0),
+        ]
+        leg_pv = 0.0
+        for opt_type, k, w in leg_specs:
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.AMERICAN,
+                strike=k,
+                maturity=self.maturity,
+                currency="USD",
+            )
+            leg_val = OptionValuation(
+                name=f"LEG_AM_{opt_type.value}_{k}",
+                underlying=ud,
+                spec=leg_spec,
+                pricing_method=PricingMethod.BINOMIAL,
+            )
+            leg_pv += w * leg_val.present_value(num_steps=500)
+
+        condor_pv = condor_val.present_value(num_steps=500)
+        assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
+
+    def test_american_condor_is_sum_of_american_legs_mcs(self):
+        """Same semantics under MCS/LSM: CondorSpec AMERICAN aggregates per-leg exercise."""
+        simulation_config = SimulationConfig(
+            paths=50_000, frequency="W", day_count_convention=365, final_date=self.maturity
+        )
+        process_params = GBMParams(initial_value=90, volatility=0.2)
+        gbm = GeometricBrownianMotion(
+            "gbm_am_condor", self.market_data, process_params, simulation_config
+        )
+
+        strikes = (50.0, 90.0, 110.0, 150.0)
+        condor_spec = CondorSpec(
+            exercise_type=ExerciseType.AMERICAN,
+            strikes=strikes,
+            maturity=self.maturity,
+            currency="USD",
+            side=PositionSide.LONG,
+        )
+        condor_val = OptionValuation(
+            name="CONDOR_AM_MCS",
+            underlying=gbm,
+            spec=condor_spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        )
+
+        k1, k2, k3, k4 = strikes
+        leg_specs = [
+            (OptionType.PUT, k1, -1.0),
+            (OptionType.PUT, k2, +1.0),
+            (OptionType.CALL, k3, +1.0),
+            (OptionType.CALL, k4, -1.0),
+        ]
+        leg_pv = 0.0
+        for opt_type, k, w in leg_specs:
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.AMERICAN,
+                strike=k,
+                maturity=self.maturity,
+                currency="USD",
+            )
+            leg_val = OptionValuation(
+                name=f"LEG_AM_MCS_{opt_type.value}_{k}",
+                underlying=gbm,
+                spec=leg_spec,
+                pricing_method=PricingMethod.MONTE_CARLO,
+            )
+            leg_pv += w * leg_val.present_value(random_seed=42, deg=3)
+
+        condor_pv = condor_val.present_value(random_seed=42, deg=3)
+        assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
 
     def test_option_valuation_invalid_pricing_method_type(self):
         """Test that OptionValuation validates pricing_method is PricingMethod enum."""

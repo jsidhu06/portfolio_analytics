@@ -29,27 +29,17 @@ class _MCEuropeanValuation:
         maturity_value = paths[time_index_end]
 
         K = self.parent.strike
-        if self.parent.option_type in (OptionType.CALL, OptionType.PUT) and K is None:
-            raise ValueError("strike is required for vanilla European call/put payoff.")
+        if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
+            if K is None:
+                raise ValueError("strike is required for vanilla European call/put payoff.")
+            if self.parent.option_type is OptionType.CALL:
+                return np.maximum(maturity_value - K, 0.0)
+            return np.maximum(K - maturity_value, 0.0)
 
-        if self.parent.option_type is OptionType.CALL:
-            payoff = np.maximum(maturity_value - K, 0.0)
-
-        elif self.parent.option_type is OptionType.PUT:
-            payoff = np.maximum(K - maturity_value, 0.0)
-
-        elif self.parent.option_type is OptionType.CONDOR:
-            payoff_fn = getattr(self.parent.spec, "payoff", None)
-            if payoff_fn is None:
-                raise TypeError(
-                    "Condor payoff requires parent.spec.payoff(spot) to be defined (e.g., CondorSpec)"
-                )
-            return payoff_fn(maturity_value)
-
-        else:
+        payoff_fn = getattr(self.parent.spec, "payoff", None)
+        if payoff_fn is None:
             raise ValueError("Unsupported option type for Monte Carlo valuation.")
-
-        return payoff
+        return payoff_fn(maturity_value)
 
     def present_value(
         self,
@@ -110,20 +100,18 @@ class _MCAmerianValuation:
         instrument_values = paths[time_index_start : time_index_end + 1]
 
         K = self.parent.strike
-        if self.parent.option_type in (OptionType.CALL, OptionType.PUT) and K is None:
-            raise ValueError("strike is required for vanilla American call/put payoff.")
-
-        if self.parent.option_type is OptionType.CALL:
-            payoff = np.maximum(instrument_values - K, 0)
-
-        elif self.parent.option_type is OptionType.PUT:
-            payoff = np.maximum(K - instrument_values, 0)
-
-        elif self.parent.option_type is OptionType.CONDOR:
-            raise NotImplementedError("American Condor valuation not implemented yet.")
-
+        if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
+            if K is None:
+                raise ValueError("strike is required for vanilla American call/put payoff.")
+            if self.parent.option_type is OptionType.CALL:
+                payoff = np.maximum(instrument_values - K, 0)
+            else:
+                payoff = np.maximum(K - instrument_values, 0)
         else:
-            raise ValueError("Unsupported option type for Monte Carlo valuation.")
+            payoff_fn = getattr(self.parent.spec, "payoff", None)
+            if payoff_fn is None:
+                raise ValueError("Unsupported option type for Monte Carlo valuation.")
+            payoff = payoff_fn(instrument_values)
 
         return instrument_values, payoff, time_index_start, time_index_end
 

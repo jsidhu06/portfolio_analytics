@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from collections.abc import Callable
 import datetime as dt
 import numpy as np
 from .stochastic_processes import PathSimulation
@@ -40,7 +41,7 @@ class OptionSpec:
 
 @dataclass(frozen=True, slots=True)
 class CondorSpec:
-    """Contract specification for a 4-leg condor (European).
+    """Contract specification for a 4-leg condor.
 
     Definition (strikes ordered):
     - Short put  at K1
@@ -51,6 +52,12 @@ class CondorSpec:
     With $K_1 < K_2 < K_3 < K_4$, the payoff is
     $\max(K_2-S,0)-\max(K_1-S,0)+\max(S-K_3,0)-\max(S-K_4,0)$,
     and is multiplied by +1 for LONG and -1 for SHORT.
+
+        Exercise semantics
+        ------------------
+        - EUROPEAN: priced directly from the combined payoff.
+        - AMERICAN: interpreted as a *strategy of listed American options*; valuation is
+            the sum of the 4 legs valued independently (per-leg optimal exercise).
     """
 
     exercise_type: ExerciseType
@@ -69,10 +76,8 @@ class CondorSpec:
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
-        if self.exercise_type != ExerciseType.EUROPEAN:
-            raise NotImplementedError(
-                "CondorSpec is currently supported for European exercise only."
-            )
+
+        # NOTE: For AMERICAN, valuation is handled as a sum-of-legs in OptionValuation.
 
         if not isinstance(self.side, PositionSide):
             raise TypeError(f"side must be PositionSide enum, got {type(self.side).__name__}")
@@ -101,6 +106,47 @@ class CondorSpec:
         if self.side == PositionSide.SHORT:
             payoff = -payoff
         return payoff
+
+
+@dataclass(frozen=True, slots=True)
+class PayoffSpec:
+    """Contract specification for a single-contract custom payoff.
+
+    This is useful for pricing payoffs that are not representable as a single vanilla
+    call/put (e.g., capped combinations), while still treating the product as ONE
+    contract for exercise decisions (American pricing compares intrinsic vs continuation
+    on the full payoff).
+
+    Notes
+    -----
+    - payoff_fn must be vectorized over spot (accept float or np.ndarray and return np.ndarray)
+    - strike is kept as None for compatibility with the OptionValuation interface
+    """
+
+    exercise_type: ExerciseType
+    maturity: dt.datetime
+    currency: str
+    payoff_fn: Callable[[np.ndarray | float], np.ndarray]
+    contract_size: int | float = 100
+
+    # Kept for compatibility with vanilla valuation interfaces
+    option_type: OptionType = OptionType.CUSTOM
+    strike: None = None
+
+    def __post_init__(self):
+        if not isinstance(self.exercise_type, ExerciseType):
+            raise TypeError(
+                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
+            )
+        if not isinstance(self.option_type, OptionType) or self.option_type != OptionType.CUSTOM:
+            raise TypeError("PayoffSpec.option_type must be OptionType.CUSTOM")
+        if not callable(self.payoff_fn):
+            raise TypeError("payoff_fn must be callable")
+
+    def payoff(self, spot: np.ndarray | float) -> np.ndarray:
+        """Vectorized payoff as a function of spot."""
+        # Ensure a float ndarray output (for downstream math and boolean comparisons).
+        return np.asarray(self.payoff_fn(spot), dtype=float)
 
 
 @dataclass
@@ -209,7 +255,7 @@ class OptionValuation:
         self,
         name: str,
         underlying: PathSimulation | UnderlyingData,
-        spec: OptionSpec | CondorSpec,
+        spec: OptionSpec | CondorSpec | PayoffSpec,
         pricing_method: PricingMethod,
     ):
         self.name = name
@@ -230,8 +276,13 @@ class OptionValuation:
         self.contract_size = spec.contract_size
 
         # Strategy guardrails
-        if self.option_type == OptionType.CONDOR and pricing_method == PricingMethod.BSM_CONTINUOUS:
-            raise NotImplementedError("BSM pricing is not available for condor strategies.")
+        if pricing_method == PricingMethod.BSM_CONTINUOUS and self.option_type not in (
+            OptionType.CALL,
+            OptionType.PUT,
+        ):
+            raise NotImplementedError(
+                "BSM pricing is only available for vanilla CALL/PUT option types."
+            )
 
         # Optional sanity check: maturity must be after pricing date
         if self.maturity <= self.pricing_date:
@@ -307,7 +358,53 @@ class OptionValuation:
             - MCS: random_seed (int, optional), deg (int, optional, American only)
             - Binomial: num_steps (int, optional)
         """
+        if isinstance(self.spec, CondorSpec) and self.spec.exercise_type == ExerciseType.AMERICAN:
+            if full:
+                raise NotImplementedError(
+                    "full=True is not supported for American CondorSpec (sum-of-legs semantics)."
+                )
+            return self._present_value_condor_as_sum_of_legs(**kwargs)
+
         return self._impl.present_value(full=full, **kwargs)
+
+    def _present_value_condor_as_sum_of_legs(self, **kwargs) -> float:
+        """Value an American condor as a strategy: sum of 4 independently exercisable legs."""
+        if not isinstance(self.spec, CondorSpec):
+            raise TypeError("_present_value_condor_as_sum_of_legs requires CondorSpec")
+        if self.spec.exercise_type != ExerciseType.AMERICAN:
+            raise ValueError("CondorSpec must be AMERICAN for sum-of-legs valuation")
+
+        k1, k2, k3, k4 = self.spec.strikes
+
+        # Long condor payoff is: -put(K1) + put(K2) + call(K3) - call(K4)
+        leg_defs: list[tuple[OptionType, float, float]] = [
+            (OptionType.PUT, k1, -1.0),
+            (OptionType.PUT, k2, +1.0),
+            (OptionType.CALL, k3, +1.0),
+            (OptionType.CALL, k4, -1.0),
+        ]
+        if self.spec.side == PositionSide.SHORT:
+            leg_defs = [(opt_type, strike, -weight) for (opt_type, strike, weight) in leg_defs]
+
+        total = 0.0
+        for opt_type, strike, weight in leg_defs:
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.AMERICAN,
+                strike=strike,
+                maturity=self.maturity,
+                currency=self.currency,
+                contract_size=self.contract_size,
+            )
+            leg_val = OptionValuation(
+                name=f"{self.name}_leg_{opt_type.value}_{strike}",
+                underlying=self.underlying,
+                spec=leg_spec,
+                pricing_method=self.pricing_method,
+            )
+            total += weight * leg_val.present_value(**kwargs)
+
+        return total
 
     def delta(
         self,

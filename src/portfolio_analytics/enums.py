@@ -7,6 +7,7 @@ class OptionType(Enum):
     CALL = "call"
     PUT = "put"
     CONDOR = "condor"
+    CUSTOM = "custom"
 
 
 class PositionSide(Enum):
