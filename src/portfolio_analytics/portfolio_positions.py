@@ -191,7 +191,6 @@ class DerivativesPortfolio:
         sim_config = SimulationConfig(
             paths=self.val_env.paths,
             frequency=self.val_env.frequency,
-            end_date=self.end_date,
             day_count_convention=self.val_env.day_count_convention,
             time_grid=self.time_grid,
         )

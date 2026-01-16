@@ -433,9 +433,26 @@ class TestSimulationConfig:
         config = SimulationConfig(
             paths=500,
             frequency="D",
-            end_date=dt.datetime(2026, 1, 1),
             time_grid=custom_grid,
         )
 
         assert config.time_grid is not None
         np.testing.assert_array_equal(config.time_grid, custom_grid)
+
+    def test_simulation_config_with_end_date_and_time_grid_raise_error(self):
+        """Test SimulationConfig with pre-defined time grid."""
+        custom_grid = np.array(
+            [
+                dt.datetime(2025, 1, 1),
+                dt.datetime(2025, 6, 1),
+                dt.datetime(2026, 1, 1),
+            ]
+        )
+
+        with pytest.raises(ValueError):
+            SimulationConfig(
+                paths=500,
+                frequency="D",
+                end_date=dt.datetime(2026, 1, 1),
+                time_grid=custom_grid,
+            )

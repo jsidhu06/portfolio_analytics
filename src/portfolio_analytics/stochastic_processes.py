@@ -13,16 +13,37 @@ from .utils import calculate_year_fraction, sn_random_numbers
 class SimulationConfig:
     """Configuration for a path simulation run.
 
-    Defines the simulation horizon (`end_date`), discretization (`frequency`, `day_count_convention`),
-    and optional portfolio-driven grid overrides (`time_grid`, `special_dates`).
+    Notes
+    -----
+    - The simulation **start date** is taken from ``MarketData.pricing_date`` (the process pricing date).
+        Therefore this config only specifies the horizon **end** (``end_date``) and the discretization.
+    - Exactly one of ``end_date`` or ``time_grid`` must be provided.
+        If ``time_grid`` is provided, it is treated as the authoritative schedule.
     """
 
     paths: int
     frequency: str
-    end_date: dt.datetime
+    end_date: dt.datetime | None = None
     day_count_convention: int | float = 365
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: list[dt.datetime] = field(default_factory=list)
+
+    def __post_init__(self):
+        if self.paths is None or int(self.paths) <= 0:
+            raise ValueError("SimulationConfig.paths must be a positive integer")
+        if not isinstance(self.frequency, str) or not self.frequency.strip():
+            raise ValueError("SimulationConfig.frequency must be a non-empty string")
+
+        has_end_date = self.end_date is not None
+        has_time_grid = self.time_grid is not None
+        if has_end_date == has_time_grid:
+            raise ValueError(
+                "SimulationConfig requires exactly one of end_date or time_grid to be provided."
+            )
+
+        if has_time_grid:
+            if len(self.time_grid) == 0:
+                raise ValueError("SimulationConfig.time_grid must be non-empty when provided")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
