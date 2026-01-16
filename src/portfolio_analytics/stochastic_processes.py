@@ -25,6 +25,18 @@ class GBMParams:
     volatility: float
     dividend_yield: float = 0.0
 
+    def __post_init__(self):
+        if self.initial_value is None:
+            raise ValueError("GBMParams requires initial_value to be not None")
+        if self.volatility is None:
+            raise ValueError("GBMParams requires volatility to be not None")
+        if not np.isfinite(float(self.initial_value)):
+            raise ValueError("GBMParams requires initial_value to be finite")
+        if not np.isfinite(float(self.volatility)):
+            raise ValueError("GBMParams requires volatility to be finite")
+        if float(self.volatility) < 0.0:
+            raise ValueError("GBMParams requires volatility to be >= 0")
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class JDParams:
@@ -36,10 +48,32 @@ class JDParams:
     dividend_yield: float = 0.0
 
     def __post_init__(self):
+        if self.initial_value is None:
+            raise ValueError("JDParams requires initial_value to be not None")
+        if self.volatility is None:
+            raise ValueError("JDParams requires volatility to be not None")
+        if not np.isfinite(float(self.initial_value)):
+            raise ValueError("JDParams requires initial_value to be finite")
+        if not np.isfinite(float(self.volatility)):
+            raise ValueError("JDParams requires volatility to be finite")
+        if float(self.volatility) < 0.0:
+            raise ValueError("JDParams requires volatility to be >= 0")
+
         if self.jump_intensity is None or self.jump_mean is None or self.jump_std is None:
             raise ValueError(
                 "JDParams requires jump_intensity, jump_mean, and jump_std to be not None"
             )
+
+        if not np.isfinite(float(self.jump_intensity)):
+            raise ValueError("JDParams requires jump_intensity to be finite")
+        if not np.isfinite(float(self.jump_mean)):
+            raise ValueError("JDParams requires jump_mean to be finite")
+        if not np.isfinite(float(self.jump_std)):
+            raise ValueError("JDParams requires jump_std to be finite")
+        if float(self.jump_intensity) < 0.0:
+            raise ValueError("JDParams requires jump_intensity to be >= 0")
+        if float(self.jump_std) < 0.0:
+            raise ValueError("JDParams requires jump_std to be >= 0")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -50,8 +84,28 @@ class SRDParams:
     theta: float  # long-run mean
 
     def __post_init__(self):
+        if self.initial_value is None:
+            raise ValueError("SRDParams requires initial_value to be not None")
+        if self.volatility is None:
+            raise ValueError("SRDParams requires volatility to be not None")
+        if not np.isfinite(float(self.initial_value)):
+            raise ValueError("SRDParams requires initial_value to be finite")
+        if not np.isfinite(float(self.volatility)):
+            raise ValueError("SRDParams requires volatility to be finite")
+        if float(self.volatility) < 0.0:
+            raise ValueError("SRDParams requires volatility to be >= 0")
+
         if self.kappa is None or self.theta is None:
             raise ValueError("SRDParams requires kappa and theta to be not None")
+
+        if not np.isfinite(float(self.kappa)):
+            raise ValueError("SRDParams requires kappa to be finite")
+        if not np.isfinite(float(self.theta)):
+            raise ValueError("SRDParams requires theta to be finite")
+        if float(self.kappa) < 0.0:
+            raise ValueError("SRDParams requires kappa to be >= 0")
+        if float(self.theta) < 0.0:
+            raise ValueError("SRDParams requires theta to be >= 0")
 
 
 class PathSimulation(ABC):

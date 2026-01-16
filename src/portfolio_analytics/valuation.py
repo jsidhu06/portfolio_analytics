@@ -191,6 +191,88 @@ class UnderlyingConfig:
     kappa: float | None = None
     theta: float | None = None
 
+    def __post_init__(self):
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise TypeError("UnderlyingConfig.name must be a non-empty string")
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise TypeError("UnderlyingConfig.model must be a non-empty string")
+
+        allowed_models = {"gbm", "jd", "srd"}
+        if self.model not in allowed_models:
+            raise ValueError(
+                f"UnderlyingConfig.model must be one of {sorted(allowed_models)}, got '{self.model}'"
+            )
+
+        if self.initial_value is None:
+            raise ValueError("UnderlyingConfig.initial_value must be not None")
+        if self.volatility is None:
+            raise ValueError("UnderlyingConfig.volatility must be not None")
+
+        try:
+            self.initial_value = float(self.initial_value)
+            self.volatility = float(self.volatility)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "UnderlyingConfig.initial_value and volatility must be numeric"
+            ) from exc
+
+        if not np.isfinite(self.initial_value):
+            raise ValueError("UnderlyingConfig.initial_value must be finite")
+        if not np.isfinite(self.volatility):
+            raise ValueError("UnderlyingConfig.volatility must be finite")
+        if self.volatility < 0.0:
+            raise ValueError("UnderlyingConfig.volatility must be >= 0")
+
+        # Model-specific validation
+        if self.model == "jd":
+            missing = [
+                name
+                for name, value in (
+                    ("jump_intensity", self.jump_intensity),
+                    ("jump_mean", self.jump_mean),
+                    ("jump_std", self.jump_std),
+                )
+                if value is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"UnderlyingConfig for model='jd' requires {', '.join(missing)} to be set"
+                )
+            self.jump_intensity = float(self.jump_intensity)
+            self.jump_mean = float(self.jump_mean)
+            self.jump_std = float(self.jump_std)
+            if not np.isfinite(self.jump_intensity):
+                raise ValueError("UnderlyingConfig.jump_intensity must be finite")
+            if not np.isfinite(self.jump_mean):
+                raise ValueError("UnderlyingConfig.jump_mean must be finite")
+            if not np.isfinite(self.jump_std):
+                raise ValueError("UnderlyingConfig.jump_std must be finite")
+            if self.jump_intensity < 0.0:
+                raise ValueError("UnderlyingConfig.jump_intensity must be >= 0")
+            if self.jump_std < 0.0:
+                raise ValueError("UnderlyingConfig.jump_std must be >= 0")
+
+        if self.model == "srd":
+            missing = [
+                name
+                for name, value in (("kappa", self.kappa), ("theta", self.theta))
+                if value is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"UnderlyingConfig for model='srd' requires {', '.join(missing)} to be set"
+                )
+            self.kappa = float(self.kappa)
+            self.theta = float(self.theta)
+            if not np.isfinite(self.kappa):
+                raise ValueError("UnderlyingConfig.kappa must be finite")
+            if not np.isfinite(self.theta):
+                raise ValueError("UnderlyingConfig.theta must be finite")
+            if self.kappa < 0.0:
+                raise ValueError("UnderlyingConfig.kappa must be >= 0")
+            if self.theta < 0.0:
+                raise ValueError("UnderlyingConfig.theta must be >= 0")
+
 
 class UnderlyingPricingData:
     """Minimal data container for option valuation underlying asset.
