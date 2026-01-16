@@ -432,7 +432,6 @@ class TestSimulationConfig:
 
         config = SimulationConfig(
             paths=500,
-            frequency="D",
             time_grid=custom_grid,
         )
 
@@ -440,7 +439,7 @@ class TestSimulationConfig:
         np.testing.assert_array_equal(config.time_grid, custom_grid)
 
     def test_simulation_config_with_end_date_and_time_grid_raise_error(self):
-        """Test SimulationConfig with pre-defined time grid."""
+        """Supplying both end_date and time_grid should raise."""
         custom_grid = np.array(
             [
                 dt.datetime(2025, 1, 1),
@@ -452,7 +451,25 @@ class TestSimulationConfig:
         with pytest.raises(ValueError):
             SimulationConfig(
                 paths=500,
-                frequency="D",
                 end_date=dt.datetime(2026, 1, 1),
                 time_grid=custom_grid,
             )
+
+    def test_simulation_config_with_frequency_and_num_steps_raise_error(self):
+        """Supplying both frequency and num_steps should raise."""
+        with pytest.raises(ValueError):
+            SimulationConfig(
+                paths=500,
+                end_date=dt.datetime(2026, 1, 1),
+                frequency="D",
+                num_steps=10,
+            )
+
+    def test_simulation_config_with_num_steps(self):
+        """num_steps mode should be accepted (uniform-step grid)."""
+        config = SimulationConfig(
+            paths=500,
+            end_date=dt.datetime(2026, 1, 1),
+            num_steps=10,
+        )
+        assert config.num_steps == 10

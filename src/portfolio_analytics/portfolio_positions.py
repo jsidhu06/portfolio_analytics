@@ -190,7 +190,6 @@ class DerivativesPortfolio:
         # Construct SimulationConfig once (shared across underlyings)
         sim_config = SimulationConfig(
             paths=self.val_env.paths,
-            frequency=self.val_env.frequency,
             day_count_convention=self.val_env.day_count_convention,
             time_grid=self.time_grid,
         )

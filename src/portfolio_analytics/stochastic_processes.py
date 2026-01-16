@@ -15,15 +15,22 @@ class SimulationConfig:
 
     Notes
     -----
-    - The simulation **start date** is taken from ``MarketData.pricing_date`` (the process pricing date).
-        Therefore this config only specifies the horizon **end** (``end_date``) and the discretization.
-    - Exactly one of ``end_date`` or ``time_grid`` must be provided.
-        If ``time_grid`` is provided, it is treated as the authoritative schedule.
+        - The simulation **start date** is taken from ``MarketData.pricing_date`` (the process pricing date).
+            Therefore this config only specifies the horizon **end** (``end_date``) and the discretization.
+
+        Grid specification
+        ------------------
+        Exactly one of the following modes must be used:
+
+        1) Explicit grid: provide ``time_grid`` (and do not provide ``end_date``, ``frequency``, or ``num_steps``).
+        2) Calendar grid: provide ``end_date`` + ``frequency``.
+        3) Uniform-step grid: provide ``end_date`` + ``num_steps``.
     """
 
     paths: int
-    frequency: str
+    frequency: str | None = None
     end_date: dt.datetime | None = None
+    num_steps: int | None = None
     day_count_convention: int | float = 365
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: list[dt.datetime] = field(default_factory=list)
@@ -31,19 +38,42 @@ class SimulationConfig:
     def __post_init__(self):
         if self.paths is None or int(self.paths) <= 0:
             raise ValueError("SimulationConfig.paths must be a positive integer")
-        if not isinstance(self.frequency, str) or not self.frequency.strip():
-            raise ValueError("SimulationConfig.frequency must be a non-empty string")
 
         has_end_date = self.end_date is not None
         has_time_grid = self.time_grid is not None
-        if has_end_date == has_time_grid:
-            raise ValueError(
-                "SimulationConfig requires exactly one of end_date or time_grid to be provided."
-            )
+        has_frequency = self.frequency is not None
+        has_num_steps = self.num_steps is not None
 
+        # Explicit grid mode
         if has_time_grid:
+            if has_end_date or has_frequency or has_num_steps:
+                raise ValueError(
+                    "When time_grid is provided, end_date, frequency, and num_steps must be omitted."
+                )
             if len(self.time_grid) == 0:
                 raise ValueError("SimulationConfig.time_grid must be non-empty when provided")
+            return
+
+        # Otherwise we require an end_date and one discretization knob.
+        if not has_end_date:
+            raise ValueError("SimulationConfig.end_date must be provided when time_grid is not set")
+
+        if has_frequency == has_num_steps:
+            raise ValueError(
+                "SimulationConfig requires exactly one of frequency or num_steps when end_date is provided."
+            )
+
+        if has_frequency:
+            if not isinstance(self.frequency, str) or not self.frequency.strip():
+                raise ValueError("SimulationConfig.frequency must be a non-empty string")
+
+        if has_num_steps:
+            try:
+                steps = int(self.num_steps)
+            except (TypeError, ValueError) as exc:
+                raise TypeError("SimulationConfig.num_steps must be an integer") from exc
+            if steps <= 0:
+                raise ValueError("SimulationConfig.num_steps must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -181,6 +211,7 @@ class PathSimulation(ABC):
 
         self.paths = sim.paths
         self.frequency = sim.frequency
+        self.num_steps = sim.num_steps
         self.day_count_convention = sim.day_count_convention
         self.time_grid = sim.time_grid
         self.special_dates = sim.special_dates
@@ -205,7 +236,14 @@ class PathSimulation(ABC):
         "Generate time grid for simulation of stochastic process"
         start = self.pricing_date
         end = self.end_date
-        time_grid = list(pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime())
+        if self.num_steps is not None:
+            time_grid = list(
+                pd.date_range(start=start, end=end, periods=int(self.num_steps) + 1).to_pydatetime()
+            )
+        else:
+            time_grid = list(
+                pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
+            )
         # enhance time_grid by start, end, and special_dates
         if start not in time_grid:
             time_grid.insert(0, start)

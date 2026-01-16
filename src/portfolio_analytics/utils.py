@@ -96,13 +96,12 @@ def sn_random_numbers(
         shape (o, n, m) if o > 1, else shape (n, m)
         standard normally distributed random numbers
     """
-    if random_seed is not None:
-        np.random.seed(random_seed)
+    rng = np.random.default_rng(random_seed)
     if antithetic:
-        ran = np.random.standard_normal((shape[0], shape[1], shape[2] // 2))
+        ran = rng.standard_normal((shape[0], shape[1], shape[2] // 2))
         ran = np.concatenate((ran, -ran), axis=2)
     else:
-        ran = np.random.standard_normal(shape)
+        ran = rng.standard_normal(shape)
     if moment_matching:
         ran = (ran - np.mean(ran)) / np.std(ran)  # note this is population std dev
     if shape[0] == 1:
