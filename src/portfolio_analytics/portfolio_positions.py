@@ -141,7 +141,7 @@ class DerivativesPortfolio:
         self.underlying_names: set[str] = set(underlyings.keys())
         self.correlations = correlations
         self.pricing_date = val_env.market_data.pricing_date
-        self.final_date = None
+        self.end_date = None
         self.time_grid = None
         self.underlying_objects: dict[str, PathSimulation] = {}
         self.valuation_objects: dict[str, OptionValuation] = {}
@@ -164,13 +164,13 @@ class DerivativesPortfolio:
 
         position_maturities = [p.spec.maturity for p in positions.values()]
 
-        self.final_date = max(position_maturities)
+        self.end_date = max(position_maturities)
 
-        # Base grid from starting_date to final_date
+        # Base grid from starting_date to end_date
         time_grid = list(
             pd.date_range(
                 start=self.pricing_date,
-                end=self.final_date,
+                end=self.end_date,
                 freq=self.val_env.frequency,
             ).to_pydatetime()
         )
@@ -180,7 +180,7 @@ class DerivativesPortfolio:
         self.special_dates = set(position_maturities).difference(time_grid)
 
         # Ensure all key dates are included (pricing dates + maturities)
-        required_dates = set([self.pricing_date, self.final_date] + position_maturities)
+        required_dates = set([self.pricing_date, self.end_date] + position_maturities)
         time_grid.extend(required_dates)
 
         # Delete duplicates and sort
@@ -191,7 +191,7 @@ class DerivativesPortfolio:
         sim_config = SimulationConfig(
             paths=self.val_env.paths,
             frequency=self.val_env.frequency,
-            final_date=self.final_date,
+            end_date=self.end_date,
             day_count_convention=self.val_env.day_count_convention,
             time_grid=self.time_grid,
         )

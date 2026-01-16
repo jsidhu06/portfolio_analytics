@@ -266,7 +266,7 @@ class TestOptionValuation:
         sim_config = SimulationConfig(
             paths=1000,
             frequency="D",
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
         gbm = GeometricBrownianMotion(
             "gbm_test",
@@ -364,7 +364,7 @@ class TestOptionValuation:
         """Condor PV should equal PV of its 4 legs under the same binomial model."""
 
         simulation_config = SimulationConfig(
-            paths=200_000, frequency="W", day_count_convention=365, final_date=self.maturity
+            paths=200_000, frequency="W", day_count_convention=365, end_date=self.maturity
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
         gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
@@ -423,7 +423,7 @@ class TestOptionValuation:
             dividend_yield=0.0,
         )
         simulation_config = SimulationConfig(
-            paths=200_000, frequency="W", day_count_convention=365, final_date=self.maturity
+            paths=200_000, frequency="W", day_count_convention=365, end_date=self.maturity
         )
         process_params = GBMParams(initial_value=initial_value, volatility=volatility)
         gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
@@ -503,7 +503,7 @@ class TestOptionValuation:
 
         # Monte Carlo (PathSimulation) American via LSM
         gbm_params = GBMParams(initial_value=100.0, volatility=0.2)
-        sim_config = SimulationConfig(paths=20000, frequency="W", final_date=self.maturity)
+        sim_config = SimulationConfig(paths=20000, frequency="W", end_date=self.maturity)
         gbm = GeometricBrownianMotion("gbm_custom", self.market_data, gbm_params, sim_config)
         pv_mcs_am = OptionValuation(
             name="CUSTOM_AM_MCS",
@@ -576,7 +576,7 @@ class TestOptionValuation:
     def test_american_condor_is_sum_of_american_legs_mcs(self):
         """Same semantics under MCS/LSM: CondorSpec AMERICAN aggregates per-leg exercise."""
         simulation_config = SimulationConfig(
-            paths=50_000, frequency="W", day_count_convention=365, final_date=self.maturity
+            paths=50_000, frequency="W", day_count_convention=365, end_date=self.maturity
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
         gbm = GeometricBrownianMotion(
@@ -1232,7 +1232,7 @@ class TestMCSValuation:
         sim_config = SimulationConfig(
             paths=10000,
             frequency="D",
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
 
         gbm = GeometricBrownianMotion(
@@ -1269,7 +1269,7 @@ class TestMCSValuation:
         sim_config = SimulationConfig(
             paths=10000,
             frequency="D",
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
 
         gbm = GeometricBrownianMotion(
@@ -1305,7 +1305,7 @@ class TestMCSValuation:
         sim_config = SimulationConfig(
             paths=1000,  # Smaller for faster test
             frequency="D",
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
 
         call_spec = OptionSpec(
@@ -1359,7 +1359,7 @@ class TestMCSValuation:
         sim_config = SimulationConfig(
             paths=5000,
             frequency="D",
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
 
         gbm = GeometricBrownianMotion(
@@ -1417,7 +1417,7 @@ class TestMCSValuation:
         sim_config = SimulationConfig(
             paths=1000,
             frequency="D",
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
 
         gbm = GeometricBrownianMotion(

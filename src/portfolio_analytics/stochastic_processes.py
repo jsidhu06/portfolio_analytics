@@ -11,9 +11,15 @@ from .utils import calculate_year_fraction, sn_random_numbers
 
 @dataclass(frozen=True)
 class SimulationConfig:
+    """Configuration for a path simulation run.
+
+    Defines the simulation horizon (`end_date`), discretization (`frequency`, `day_count_convention`),
+    and optional portfolio-driven grid overrides (`time_grid`, `special_dates`).
+    """
+
     paths: int
     frequency: str
-    final_date: dt.datetime
+    end_date: dt.datetime
     day_count_convention: int | float = 365
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: list[dt.datetime] = field(default_factory=list)
@@ -158,11 +164,11 @@ class PathSimulation(ABC):
         self.time_grid = sim.time_grid
         self.special_dates = sim.special_dates
 
-        # horizon / final_date logic
+        # horizon / end_date logic
         if self.time_grid is not None:
-            self.final_date = max(self.time_grid)
+            self.end_date = max(self.time_grid)
         else:
-            self.final_date = sim.final_date
+            self.end_date = sim.end_date
 
         self.instrument_values = None
         self.correlation_context = corr
@@ -177,7 +183,7 @@ class PathSimulation(ABC):
     def generate_time_grid(self) -> None:
         "Generate time grid for simulation of stochastic process"
         start = self.pricing_date
-        end = self.final_date
+        end = self.end_date
         time_grid = list(pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime())
         # enhance time_grid by start, end, and special_dates
         if start not in time_grid:

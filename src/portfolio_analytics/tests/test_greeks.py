@@ -54,7 +54,7 @@ class TestGreeksSetup:
             paths=200_000,
             frequency="W",
             day_count_convention=365,
-            final_date=self.maturity,
+            end_date=self.maturity,
         )
 
     # -------- factories (preferred over mutating shared instances) --------

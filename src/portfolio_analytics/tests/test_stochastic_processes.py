@@ -26,7 +26,7 @@ class TestPathSimulation:
         sim = SimulationConfig(
             paths=10000,
             frequency="ME",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
         )
 
         with pytest.raises(
@@ -47,7 +47,7 @@ class TestGeometricBrownianMotion:
         self.sim = SimulationConfig(
             paths=10000,
             frequency="ME",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
         )
         self.gbm = GeometricBrownianMotion(
             "gbm_test",
@@ -105,9 +105,9 @@ class TestGeometricBrownianMotion:
         self.gbm.generate_paths(random_seed=42)
 
         assert self.gbm.time_grid is not None
-        # Time grid should start with pricing_date and end with final_date
+        # Time grid should start with pricing_date and end with end_date
         assert self.gbm.time_grid[0] == self.market_data.pricing_date
-        assert self.gbm.time_grid[-1] == self.sim.final_date
+        assert self.gbm.time_grid[-1] == self.sim.end_date
 
     def test_get_instrument_values(self):
         """Test get_instrument_values method."""
@@ -156,7 +156,7 @@ class TestGeometricBrownianMotion:
         sim_config = SimulationConfig(
             paths=10000,
             frequency="D",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
         )
 
         gbm = GeometricBrownianMotion("gbm_drift", market_data, process_params, sim_config)
@@ -191,7 +191,7 @@ class TestSquareRootDiffusion:
         self.sim = SimulationConfig(
             paths=5000,
             frequency="D",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
         )
         self.srd = SquareRootDiffusion(
             "srd_test",
@@ -225,7 +225,7 @@ class TestSquareRootDiffusion:
         long_sim = SimulationConfig(
             paths=5000,
             frequency="D",
-            final_date=dt.datetime(2030, 1, 1),  # 5 years
+            end_date=dt.datetime(2030, 1, 1),  # 5 years
         )
 
         srd_long = SquareRootDiffusion(
@@ -283,7 +283,7 @@ class TestJumpDiffusion:
         self.sim = SimulationConfig(
             paths=5000,
             frequency="D",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
         )
         self.jd = JumpDiffusion(
             "jd_test",
@@ -385,12 +385,12 @@ class TestSimulationConfig:
         config = SimulationConfig(
             paths=5000,
             frequency="D",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
         )
 
         assert config.paths == 5000
         assert config.frequency == "D"
-        assert config.final_date == dt.datetime(2026, 1, 1)
+        assert config.end_date == dt.datetime(2026, 1, 1)
         assert config.day_count_convention == 365  # default
 
     def test_simulation_config_custom_day_count(self):
@@ -398,7 +398,7 @@ class TestSimulationConfig:
         config = SimulationConfig(
             paths=1000,
             frequency="W",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
             day_count_convention=360,
         )
 
@@ -414,7 +414,7 @@ class TestSimulationConfig:
         config = SimulationConfig(
             paths=1000,
             frequency="D",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
             special_dates=special_dates,
         )
 
@@ -433,7 +433,7 @@ class TestSimulationConfig:
         config = SimulationConfig(
             paths=500,
             frequency="D",
-            final_date=dt.datetime(2026, 1, 1),
+            end_date=dt.datetime(2026, 1, 1),
             time_grid=custom_grid,
         )
 
