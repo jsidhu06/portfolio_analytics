@@ -192,7 +192,7 @@ class UnderlyingConfig:
     theta: float | None = None
 
 
-class UnderlyingData:
+class UnderlyingPricingData:
     """Minimal data container for option valuation underlying asset.
 
     Used when pricing with methods that don't require full stochastic process simulation
@@ -224,14 +224,14 @@ class OptionValuation:
     ==========
     name: str
         Name of the valuation object/trade.
-    underlying: PathSimulation | UnderlyingData
-        Stochastic process simulator (Monte Carlo) or minimal data container (Binomial).
+    underlying: PathSimulation | UnderlyingPricingData
+        Stochastic process simulator (Monte Carlo) or minimal data container (BSM, Binomial).
         For Monte Carlo: must be PathSimulation instance.
-        For Binomial: can be PathSimulation or UnderlyingData.
+        For BSM and Binomial: UnderlyingPricingData.
     spec: OptionSpec
         Contract terms (type, exercise type, strike, maturity, currency, contract_size).
     pricing_method: PricingMethod
-        Valuation methodology to use (Monte Carlo, Binomial, BSM, etc).
+        Valuation methodology to use (Monte Carlo, BSM, Binomial, etc).
     pricing_date: datetime
         Pricing date (taken from underlying).
     discount_curve:
@@ -255,7 +255,7 @@ class OptionValuation:
     def __init__(
         self,
         name: str,
-        underlying: PathSimulation | UnderlyingData,
+        underlying: PathSimulation | UnderlyingPricingData,
         spec: OptionSpec | CondorSpec | PayoffSpec,
         pricing_method: PricingMethod,
     ):
@@ -432,7 +432,8 @@ class OptionValuation:
         - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
 
         For other pricing methods:
-        - Always uses numerical central difference approximation (greek_calc_method ignored)
+        - Only support numerical central difference approximation (greek_calc_method analytical
+            raises ValueError)
 
         Parameters
         ==========

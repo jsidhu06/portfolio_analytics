@@ -249,67 +249,6 @@ class GeometricBrownianMotion(PathSimulation):
         return paths
 
 
-class SquareRootDiffusion(PathSimulation):
-    """Cox–Ingersoll–Ross (1985) square-root diffusion (CIR/SRD).
-
-    Model (under chosen measure):
-        dX_t = kappa*(theta - X_t) dt + sigma*sqrt(X_t) dW_t
-
-    Uses full truncation Euler to preserve non-negativity.
-    """
-
-    def __init__(
-        self,
-        name: str,
-        market_data: MarketData,
-        process_params,  # should provide initial_value, volatility, kappa, theta
-        sim: SimulationConfig,
-        corr: CorrelationContext | None = None,
-    ):
-        super().__init__(name, market_data, process_params, sim, corr=corr)
-        self.kappa = process_params.kappa
-        self.theta = process_params.theta
-
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
-        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
-        if self.time_grid is None:
-            self.generate_time_grid()
-
-        M = len(self.time_grid)
-        num_paths = self.paths
-
-        paths = np.zeros((M, num_paths), dtype=float)
-        paths_hat = np.zeros_like(paths)
-
-        paths[0] = self.initial_value
-        paths_hat[0] = self.initial_value
-
-        if self.correlation_context is None:
-            rand = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
-        else:
-            rand = self.random_numbers
-
-        for t in range(1, M):
-            delta_t = calculate_year_fraction(
-                self.time_grid[t - 1],
-                self.time_grid[t],
-                day_count_convention=self.day_count_convention,
-            )
-            if self.correlation_context is None:
-                ran = rand[t]
-            else:
-                ran = np.dot(self.cholesky_matrix, rand[:, t, :])
-                ran = ran[self.rn_set]
-
-            # full truncation Euler discretization
-            mean_reversion = self.kappa * (self.theta - paths[t - 1, :]) * delta_t
-            diffusion = np.sqrt(paths[t - 1, :]) * self.volatility * np.sqrt(delta_t) * ran
-            paths_hat[t] = paths_hat[t - 1] + mean_reversion + diffusion
-            paths[t] = np.maximum(0, paths_hat[t])
-
-        return paths
-
-
 class JumpDiffusion(PathSimulation):
     """Merton (1976) jump diffusion (lognormal jumps).
 
@@ -393,5 +332,66 @@ class JumpDiffusion(PathSimulation):
             jump_multiplier = np.exp(jump_sum)
 
             paths[t] = paths[t - 1] * diffusion_multiplier * jump_multiplier
+
+        return paths
+
+
+class SquareRootDiffusion(PathSimulation):
+    """Cox–Ingersoll–Ross (1985) square-root diffusion (CIR/SRD).
+
+    Model (under chosen measure):
+        dX_t = kappa*(theta - X_t) dt + sigma*sqrt(X_t) dW_t
+
+    Uses full truncation Euler to preserve non-negativity.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        market_data: MarketData,
+        process_params,  # should provide initial_value, volatility, kappa, theta
+        sim: SimulationConfig,
+        corr: CorrelationContext | None = None,
+    ):
+        super().__init__(name, market_data, process_params, sim, corr=corr)
+        self.kappa = process_params.kappa
+        self.theta = process_params.theta
+
+    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
+        if self.time_grid is None:
+            self.generate_time_grid()
+
+        M = len(self.time_grid)
+        num_paths = self.paths
+
+        paths = np.zeros((M, num_paths), dtype=float)
+        paths_hat = np.zeros_like(paths)
+
+        paths[0] = self.initial_value
+        paths_hat[0] = self.initial_value
+
+        if self.correlation_context is None:
+            rand = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
+        else:
+            rand = self.random_numbers
+
+        for t in range(1, M):
+            delta_t = calculate_year_fraction(
+                self.time_grid[t - 1],
+                self.time_grid[t],
+                day_count_convention=self.day_count_convention,
+            )
+            if self.correlation_context is None:
+                ran = rand[t]
+            else:
+                ran = np.dot(self.cholesky_matrix, rand[:, t, :])
+                ran = ran[self.rn_set]
+
+            # full truncation Euler discretization
+            mean_reversion = self.kappa * (self.theta - paths[t - 1, :]) * delta_t
+            diffusion = np.sqrt(paths[t - 1, :]) * self.volatility * np.sqrt(delta_t) * ran
+            paths_hat[t] = paths_hat[t - 1] + mean_reversion + diffusion
+            paths[t] = np.maximum(0, paths_hat[t])
 
         return paths

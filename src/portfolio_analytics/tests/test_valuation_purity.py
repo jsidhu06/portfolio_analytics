@@ -2,12 +2,12 @@
 """Purity / non-mutation tests for OptionValuation.
 
 These tests assert that:
-- present_value() does not mutate UnderlyingData (or curves)
+- present_value() does not mutate UnderlyingPricingData (or curves)
 - greeks (delta/gamma/vega) may bump parameters internally, but must restore state
 
 Rationale
 ---------
-Users will commonly reuse one UnderlyingData instance across multiple valuations/methods.
+Users will commonly reuse one UnderlyingPricingData instance across multiple valuations/methods.
 The library should guarantee that pricing/greeks do not leave surprising side-effects behind.
 """
 
@@ -21,7 +21,7 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.rates import ConstantShortRate
-from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingData
+from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 
 
 def _make_ud(
@@ -31,8 +31,8 @@ def _make_ud(
     pricing_date: dt.datetime,
     discount_curve: ConstantShortRate,
     dividend_yield: float = 0.0,
-) -> UnderlyingData:
-    return UnderlyingData(
+) -> UnderlyingPricingData:
+    return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
         pricing_date=pricing_date,
@@ -58,9 +58,9 @@ def _make_spec(
     )
 
 
-def _snapshot_ud(ud: UnderlyingData) -> dict:
+def _snapshot_ud(ud: UnderlyingPricingData) -> dict:
     """Capture the fields we expect not to change after pricing/greeks."""
-    # Add to this if UnderlyingData grows.
+    # Add to this if UnderlyingPricingData grows.
     return {
         "initial_value": ud.initial_value,
         "volatility": ud.volatility,
@@ -83,9 +83,9 @@ def common_setup():
 
 class TestValuationPurityPresentValue:
     def test_present_value_does_not_mutate_underlyingdata_across_methods(self, common_setup):
-        """Reusing the same UnderlyingData across pricing methods should be safe.
+        """Reusing the same UnderlyingPricingData across pricing methods should be safe.
 
-        This test intentionally reuses *one* UnderlyingData instance to match typical user behaviour.
+        This test intentionally reuses *one* UnderlyingPricingData instance to match typical user behaviour.
         """
         pricing_date, maturity, csr = common_setup
 
@@ -103,12 +103,14 @@ class TestValuationPurityPresentValue:
         # BSM pricing
         bsm = OptionValuation("call_bsm", ud, spec, PricingMethod.BSM_CONTINUOUS)
         _ = bsm.present_value()
-        assert _snapshot_ud(ud) == baseline, "present_value() (BSM) mutated UnderlyingData"
+        assert _snapshot_ud(ud) == baseline, "present_value() (BSM) mutated UnderlyingPricingData"
 
         # Binomial pricing (re-using same ud)
         tree = OptionValuation("call_tree", ud, spec, PricingMethod.BINOMIAL)
         _ = tree.present_value(num_steps=2000)
-        assert _snapshot_ud(ud) == baseline, "present_value() (Binomial) mutated UnderlyingData"
+        assert (
+            _snapshot_ud(ud) == baseline
+        ), "present_value() (Binomial) mutated UnderlyingPricingData"
 
 
 class TestValuationPurityGreeks:
@@ -121,7 +123,7 @@ class TestValuationPurityGreeks:
 
         baseline = _snapshot_ud(ud)
         _ = val.delta()  # may bump internally
-        assert _snapshot_ud(ud) == baseline, "delta() did not restore UnderlyingData state"
+        assert _snapshot_ud(ud) == baseline, "delta() did not restore UnderlyingPricingData state"
 
     def test_gamma_restores_underlying_spot(self, common_setup):
         pricing_date, maturity, csr = common_setup
@@ -132,7 +134,7 @@ class TestValuationPurityGreeks:
 
         baseline = _snapshot_ud(ud)
         _ = val.gamma()  # may bump internally
-        assert _snapshot_ud(ud) == baseline, "gamma() did not restore UnderlyingData state"
+        assert _snapshot_ud(ud) == baseline, "gamma() did not restore UnderlyingPricingData state"
 
     def test_vega_restores_underlying_volatility(self, common_setup):
         pricing_date, maturity, csr = common_setup
@@ -143,7 +145,7 @@ class TestValuationPurityGreeks:
 
         baseline = _snapshot_ud(ud)
         _ = val.vega()  # may bump internally
-        assert _snapshot_ud(ud) == baseline, "vega() did not restore UnderlyingData state"
+        assert _snapshot_ud(ud) == baseline, "vega() did not restore UnderlyingPricingData state"
 
     def test_binomial_greeks_do_not_mutate_underlyingdata(self, common_setup):
         """Binomial greeks are still numerical bumps; ensure restoration works there too."""
@@ -156,10 +158,16 @@ class TestValuationPurityGreeks:
         baseline = _snapshot_ud(ud)
 
         _ = val.delta(num_steps=2000)
-        assert _snapshot_ud(ud) == baseline, "Binomial delta() did not restore UnderlyingData state"
+        assert (
+            _snapshot_ud(ud) == baseline
+        ), "Binomial delta() did not restore UnderlyingPricingData state"
 
         _ = val.gamma(num_steps=2000)
-        assert _snapshot_ud(ud) == baseline, "Binomial gamma() did not restore UnderlyingData state"
+        assert (
+            _snapshot_ud(ud) == baseline
+        ), "Binomial gamma() did not restore UnderlyingPricingData state"
 
         _ = val.vega(num_steps=2000)
-        assert _snapshot_ud(ud) == baseline, "Binomial vega() did not restore UnderlyingData state"
+        assert (
+            _snapshot_ud(ud) == baseline
+        ), "Binomial vega() did not restore UnderlyingPricingData state"

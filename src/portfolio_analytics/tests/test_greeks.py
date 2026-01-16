@@ -22,7 +22,7 @@ from portfolio_analytics.stochastic_processes import (
 from portfolio_analytics.valuation import (
     OptionSpec,
     OptionValuation,
-    UnderlyingData,
+    UnderlyingPricingData,
 )
 
 
@@ -32,7 +32,7 @@ class TestGreeksSetup:
     Notes
     -----
     - setup fixture is function-scoped (default), so each test method gets fresh state.
-    - factories avoid mutating shared UnderlyingData instances within a test.
+    - factories avoid mutating shared UnderlyingPricingData instances within a test.
     """
 
     @pytest.fixture(autouse=True)
@@ -66,8 +66,8 @@ class TestGreeksSetup:
         vol: float | None = None,
         dividend_yield: float = 0.0,
         pricing_date: dt.datetime | None = None,
-    ) -> UnderlyingData:
-        return UnderlyingData(
+    ) -> UnderlyingPricingData:
+        return UnderlyingPricingData(
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
             pricing_date=self.pricing_date if pricing_date is None else pricing_date,
@@ -95,7 +95,7 @@ class TestGreeksSetup:
     def _make_val(
         self,
         name: str,
-        underlying: PathSimulation | UnderlyingData,
+        underlying: PathSimulation | UnderlyingPricingData,
         spec: OptionSpec,
         method: PricingMethod,
     ) -> OptionValuation:
