@@ -176,8 +176,7 @@ class TestUnderlyingPricingData:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
         assert ud.initial_value == 100.0
         assert ud.volatility == 0.2
@@ -188,8 +187,7 @@ class TestUnderlyingPricingData:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
         # Should be able to modify attributes
         ud.initial_value = 105.0
@@ -229,8 +227,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         valuation = OptionValuation(
@@ -248,8 +245,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         valuation = OptionValuation(
@@ -288,8 +284,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         invalid_spec = OptionSpec(
@@ -313,8 +308,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=90.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
 
@@ -418,8 +412,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=initial_value,
             volatility=volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
         simulation_config = SimulationConfig(
@@ -481,8 +474,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
         pv_binom_am = OptionValuation(
@@ -526,8 +518,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=90.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
 
@@ -630,8 +621,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         with pytest.raises(TypeError, match="pricing_method must be PricingMethod enum"):
@@ -647,8 +637,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         with pytest.raises(
@@ -666,8 +655,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         american_spec = OptionSpec(
@@ -691,8 +679,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
         spec = OptionSpec(
@@ -710,8 +697,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
         spec = OptionSpec(
@@ -735,8 +721,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.03,
         )
         spec = OptionSpec(
@@ -760,8 +745,7 @@ class TestOptionValuation:
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
             dividend_yield=0.0,
         )
         spec_am = OptionSpec(
@@ -807,8 +791,7 @@ class TestBSMValuation:
         underlying_params = {
             "initial_value": self.spot,
             "volatility": self.volatility,
-            "pricing_date": self.pricing_date,
-            "discount_curve": self.csr,
+            "market_data": self.market_data,
         }
 
         self.ud = UnderlyingPricingData(**underlying_params)
@@ -974,8 +957,7 @@ class TestBSMValuation:
         ud_put = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         put_val = OptionValuation(
@@ -1031,12 +1013,12 @@ class TestBinomialValuation:
         self.rate = 0.05
 
         self.csr = ConstantShortRate("csr", self.rate)
+        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
 
         self.ud = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
     def test_binomial_european_call_atm(self):
@@ -1082,15 +1064,13 @@ class TestBinomialValuation:
         ud_eu = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         ud_am = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         eu_val = OptionValuation(
@@ -1134,15 +1114,13 @@ class TestBinomialValuation:
         ud_eu = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         ud_am = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         eu_val = OptionValuation(
@@ -1178,15 +1156,13 @@ class TestBinomialValuation:
         ud1 = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         ud2 = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         val1 = OptionValuation(
@@ -1396,8 +1372,7 @@ class TestMCSValuation:
         ud_bin = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         binom_valuation = OptionValuation(
@@ -1464,12 +1439,12 @@ class TestGreeks:
         self.rate = 0.05
 
         self.csr = ConstantShortRate("csr", self.rate)
+        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
 
         self.ud = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
     def test_call_delta_positive(self):
@@ -1497,8 +1472,7 @@ class TestGreeks:
         ud = UnderlyingPricingData(
             initial_value=self.spot,
             volatility=self.volatility,
-            pricing_date=self.pricing_date,
-            discount_curve=self.csr,
+            market_data=self.market_data,
         )
 
         put_spec = OptionSpec(

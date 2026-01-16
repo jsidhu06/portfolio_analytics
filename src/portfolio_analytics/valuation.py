@@ -15,6 +15,7 @@ from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanVal
 from .valuation_bsm import _BSMEuropeanValuation
 from .valuation_pde_fd import _FDAmericanValuation
 from .rates import ConstantShortRate
+from .market_environment import MarketData
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,15 +287,25 @@ class UnderlyingPricingData:
         self,
         initial_value: float,
         volatility: float,
-        pricing_date: dt.datetime,
-        discount_curve: ConstantShortRate,
+        market_data: MarketData,
         dividend_yield: float = 0.0,
     ):
         self.initial_value = initial_value
         self.volatility = volatility
-        self.pricing_date = pricing_date
-        self.discount_curve = discount_curve
+        self.market_data = market_data
         self.dividend_yield = dividend_yield
+
+    @property
+    def pricing_date(self) -> dt.datetime:
+        return self.market_data.pricing_date
+
+    @property
+    def discount_curve(self) -> ConstantShortRate:
+        return self.market_data.discount_curve
+
+    @property
+    def currency(self) -> str:
+        return self.market_data.currency
 
 
 class OptionValuation:

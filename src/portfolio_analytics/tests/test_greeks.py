@@ -67,11 +67,15 @@ class TestGreeksSetup:
         dividend_yield: float = 0.0,
         pricing_date: dt.datetime | None = None,
     ) -> UnderlyingPricingData:
+        md = (
+            self.market_data
+            if pricing_date is None
+            else MarketData(pricing_date, self.csr, currency=self.currency)
+        )
         return UnderlyingPricingData(
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
-            pricing_date=self.pricing_date if pricing_date is None else pricing_date,
-            discount_curve=self.csr,
+            market_data=md,
             dividend_yield=dividend_yield,
         )
 

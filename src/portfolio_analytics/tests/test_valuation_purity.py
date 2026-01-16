@@ -20,6 +20,7 @@ from portfolio_analytics.enums import (
     OptionType,
     PricingMethod,
 )
+from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 
@@ -30,13 +31,14 @@ def _make_ud(
     vol: float = 0.20,
     pricing_date: dt.datetime,
     discount_curve: ConstantShortRate,
+    currency: str = "USD",
     dividend_yield: float = 0.0,
 ) -> UnderlyingPricingData:
+    market_data = MarketData(pricing_date, discount_curve, currency=currency)
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
-        pricing_date=pricing_date,
-        discount_curve=discount_curve,
+        market_data=market_data,
         dividend_yield=dividend_yield,
     )
 
