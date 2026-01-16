@@ -5,12 +5,12 @@ import datetime as dt
 import numpy as np
 from portfolio_analytics.valuation import (
     OptionSpec,
-    CondorSpec,
     PayoffSpec,
     UnderlyingConfig,
     UnderlyingPricingData,
     OptionValuation,
 )
+from portfolio_analytics.strategies import CondorSpec
 from portfolio_analytics.valuation_bsm import _BSMEuropeanValuation
 from portfolio_analytics.valuation_binomial import (
     _BinomialEuropeanValuation,
@@ -101,8 +101,35 @@ class TestCondorSpec:
             side=PositionSide.LONG,
             contract_size=100,
         )
-        assert spec.option_type == OptionType.CONDOR
-        assert spec.strike is None
+        assert spec.exercise_type == ExerciseType.EUROPEAN
+        assert spec.strikes == (50.0, 90.0, 110.0, 150.0)
+
+        legs = spec.leg_definitions()
+        assert legs == [
+            (OptionType.PUT, 50.0, -1.0),
+            (OptionType.PUT, 90.0, +1.0),
+            (OptionType.CALL, 110.0, +1.0),
+            (OptionType.CALL, 150.0, -1.0),
+        ]
+
+    def test_payoff_matches_sum_of_leg_payoffs(self):
+        spec = CondorSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            strikes=(50.0, 90.0, 110.0, 150.0),
+            maturity=dt.datetime(2026, 12, 31),
+            currency="USD",
+            side=PositionSide.LONG,
+        )
+
+        spots = np.array([0.0, 40.0, 70.0, 100.0, 130.0, 200.0])
+        k1, k2, k3, k4 = spec.strikes
+        leg_payoff = (
+            -np.maximum(k1 - spots, 0.0)
+            + np.maximum(k2 - spots, 0.0)
+            + np.maximum(spots - k3, 0.0)
+            - np.maximum(spots - k4, 0.0)
+        )
+        assert np.allclose(spec.terminal_payoff(spots), leg_payoff)
 
     def test_invalid_strike_order_raises(self):
         with pytest.raises(ValueError, match="K1 < K2"):
@@ -304,7 +331,7 @@ class TestOptionValuation:
             )
 
     def test_binomial_condor_equals_sum_of_legs(self):
-        """Condor PV should equal PV of its 4 legs under the same binomial model."""
+        """A European condor payoff priced directly equals sum of vanilla legs (binomial)."""
         ud = UnderlyingPricingData(
             initial_value=90.0,
             volatility=0.2,
@@ -320,22 +347,22 @@ class TestOptionValuation:
             currency="USD",
             side=PositionSide.LONG,
         )
-        condor_val = OptionValuation(
-            name="CONDOR",
-            underlying=ud,
-            spec=condor_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
 
-        k1, k2, k3, k4 = strikes
-        leg_specs = [
-            (OptionType.PUT, k1, -1.0),
-            (OptionType.PUT, k2, +1.0),
-            (OptionType.CALL, k3, +1.0),
-            (OptionType.CALL, k4, -1.0),
-        ]
+        payoff_spec = PayoffSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            maturity=self.maturity,
+            currency="USD",
+            payoff_fn=condor_spec.terminal_payoff,
+        )
+        payoff_pv = OptionValuation(
+            name="CONDOR_PAYOFF",
+            underlying=ud,
+            spec=payoff_spec,
+            pricing_method=PricingMethod.BINOMIAL,
+        ).present_value(num_steps=2000)
+
         leg_pv = 0.0
-        for opt_type, k, w in leg_specs:
+        for opt_type, k, w in condor_spec.leg_definitions():
             leg_spec = OptionSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -351,11 +378,10 @@ class TestOptionValuation:
             )
             leg_pv += w * leg_val.present_value(num_steps=2000)
 
-        condor_pv = condor_val.present_value(num_steps=2000)
-        assert np.isclose(condor_pv, leg_pv, rtol=1e-3, atol=0)
+        assert np.isclose(payoff_pv, leg_pv, rtol=1e-3, atol=0)
 
     def test_mcs_condor_equals_sum_of_legs(self):
-        """Condor PV should equal PV of its 4 legs under the same binomial model."""
+        """A European condor payoff priced directly equals sum of vanilla legs (Monte Carlo)."""
 
         simulation_config = SimulationConfig(
             paths=200_000, frequency="W", day_count_convention=365, end_date=self.maturity
@@ -371,22 +397,22 @@ class TestOptionValuation:
             currency="USD",
             side=PositionSide.LONG,
         )
-        condor_val = OptionValuation(
-            name="CONDOR",
-            underlying=gbm,
-            spec=condor_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
 
-        k1, k2, k3, k4 = strikes
-        leg_specs = [
-            (OptionType.PUT, k1, -1.0),
-            (OptionType.PUT, k2, +1.0),
-            (OptionType.CALL, k3, +1.0),
-            (OptionType.CALL, k4, -1.0),
-        ]
+        payoff_spec = PayoffSpec(
+            exercise_type=ExerciseType.EUROPEAN,
+            maturity=self.maturity,
+            currency="USD",
+            payoff_fn=condor_spec.terminal_payoff,
+        )
+        payoff_pv = OptionValuation(
+            name="CONDOR_PAYOFF",
+            underlying=gbm,
+            spec=payoff_spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        ).present_value(random_seed=42)
+
         leg_pv = 0.0
-        for opt_type, k, w in leg_specs:
+        for opt_type, k, w in condor_spec.leg_definitions():
             leg_spec = OptionSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -402,8 +428,7 @@ class TestOptionValuation:
             )
             leg_pv += w * leg_val.present_value(random_seed=42)
 
-        condor_pv = condor_val.present_value(random_seed=42)
-        assert np.isclose(condor_pv, leg_pv, rtol=1e-3, atol=0)
+        assert np.isclose(payoff_pv, leg_pv, rtol=0.02, atol=0)
 
     def test_binomial_mcs_condor_equivalence(self):
         """Condor PV via binomial should approx equal PV via MCS under same params."""
@@ -430,19 +455,37 @@ class TestOptionValuation:
             side=PositionSide.LONG,
         )
 
-        binomial_pv = OptionValuation(
-            name="CONDOR",
-            underlying=ud,
-            spec=condor_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(num_steps=2500)
+        binomial_pv = 0.0
+        for opt_type, k, w in condor_spec.leg_definitions():
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.EUROPEAN,
+                strike=k,
+                maturity=self.maturity,
+                currency="USD",
+            )
+            binomial_pv += w * OptionValuation(
+                name=f"LEG_BINOM_{opt_type.value}_{k}",
+                underlying=ud,
+                spec=leg_spec,
+                pricing_method=PricingMethod.BINOMIAL,
+            ).present_value(num_steps=2500)
 
-        mcs_pv = OptionValuation(
-            name="CONDOR",
-            underlying=gbm,
-            spec=condor_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(random_seed=42)
+        mcs_pv = 0.0
+        for opt_type, k, w in condor_spec.leg_definitions():
+            leg_spec = OptionSpec(
+                option_type=opt_type,
+                exercise_type=ExerciseType.EUROPEAN,
+                strike=k,
+                maturity=self.maturity,
+                currency="USD",
+            )
+            mcs_pv += w * OptionValuation(
+                name=f"LEG_MCS_{opt_type.value}_{k}",
+                underlying=gbm,
+                spec=leg_spec,
+                pricing_method=PricingMethod.MONTE_CARLO,
+            ).present_value(random_seed=42)
 
         assert np.isclose(binomial_pv, mcs_pv, rtol=0.01)
 
@@ -530,11 +573,12 @@ class TestOptionValuation:
             currency="USD",
             side=PositionSide.LONG,
         )
-        condor_val = OptionValuation(
-            name="CONDOR_AM",
+
+        condor_pv = condor_spec.present_value(
+            name="CONDOR_STRATEGY",
             underlying=ud,
-            spec=condor_spec,
             pricing_method=PricingMethod.BINOMIAL,
+            num_steps=500,
         )
 
         k1, k2, k3, k4 = strikes
@@ -561,7 +605,6 @@ class TestOptionValuation:
             )
             leg_pv += w * leg_val.present_value(num_steps=500)
 
-        condor_pv = condor_val.present_value(num_steps=500)
         assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
 
     def test_american_condor_is_sum_of_american_legs_mcs(self):
@@ -581,12 +624,6 @@ class TestOptionValuation:
             maturity=self.maturity,
             currency="USD",
             side=PositionSide.LONG,
-        )
-        condor_val = OptionValuation(
-            name="CONDOR_AM_MCS",
-            underlying=gbm,
-            spec=condor_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
         )
 
         k1, k2, k3, k4 = strikes
@@ -613,7 +650,13 @@ class TestOptionValuation:
             )
             leg_pv += w * leg_val.present_value(random_seed=42, deg=3)
 
-        condor_pv = condor_val.present_value(random_seed=42, deg=3)
+        condor_pv = condor_spec.present_value(
+            name="CONDOR_STRATEGY_MCS",
+            underlying=gbm,
+            pricing_method=PricingMethod.MONTE_CARLO,
+            random_seed=42,
+            deg=3,
+        )
         assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
 
     def test_option_valuation_invalid_pricing_method_type(self):

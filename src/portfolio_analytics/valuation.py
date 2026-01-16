@@ -8,7 +8,6 @@ from .enums import (
     ExerciseType,
     PricingMethod,
     GreekCalculationMethod,
-    PositionSide,
 )
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
@@ -39,75 +38,6 @@ class OptionSpec:
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
-
-
-@dataclass(frozen=True, slots=True)
-class CondorSpec:
-    """Contract specification for a 4-leg condor.
-
-    Definition (strikes ordered):
-    - Short put  at K1
-    - Long  put  at K2
-    - Long  call at K3
-    - Short call at K4
-
-    With $K_1 < K_2 < K_3 < K_4$, the payoff is
-    $\max(K_2-S,0)-\max(K_1-S,0)+\max(S-K_3,0)-\max(S-K_4,0)$,
-    and is multiplied by +1 for LONG and -1 for SHORT.
-
-        Exercise semantics
-        ------------------
-        - EUROPEAN: priced directly from the combined payoff.
-        - AMERICAN: interpreted as a *strategy of listed American options*; valuation is
-            the sum of the 4 legs valued independently (per-leg optimal exercise).
-    """
-
-    exercise_type: ExerciseType
-    strikes: tuple[float, float, float, float]
-    maturity: dt.datetime
-    currency: str
-    side: PositionSide = PositionSide.LONG
-    contract_size: int | float = 100
-
-    # Kept for compatibility with vanilla valuation interfaces
-    option_type: OptionType = OptionType.CONDOR
-    strike: None = None
-
-    def __post_init__(self):
-        if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
-                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
-            )
-
-        # NOTE: For AMERICAN, valuation is handled as a sum-of-legs in OptionValuation.
-
-        if not isinstance(self.side, PositionSide):
-            raise TypeError(f"side must be PositionSide enum, got {type(self.side).__name__}")
-
-        if not isinstance(self.option_type, OptionType) or self.option_type != OptionType.CONDOR:
-            raise TypeError("CondorSpec.option_type must be OptionType.CONDOR")
-
-        k1, k2, k3, k4 = self.strikes
-        if not (k1 < k2):
-            raise ValueError("Condor strikes must satisfy K1 < K2")
-        if not (k3 < k4):
-            raise ValueError("Condor strikes must satisfy K3 < K4")
-        if not (k2 < k3):
-            raise ValueError("Condor strikes must satisfy K2 < K3")
-
-    def payoff(self, spot: np.ndarray | float) -> np.ndarray:
-        """Vectorized payoff at maturity as a function of spot."""
-        s = np.asarray(spot, dtype=float)
-        k1, k2, k3, k4 = self.strikes
-        payoff = (
-            np.maximum(k2 - s, 0.0)
-            - np.maximum(k1 - s, 0.0)
-            + np.maximum(s - k3, 0.0)
-            - np.maximum(s - k4, 0.0)
-        )
-        if self.side == PositionSide.SHORT:
-            payoff = -payoff
-        return payoff
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,8 +251,9 @@ class OptionValuation:
         Stochastic process simulator (Monte Carlo) or minimal data container (BSM, Binomial).
         For Monte Carlo: must be PathSimulation instance.
         For BSM and Binomial: UnderlyingPricingData.
-    spec: OptionSpec
-        Contract terms (type, exercise type, strike, maturity, currency, contract_size).
+    spec: OptionSpec | PayoffSpec
+        Contract terms (type, exercise type, strike, maturity, currency, contract_size)
+        for either a vanilla option or a custom single-contract payoff.
     pricing_method: PricingMethod
         Valuation methodology to use (Monte Carlo, BSM, Binomial, etc).
     pricing_date: datetime
@@ -349,7 +280,7 @@ class OptionValuation:
         self,
         name: str,
         underlying: PathSimulation | UnderlyingPricingData,
-        spec: OptionSpec | CondorSpec | PayoffSpec,
+        spec: OptionSpec | PayoffSpec,
         pricing_method: PricingMethod,
     ):
         self.name = name
@@ -464,53 +395,7 @@ class OptionValuation:
             - MCS: random_seed (int, optional), deg (int, optional, American only)
             - Binomial: num_steps (int, optional)
         """
-        if isinstance(self.spec, CondorSpec) and self.spec.exercise_type == ExerciseType.AMERICAN:
-            if full:
-                raise NotImplementedError(
-                    "full=True is not supported for American CondorSpec (sum-of-legs semantics)."
-                )
-            return self._present_value_condor_as_sum_of_legs(**kwargs)
-
         return self._impl.present_value(full=full, **kwargs)
-
-    def _present_value_condor_as_sum_of_legs(self, **kwargs) -> float:
-        """Value an American condor as a strategy: sum of 4 independently exercisable legs."""
-        if not isinstance(self.spec, CondorSpec):
-            raise TypeError("_present_value_condor_as_sum_of_legs requires CondorSpec")
-        if self.spec.exercise_type != ExerciseType.AMERICAN:
-            raise ValueError("CondorSpec must be AMERICAN for sum-of-legs valuation")
-
-        k1, k2, k3, k4 = self.spec.strikes
-
-        # Long condor payoff is: -put(K1) + put(K2) + call(K3) - call(K4)
-        leg_defs: list[tuple[OptionType, float, float]] = [
-            (OptionType.PUT, k1, -1.0),
-            (OptionType.PUT, k2, +1.0),
-            (OptionType.CALL, k3, +1.0),
-            (OptionType.CALL, k4, -1.0),
-        ]
-        if self.spec.side == PositionSide.SHORT:
-            leg_defs = [(opt_type, strike, -weight) for (opt_type, strike, weight) in leg_defs]
-
-        total = 0.0
-        for opt_type, strike, weight in leg_defs:
-            leg_spec = OptionSpec(
-                option_type=opt_type,
-                exercise_type=ExerciseType.AMERICAN,
-                strike=strike,
-                maturity=self.maturity,
-                currency=self.currency,
-                contract_size=self.contract_size,
-            )
-            leg_val = OptionValuation(
-                name=f"{self.name}_leg_{opt_type.value}_{strike}",
-                underlying=self.underlying,
-                spec=leg_spec,
-                pricing_method=self.pricing_method,
-            )
-            total += weight * leg_val.present_value(**kwargs)
-
-        return total
 
     def delta(
         self,
