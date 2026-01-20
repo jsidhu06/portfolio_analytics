@@ -12,7 +12,7 @@ from .enums import (
 from .valuation_mcs import _MCEuropeanValuation, _MCAmerianValuation
 from .valuation_binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
 from .valuation_bsm import _BSMEuropeanValuation
-from .valuation_pde_fd import _FDAmericanValuation
+from .valuation_pde_fd import _FDEuropeanValuation, _FDAmericanValuation
 from .rates import ConstantShortRate
 from .market_environment import MarketData
 
@@ -357,19 +357,12 @@ class OptionValuation:
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
         elif pricing_method == PricingMethod.PDE_FD:
-            if spec.exercise_type != ExerciseType.AMERICAN:
-                raise NotImplementedError(
-                    "PDE_FD pricing is currently implemented only for AMERICAN exercise."
-                )
-            if self.option_type not in (OptionType.CALL, OptionType.PUT):
-                raise NotImplementedError(
-                    "PDE_FD pricing is only available for vanilla CALL/PUT option types."
-                )
-            if self.strike is None:
-                raise ValueError("strike is required for PDE_FD valuation")
-            self._impl = _FDAmericanValuation(self)
-        else:
-            raise ValueError(f"Pricing method {pricing_method.name} not yet implemented")
+            if spec.exercise_type == ExerciseType.EUROPEAN:
+                self._impl = _FDEuropeanValuation(self)
+            elif spec.exercise_type == ExerciseType.AMERICAN:
+                self._impl = _FDAmericanValuation(self)
+            else:
+                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
 
     def generate_payoff(self, **kwargs):
         """Generate payoff at maturity for the derivative.
