@@ -23,21 +23,35 @@ class OptionSpec:
 
     option_type: OptionType  # CALL / PUT
     exercise_type: ExerciseType  # EUROPEAN / AMERICAN
-    strike: float | None  # allow None for strike-less products
+    strike: float
     maturity: dt.datetime
     currency: str
     contract_size: int | float = 100
 
     def __post_init__(self):
-        """Validate option_type and exercise_type are valid enums."""
+        """Validate option_type/exercise_type and coerce strike."""
         if not isinstance(self.option_type, OptionType):
             raise TypeError(
                 f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
+        if self.option_type not in (OptionType.CALL, OptionType.PUT):
+            raise ValueError("OptionSpec.option_type must be OptionType.CALL or OptionType.PUT")
         if not isinstance(self.exercise_type, ExerciseType):
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
+
+        if self.strike is None:
+            raise ValueError("OptionSpec.strike must be provided")
+        try:
+            strike = float(self.strike)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("OptionSpec.strike must be numeric") from exc
+        if not np.isfinite(strike):
+            raise ValueError("OptionSpec.strike must be finite")
+        if strike < 0.0:
+            raise ValueError("OptionSpec.strike must be >= 0")
+        object.__setattr__(self, "strike", strike)
 
 
 @dataclass(frozen=True, slots=True)

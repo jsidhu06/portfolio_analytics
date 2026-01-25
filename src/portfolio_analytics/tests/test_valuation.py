@@ -46,15 +46,15 @@ class TestOptionSpec:
         assert spec.contract_size == 100
 
     def test_option_spec_with_none_strike(self):
-        """Test OptionSpec with None strike for strike-less products."""
-        spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=None,
-            maturity=dt.datetime(2026, 12, 31),
-            currency="EUR",
-        )
-        assert spec.strike is None
+        """Test that None strike is rejected for vanilla OptionSpec."""
+        with pytest.raises(ValueError, match="OptionSpec\\.strike must be provided"):
+            OptionSpec(
+                option_type=OptionType.CALL,
+                exercise_type=ExerciseType.EUROPEAN,
+                strike=None,
+                maturity=dt.datetime(2026, 12, 31),
+                currency="EUR",
+            )
 
     def test_option_spec_invalid_option_type(self):
         """Test that invalid option_type raises TypeError."""
