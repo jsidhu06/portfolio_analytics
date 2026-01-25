@@ -276,9 +276,9 @@ class TestJumpDiffusion:
         self.process_params = JDParams(
             initial_value=100.0,
             volatility=0.2,
-            jump_intensity=0.5,  # 0.5 jumps per year on average
-            jump_mean=-0.1,
-            jump_std=0.3,
+            lambd=0.5,  # 0.5 jumps per year on average
+            mu=-0.1,
+            delta=0.3,
         )
         self.sim = SimulationConfig(
             paths=5000,
@@ -294,9 +294,9 @@ class TestJumpDiffusion:
 
     def test_jd_initialization(self):
         """Test JD initializes with correct parameters."""
-        assert self.jd.jump_intensity == self.process_params.jump_intensity
-        assert self.jd.jump_mean == self.process_params.jump_mean
-        assert self.jd.jump_std == self.process_params.jump_std
+        assert self.jd.lambd == self.process_params.lambd
+        assert self.jd.mu == self.process_params.mu
+        assert self.jd.delta == self.process_params.delta
         assert self.jd.volatility == self.process_params.volatility
 
     def test_jd_generate_paths(self):
@@ -354,14 +354,14 @@ class TestJumpDiffusion:
 
         np.testing.assert_array_equal(paths1, paths2)
 
-    def test_jd_zero_jump_intensity(self):
+    def test_jd_zero_lambd(self):
         """Test JD with zero jump intensity (should be similar to GBM)."""
         no_jump_params = JDParams(
             initial_value=100.0,
             volatility=0.2,
-            jump_intensity=0.0,  # No jumps
-            jump_mean=0.0,
-            jump_std=0.0,
+            lambd=0.0,  # No jumps
+            mu=0.0,
+            delta=0.0,
         )
 
         jd_no_jump = JumpDiffusion(

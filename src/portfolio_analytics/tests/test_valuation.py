@@ -155,7 +155,7 @@ class TestUnderlyingConfig:
         assert config.name == "STOCK"
         assert config.model == "gbm"
         assert config.initial_value == 100.0
-        assert config.jump_intensity is None
+        assert config.lambd is None
         assert config.kappa is None
 
     def test_jd_config_creation(self):
@@ -165,14 +165,14 @@ class TestUnderlyingConfig:
             model="jd",
             initial_value=100.0,
             volatility=0.2,
-            jump_intensity=0.5,
-            jump_mean=-0.1,
-            jump_std=0.3,
+            lambd=0.5,
+            mu=-0.1,
+            delta=0.3,
         )
         assert config.model == "jd"
-        assert config.jump_intensity == 0.5
-        assert config.jump_mean == -0.1
-        assert config.jump_std == 0.3
+        assert config.lambd == 0.5
+        assert config.mu == -0.1
+        assert config.delta == 0.3
 
     def test_srd_config_creation(self):
         """Test UnderlyingConfig for Square Root Diffusion model."""

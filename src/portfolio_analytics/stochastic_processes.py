@@ -99,9 +99,9 @@ class GBMParams:
 class JDParams:
     initial_value: float
     volatility: float
-    jump_intensity: float  # lambda (per year)
-    jump_mean: float  # mu_J (mean of log jump size)
-    jump_std: float  # delta_J (std of log jump size)
+    lambd: float  # lambda (per year)
+    mu: float  # mu_J (mean of log jump size)
+    delta: float  # delta_J (std of log jump size)
     dividend_yield: float = 0.0
 
     def __post_init__(self):
@@ -116,21 +116,19 @@ class JDParams:
         if float(self.volatility) < 0.0:
             raise ValueError("JDParams requires volatility to be >= 0")
 
-        if self.jump_intensity is None or self.jump_mean is None or self.jump_std is None:
-            raise ValueError(
-                "JDParams requires jump_intensity, jump_mean, and jump_std to be not None"
-            )
+        if self.lambd is None or self.mu is None or self.delta is None:
+            raise ValueError("JDParams requires lambd, mu, and delta to be not None")
 
-        if not np.isfinite(float(self.jump_intensity)):
-            raise ValueError("JDParams requires jump_intensity to be finite")
-        if not np.isfinite(float(self.jump_mean)):
-            raise ValueError("JDParams requires jump_mean to be finite")
-        if not np.isfinite(float(self.jump_std)):
-            raise ValueError("JDParams requires jump_std to be finite")
-        if float(self.jump_intensity) < 0.0:
-            raise ValueError("JDParams requires jump_intensity to be >= 0")
-        if float(self.jump_std) < 0.0:
-            raise ValueError("JDParams requires jump_std to be >= 0")
+        if not np.isfinite(float(self.lambd)):
+            raise ValueError("JDParams requires lambd to be finite")
+        if not np.isfinite(float(self.mu)):
+            raise ValueError("JDParams requires mu to be finite")
+        if not np.isfinite(float(self.delta)):
+            raise ValueError("JDParams requires delta to be finite")
+        if float(self.lambd) < 0.0:
+            raise ValueError("JDParams requires lambd to be >= 0")
+        if float(self.delta) < 0.0:
+            raise ValueError("JDParams requires delta to be >= 0")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -385,14 +383,14 @@ class JumpDiffusion(PathSimulation):
         self,
         name: str,
         market_data: MarketData,
-        process_params,  # expects: initial_value, volatility, jump_intensity, jump_mean, jump_std
+        process_params,  # expects: initial_value, volatility, lambd, mu, delta
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):
         super().__init__(name, market_data, process_params, sim, corr=corr)
-        self.jump_intensity = process_params.jump_intensity  # lambda (per year)
-        self.jump_mean = process_params.jump_mean  # mu_J (mean of log jump size)
-        self.jump_std = process_params.jump_std  # delta_J (std of log jump size)
+        self.lambd = process_params.lambd  # lambda (average number of jumps per year)
+        self.mu = process_params.mu  # mu_J (mean of log jump size)
+        self.delta = process_params.delta  # delta_J (std of log jump size)
 
     def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         # TO DO: Check these calcs
@@ -409,9 +407,9 @@ class JumpDiffusion(PathSimulation):
         # risk-free rate (adjust if your curve API differs)
         r = float(self.discount_curve.short_rate)
 
-        lam = self.jump_intensity
-        mu_j = self.jump_mean
-        sig_j = self.jump_std
+        lam = self.lambd
+        mu_j = self.mu
+        sig_j = self.delta
         vol = self.volatility
 
         # compensator k = E[e^Y - 1]

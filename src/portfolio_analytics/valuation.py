@@ -112,11 +112,11 @@ class UnderlyingConfig:
         Initial spot price or rate
     volatility: float
         Volatility of the process
-    jump_intensity: float
-        Jump intensity lambda (for 'jd' model only)
-    jump_mean: float
+    lambd: float
+        Jump intensity (for 'jd' model only)
+    mu: float
         Mean of jump size log returns (for 'jd' model only)
-    jump_std: float
+    delta: float
         Standard deviation of jump size log returns (for 'jd' model only)
     kappa: float
         Mean reversion speed (for 'srd' model only)
@@ -129,9 +129,9 @@ class UnderlyingConfig:
     initial_value: float
     volatility: float
     # Optional JD (Jump Diffusion) parameters
-    jump_intensity: float | None = None
-    jump_mean: float | None = None
-    jump_std: float | None = None
+    lambd: float | None = None
+    mu: float | None = None
+    delta: float | None = None
     # Optional SRD (Square Root Diffusion / CIR) parameters
     kappa: float | None = None
     theta: float | None = None
@@ -173,9 +173,9 @@ class UnderlyingConfig:
             missing = [
                 name
                 for name, value in (
-                    ("jump_intensity", self.jump_intensity),
-                    ("jump_mean", self.jump_mean),
-                    ("jump_std", self.jump_std),
+                    ("lambd", self.lambd),
+                    ("mu", self.mu),
+                    ("delta", self.delta),
                 )
                 if value is None
             ]
@@ -183,19 +183,19 @@ class UnderlyingConfig:
                 raise ValueError(
                     f"UnderlyingConfig for model='jd' requires {', '.join(missing)} to be set"
                 )
-            self.jump_intensity = float(self.jump_intensity)
-            self.jump_mean = float(self.jump_mean)
-            self.jump_std = float(self.jump_std)
-            if not np.isfinite(self.jump_intensity):
-                raise ValueError("UnderlyingConfig.jump_intensity must be finite")
-            if not np.isfinite(self.jump_mean):
-                raise ValueError("UnderlyingConfig.jump_mean must be finite")
-            if not np.isfinite(self.jump_std):
-                raise ValueError("UnderlyingConfig.jump_std must be finite")
-            if self.jump_intensity < 0.0:
-                raise ValueError("UnderlyingConfig.jump_intensity must be >= 0")
-            if self.jump_std < 0.0:
-                raise ValueError("UnderlyingConfig.jump_std must be >= 0")
+            self.lambd = float(self.lambd)
+            self.mu = float(self.mu)
+            self.delta = float(self.delta)
+            if not np.isfinite(self.lambd):
+                raise ValueError("UnderlyingConfig.lambd must be finite")
+            if not np.isfinite(self.mu):
+                raise ValueError("UnderlyingConfig.mu must be finite")
+            if not np.isfinite(self.delta):
+                raise ValueError("UnderlyingConfig.delta must be finite")
+            if self.lambd < 0.0:
+                raise ValueError("UnderlyingConfig.lambd must be >= 0")
+            if self.delta < 0.0:
+                raise ValueError("UnderlyingConfig.delta must be >= 0")
 
         if self.model == "srd":
             missing = [
