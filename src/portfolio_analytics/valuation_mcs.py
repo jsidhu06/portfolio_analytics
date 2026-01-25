@@ -42,28 +42,23 @@ class _MCEuropeanValuation:
             raise ValueError("Unsupported option type for Monte Carlo valuation.")
         return payoff_fn(maturity_value)
 
-    def present_value(
-        self,
-        full: bool = False,
-        **kwargs,
-    ) -> float | tuple[float, np.ndarray]:
-        """Return PV (and optionally pathwise discounted PVs)."""
+    def present_value(self, **kwargs) -> float:
+        """Return the scalar present value."""
+        pv_pathwise = self.present_value_pathwise(**kwargs)
+        pv = np.mean(pv_pathwise)
+
+        return float(pv)
+
+    def present_value_pathwise(self, **kwargs) -> np.ndarray:
+        """Return discounted present values for each path."""
         random_seed = kwargs.get("random_seed")
         cash_flow = self.solve(random_seed=random_seed)
-
-        # discount factor from pricing_date to maturity
         discount_factor = float(
             self.parent.discount_curve.get_discount_factors(
                 (self.parent.pricing_date, self.parent.maturity)
             )[-1, 1]
         )
-
-        pv_pathwise = discount_factor * cash_flow
-        pv = np.mean(pv_pathwise)
-
-        if full:
-            return pv, pv_pathwise
-        return pv
+        return discount_factor * cash_flow
 
 
 class _MCAmerianValuation:
@@ -116,16 +111,13 @@ class _MCAmerianValuation:
 
     def present_value(
         self,
-        full: bool = False,
         deg: int = 2,
         **kwargs,
-    ) -> tuple[float, np.ndarray] | float:
+    ) -> float:
         """Calculate PV using Longstaff-Schwartz regression method.
 
         Parameters
         ==========
-        full: bool
-            return also full 1d array of present values
         deg: int
             degree of polynomial for regression
         **kwargs:
@@ -136,6 +128,12 @@ class _MCAmerianValuation:
         =======
         float or tuple of (pv, pathwise_discounted_values)
         """
+        pv_pathwise = self.present_value_pathwise(deg=deg, **kwargs)
+        pv = np.mean(pv_pathwise)
+        return float(pv)
+
+    def present_value_pathwise(self, deg: int = 2, **kwargs) -> np.ndarray:
+        """Return discounted present values for each path (LSM output at pricing date)."""
         random_seed = kwargs.get("random_seed")
         instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve(
             random_seed=random_seed
@@ -163,8 +161,5 @@ class _MCAmerianValuation:
                 discount_factor * V[t + 1],
             )
 
-        discount_factor = discount_factors[1, 1] / discount_factors[0, 1]
-        pv = discount_factor * np.mean(V[1])
-        if full:
-            return pv, discount_factor * V[1]
-        return pv
+        discount_factor_0 = discount_factors[1, 1] / discount_factors[0, 1]
+        return discount_factor_0 * V[1]

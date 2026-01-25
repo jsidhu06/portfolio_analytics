@@ -1019,8 +1019,8 @@ class TestBSMValuation:
 
         assert np.isclose(call_price - put_price, parity_rhs, rtol=1e-10)
 
-    def test_bsm_full_return(self):
-        """Test BSM with full=True returns tuple."""
+    def test_bsm_present_value_returns_float(self):
+        """Test BSM present_value returns a scalar float."""
         call_spec = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -1036,11 +1036,8 @@ class TestBSMValuation:
             pricing_method=PricingMethod.BSM_CONTINUOUS,
         )
 
-        result = valuation.present_value(full=True)
-        assert isinstance(result, tuple)
-        assert len(result) == 2
-        # Both values should be the same for BSM
-        assert result[0] == result[1]
+        result = valuation.present_value()
+        assert isinstance(result, float)
 
 
 class TestBinomialValuation:
@@ -1429,8 +1426,8 @@ class TestMCSValuation:
 
         assert np.isclose(pv1, pv_binom, rtol=0.02)
 
-    def test_mcs_full_return(self):
-        """Test MCS with full=True returns tuple of (pv, pathwise_pvs)."""
+    def test_mcs_pathwise_return(self):
+        """Test MCS present_value_pathwise returns discounted PVs per path."""
         gbm_params = GBMParams(initial_value=self.spot, volatility=self.volatility)
         sim_config = SimulationConfig(
             paths=1000,
@@ -1460,7 +1457,8 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv, pv_pathwise = valuation.present_value(full=True, random_seed=42)
+        pv = valuation.present_value(random_seed=42)
+        pv_pathwise = valuation.present_value_pathwise(random_seed=42)
 
         assert isinstance(pv, (float, np.floating))
         assert isinstance(pv_pathwise, np.ndarray)

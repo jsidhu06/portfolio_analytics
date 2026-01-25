@@ -323,13 +323,9 @@ class _FDEuropeanValuation:
             time_steps=time_steps,
         )
 
-    def present_value(
-        self, full: bool = False, **kwargs
-    ) -> float | tuple[float, np.ndarray, np.ndarray]:
-        pv, S, V = self._solve(**kwargs)
-        if full:
-            return pv, S, V
-        return pv
+    def present_value(self, **kwargs) -> float:
+        pv, *_ = self._solve(**kwargs)
+        return float(pv)
 
 
 class _FDAmericanValuation:
@@ -378,10 +374,6 @@ class _FDAmericanValuation:
             max_iter=max_iter,
         )
 
-    def present_value(
-        self, full: bool = False, **kwargs
-    ) -> float | tuple[float, np.ndarray, np.ndarray]:
-        pv, S, V = self._solve(**kwargs)
-        if full:
-            return pv, S, V
-        return pv
+    def present_value(self, **kwargs) -> float:
+        pv, *_ = self._solve(**kwargs)
+        return float(pv)

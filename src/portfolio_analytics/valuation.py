@@ -373,23 +373,34 @@ class OptionValuation:
         - PDE/FD: (pv, spot_grid, value_grid) at pricing time
         - BSM: scalar option value
 
-        Use present_value(full=True) for discounted pathwise/node outputs where supported.
+        Use present_value_pathwise() for discounted pathwise outputs where supported.
         """
         return self._impl.solve(**kwargs)
 
-    def present_value(self, *, full: bool = False, **kwargs) -> float | tuple[float, np.ndarray]:
+    def present_value(self, **kwargs) -> float:
         """Calculate present value of the derivative.
 
         Parameters
         ==========
-        full: bool
-            Return full result with values at all nodes/paths
         **kwargs:
             Method-specific parameters:
             - MCS: random_seed (int, optional), deg (int, optional, American only)
             - Binomial: num_steps (int, optional)
         """
-        return self._impl.present_value(full=full, **kwargs)
+        return float(self._impl.present_value(**kwargs))
+
+    def present_value_pathwise(self, **kwargs) -> np.ndarray:
+        """Return discounted pathwise present values.
+
+        Implemented for Monte Carlo pricing methods. For other pricing methods, this
+        is not meaningful and will raise NotImplementedError.
+        """
+        pv_pathwise = getattr(self._impl, "present_value_pathwise", None)
+        if pv_pathwise is None:
+            raise NotImplementedError(
+                "present_value_pathwise is only implemented for Monte Carlo valuation."
+            )
+        return pv_pathwise(**kwargs)
 
     def delta(
         self,

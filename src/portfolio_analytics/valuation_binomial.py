@@ -114,15 +114,11 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
     def present_value(
         self,
-        full: bool = False,
         **kwargs,
-    ) -> float | tuple[float, np.ndarray]:
+    ) -> float:
         """Return PV using binomial tree method.
 
         Parameters
-        ==========
-        full: bool
-            return also full option value matrix
         **kwargs:
             num_steps: int, optional (default: 500)
                 number of steps in the binomial tree
@@ -135,9 +131,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         option_value_matrix = self.solve(num_steps=num_steps)
         pv = option_value_matrix[0, 0]
 
-        if full:
-            return pv, option_value_matrix
-        return pv
+        return float(pv)
 
 
 class _BinomialAmericanValuation(_BinomialValuationBase):
@@ -182,15 +176,12 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
     def present_value(
         self,
-        full: bool = False,
         **kwargs,
-    ) -> float | tuple[float, np.ndarray]:
+    ) -> float:
         """Return PV using binomial tree method with American early exercise.
 
         Parameters
         ==========
-        full: bool
-            return also full option value matrix
         **kwargs:
             num_steps: int, optional (default: 500)
                 number of steps in the binomial tree
@@ -203,6 +194,4 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         option_value_matrix = self.solve(num_steps=num_steps)
         pv = option_value_matrix[0, 0]
 
-        if full:
-            return pv, option_value_matrix
-        return pv
+        return float(pv)

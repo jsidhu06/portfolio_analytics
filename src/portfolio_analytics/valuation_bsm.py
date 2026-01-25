@@ -116,15 +116,12 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
     def present_value(
         self,
-        full: bool = False,
         **kwargs,
-    ) -> float | tuple[float, float]:
+    ) -> float:
         """Calculate present value using BSM formula.
 
         Parameters
         ==========
-        full: bool
-            if True, return tuple of (pv, pv); otherwise return pv
         **kwargs:
             dividend_yield: float, optional (default: 0.0)
                 continuous dividend yield
@@ -136,9 +133,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         """
         pv = self.solve(**kwargs)
 
-        if full:
-            return pv, pv
-        return pv
+        return float(pv)
 
     def delta(self, **kwargs) -> float:
         """Calculate analytical delta for European option using closed-form BSM formula.
