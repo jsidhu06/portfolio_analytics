@@ -75,17 +75,15 @@ class _BinomialValuationBase:
                 return np.maximum(instrument_values - K, 0)
             return np.maximum(K - instrument_values, 0)
 
-        payoff_fn = getattr(self.parent.spec, "payoff", None)
-        if payoff_fn is None:
-            raise ValueError("Unsupported option type for binomial valuation.")
+        payoff_fn = self.parent.spec.payoff
         return payoff_fn(instrument_values)
 
 
 class _BinomialEuropeanValuation(_BinomialValuationBase):
     """Implementation of European option valuation using binomial tree."""
 
-    def generate_payoff(self, **kwargs) -> np.ndarray:
-        """Generate option value matrix using binomial tree.
+    def solve(self, **kwargs) -> np.ndarray:
+        """Compute the option value lattice using a binomial tree.
 
         Parameters
         ==========
@@ -134,7 +132,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         float or tuple of (pv, option_value_matrix)
         """
         num_steps = kwargs.get("num_steps", 500)
-        option_value_matrix = self.generate_payoff(num_steps=num_steps)
+        option_value_matrix = self.solve(num_steps=num_steps)
         pv = option_value_matrix[0, 0]
 
         if full:
@@ -145,8 +143,8 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 class _BinomialAmericanValuation(_BinomialValuationBase):
     """Implementation of American option valuation using binomial tree."""
 
-    def generate_payoff(self, **kwargs) -> np.ndarray:
-        """Generate option value matrix using binomial tree with early exercise.
+    def solve(self, **kwargs) -> np.ndarray:
+        """Compute the option value lattice using a binomial tree with early exercise.
 
         Parameters
         ==========
@@ -202,7 +200,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         float or tuple of (pv, option_value_matrix)
         """
         num_steps = kwargs.get("num_steps", 500)
-        option_value_matrix = self.generate_payoff(num_steps=num_steps)
+        option_value_matrix = self.solve(num_steps=num_steps)
         pv = option_value_matrix[0, 0]
 
         if full:

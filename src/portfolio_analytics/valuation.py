@@ -364,17 +364,18 @@ class OptionValuation:
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
 
-    def generate_payoff(self, **kwargs):
-        """Generate payoff at maturity for the derivative.
+    def solve(self, **kwargs):
+        """Run the pricing method's core solver and return its raw output.
 
-        Parameters
-        ==========
-        **kwargs:
-            Method-specific parameters:
-            - MCS: random_seed (int, optional)
-            - Binomial: num_steps (int, optional)
+        This is intentionally method-specific:
+        - Monte Carlo: pathwise payoff(s) / payoff matrix (undiscounted)
+        - Binomial tree: option value lattice (node values)
+        - PDE/FD: (pv, spot_grid, value_grid) at pricing time
+        - BSM: scalar option value
+
+        Use present_value(full=True) for discounted pathwise/node outputs where supported.
         """
-        return self._impl.generate_payoff(**kwargs)
+        return self._impl.solve(**kwargs)
 
     def present_value(self, *, full: bool = False, **kwargs) -> float | tuple[float, np.ndarray]:
         """Calculate present value of the derivative.

@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 import numpy as np
+
 from .enums import OptionType
 
 if TYPE_CHECKING:
@@ -14,8 +15,8 @@ class _MCEuropeanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def generate_payoff(self, **kwargs) -> np.ndarray:
-        """Generate payoff vector at maturity (one value per path)."""
+    def solve(self, **kwargs) -> np.ndarray:
+        """Generate undiscounted payoff vector at maturity (one value per path)."""
         random_seed = kwargs.get("random_seed")
         paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
         time_grid = self.parent.underlying.time_grid
@@ -48,7 +49,7 @@ class _MCEuropeanValuation:
     ) -> float | tuple[float, np.ndarray]:
         """Return PV (and optionally pathwise discounted PVs)."""
         random_seed = kwargs.get("random_seed")
-        cash_flow = self.generate_payoff(random_seed=random_seed)
+        cash_flow = self.solve(random_seed=random_seed)
 
         # discount factor from pricing_date to maturity
         discount_factor = float(
@@ -71,8 +72,8 @@ class _MCAmerianValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def generate_payoff(self, **kwargs) -> tuple[np.ndarray, np.ndarray, int, int]:
-        """Generate payoff paths and indices.
+    def solve(self, **kwargs) -> tuple[np.ndarray, np.ndarray, int, int]:
+        """Generate underlying paths and intrinsic payoff matrix over time.
 
         Parameters
         ==========
@@ -108,9 +109,7 @@ class _MCAmerianValuation:
             else:
                 payoff = np.maximum(K - instrument_values, 0)
         else:
-            payoff_fn = getattr(self.parent.spec, "payoff", None)
-            if payoff_fn is None:
-                raise ValueError("Unsupported option type for Monte Carlo valuation.")
+            payoff_fn = self.parent.spec.payoff
             payoff = payoff_fn(instrument_values)
 
         return instrument_values, payoff, time_index_start, time_index_end
@@ -138,8 +137,8 @@ class _MCAmerianValuation:
         float or tuple of (pv, pathwise_discounted_values)
         """
         random_seed = kwargs.get("random_seed")
-        instrument_values, intrinsic_values, time_index_start, time_index_end = (
-            self.generate_payoff(random_seed=random_seed)
+        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve(
+            random_seed=random_seed
         )
         time_list = self.parent.underlying.time_grid[time_index_start : time_index_end + 1]
         discount_factors = self.parent.discount_curve.get_discount_factors(
@@ -165,7 +164,7 @@ class _MCAmerianValuation:
             )
 
         discount_factor = discount_factors[1, 1] / discount_factors[0, 1]
-        result = discount_factor * np.mean(V[1])
+        pv = discount_factor * np.mean(V[1])
         if full:
-            return result, discount_factor * np.mean(V[1])
-        return result
+            return pv, discount_factor * V[1]
+        return pv

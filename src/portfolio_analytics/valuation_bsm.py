@@ -68,8 +68,8 @@ class _BSMValuationBase:
 class _BSMEuropeanValuation(_BSMValuationBase):
     """Black-Scholes-Merton European option valuation."""
 
-    def generate_payoff(self, **kwargs) -> float:
-        """Generate option payoff at maturity using BSM formula.
+    def solve(self, **kwargs) -> float:
+        """Compute the BSM option value.
 
         Parameters
         ==========
@@ -80,7 +80,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         Returns
         =======
         float
-            option payoff value
+            option value (PV)
         """
 
         # Extract parameters from parent OptionValuation object
@@ -134,7 +134,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         float or tuple of (pv, pv)
             present value of the option
         """
-        pv = self.generate_payoff(**kwargs)
+        pv = self.solve(**kwargs)
 
         if full:
             return pv, pv

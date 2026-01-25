@@ -289,8 +289,8 @@ class _FDEuropeanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def generate_payoff(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
-        """Generate the full FD solution on the spot grid at pricing time."""
+    def solve(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
+        """Compute the full FD solution on the spot grid at pricing time."""
         pv, S, V = self._solve(**kwargs)
         return pv, S, V
 
@@ -338,8 +338,8 @@ class _FDAmericanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def generate_payoff(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
-        """Generate the full FD solution on the spot grid at pricing time."""
+    def solve(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
+        """Compute the full FD solution on the spot grid at pricing time."""
         pv, S, V = self._solve(**kwargs)
         return pv, S, V
 
