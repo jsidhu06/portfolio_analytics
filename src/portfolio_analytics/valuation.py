@@ -96,130 +96,6 @@ class PayoffSpec:
         return np.asarray(self.payoff_fn(spot), dtype=float)
 
 
-@dataclass
-class UnderlyingConfig:
-    """Configuration for an underlying asset in portfolio simulations.
-
-    Specifies the stochastic process model and its parameters for a particular
-    underlying asset. Used to instantiate PathSimulation objects in portfolio context.
-
-    Attributes
-    ==========
-    name: str
-        Name/identifier of the underlying asset (e.g., 'STOCK', 'INDEX')
-    model: str
-        Stochastic process model type: 'gbm', 'jd', or 'srd'
-    initial_value: float
-        Initial spot price or rate
-    volatility: float
-        Volatility of the process
-    lambd: float
-        Jump intensity (for 'jd' model only)
-    mu: float
-        Mean of jump size log returns (for 'jd' model only)
-    delta: float
-        Standard deviation of jump size log returns (for 'jd' model only)
-    kappa: float
-        Mean reversion speed (for 'srd' model only)
-    theta: float
-        Long-run mean level (for 'srd' model only)
-    """
-
-    name: str
-    model: str  # 'gbm', 'jd', 'srd'
-    initial_value: float
-    volatility: float
-    # Optional JD (Jump Diffusion) parameters
-    lambd: float | None = None
-    mu: float | None = None
-    delta: float | None = None
-    # Optional SRD (Square Root Diffusion / CIR) parameters
-    kappa: float | None = None
-    theta: float | None = None
-
-    def __post_init__(self):
-        if not isinstance(self.name, str) or not self.name.strip():
-            raise TypeError("UnderlyingConfig.name must be a non-empty string")
-        if not isinstance(self.model, str) or not self.model.strip():
-            raise TypeError("UnderlyingConfig.model must be a non-empty string")
-
-        allowed_models = {"gbm", "jd", "srd"}
-        if self.model not in allowed_models:
-            raise ValueError(
-                f"UnderlyingConfig.model must be one of {sorted(allowed_models)}, got '{self.model}'"
-            )
-
-        if self.initial_value is None:
-            raise ValueError("UnderlyingConfig.initial_value must be not None")
-        if self.volatility is None:
-            raise ValueError("UnderlyingConfig.volatility must be not None")
-
-        try:
-            self.initial_value = float(self.initial_value)
-            self.volatility = float(self.volatility)
-        except (TypeError, ValueError) as exc:
-            raise TypeError(
-                "UnderlyingConfig.initial_value and volatility must be numeric"
-            ) from exc
-
-        if not np.isfinite(self.initial_value):
-            raise ValueError("UnderlyingConfig.initial_value must be finite")
-        if not np.isfinite(self.volatility):
-            raise ValueError("UnderlyingConfig.volatility must be finite")
-        if self.volatility < 0.0:
-            raise ValueError("UnderlyingConfig.volatility must be >= 0")
-
-        # Model-specific validation
-        if self.model == "jd":
-            missing = [
-                name
-                for name, value in (
-                    ("lambd", self.lambd),
-                    ("mu", self.mu),
-                    ("delta", self.delta),
-                )
-                if value is None
-            ]
-            if missing:
-                raise ValueError(
-                    f"UnderlyingConfig for model='jd' requires {', '.join(missing)} to be set"
-                )
-            self.lambd = float(self.lambd)
-            self.mu = float(self.mu)
-            self.delta = float(self.delta)
-            if not np.isfinite(self.lambd):
-                raise ValueError("UnderlyingConfig.lambd must be finite")
-            if not np.isfinite(self.mu):
-                raise ValueError("UnderlyingConfig.mu must be finite")
-            if not np.isfinite(self.delta):
-                raise ValueError("UnderlyingConfig.delta must be finite")
-            if self.lambd < 0.0:
-                raise ValueError("UnderlyingConfig.lambd must be >= 0")
-            if self.delta < 0.0:
-                raise ValueError("UnderlyingConfig.delta must be >= 0")
-
-        if self.model == "srd":
-            missing = [
-                name
-                for name, value in (("kappa", self.kappa), ("theta", self.theta))
-                if value is None
-            ]
-            if missing:
-                raise ValueError(
-                    f"UnderlyingConfig for model='srd' requires {', '.join(missing)} to be set"
-                )
-            self.kappa = float(self.kappa)
-            self.theta = float(self.theta)
-            if not np.isfinite(self.kappa):
-                raise ValueError("UnderlyingConfig.kappa must be finite")
-            if not np.isfinite(self.theta):
-                raise ValueError("UnderlyingConfig.theta must be finite")
-            if self.kappa < 0.0:
-                raise ValueError("UnderlyingConfig.kappa must be >= 0")
-            if self.theta < 0.0:
-                raise ValueError("UnderlyingConfig.theta must be >= 0")
-
-
 class UnderlyingPricingData:
     """Minimal data container for option valuation underlying asset.
 
@@ -351,6 +227,18 @@ class OptionValuation:
         ):
             raise TypeError(
                 "Monte Carlo pricing requires underlying to be a PathSimulation instance"
+            )
+
+        # Validate that deterministic methods don't receive PathSimulation
+        # (they only need UnderlyingPricingData; paths would be ignored)
+        if pricing_method in (
+            PricingMethod.BINOMIAL,
+            PricingMethod.BSM_CONTINUOUS,
+            PricingMethod.PDE_FD,
+        ) and isinstance(underlying, PathSimulation):
+            raise TypeError(
+                f"{pricing_method.name} pricing does not use stochastic path simulation. "
+                "Pass an UnderlyingPricingData instance instead of PathSimulation."
             )
 
         # Dispatch to appropriate pricing method implementation

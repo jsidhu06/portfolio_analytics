@@ -6,10 +6,10 @@ import numpy as np
 from portfolio_analytics.valuation import (
     OptionSpec,
     PayoffSpec,
-    UnderlyingConfig,
     UnderlyingPricingData,
     OptionValuation,
 )
+from portfolio_analytics.portfolio_positions import UnderlyingConfig
 from portfolio_analytics.strategies import CondorSpec
 from portfolio_analytics.valuation_bsm import _BSMEuropeanValuation
 from portfolio_analytics.valuation_binomial import (
@@ -691,6 +691,75 @@ class TestOptionValuation:
                 underlying=ud,
                 spec=self.call_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
+            )
+
+    def test_option_valuation_binomial_rejects_path_simulation(self):
+        """Test that Binomial pricing rejects PathSimulation (should use UnderlyingPricingData)."""
+        process = GeometricBrownianMotion(
+            name="STOCK",
+            market_data=self.market_data,
+            process_params=GBMParams(initial_value=100.0, volatility=0.2),
+            sim=SimulationConfig(
+                paths=1000,
+                day_count_convention=365,
+                time_grid=np.array([self.pricing_date, self.maturity]),
+            ),
+        )
+
+        with pytest.raises(
+            TypeError, match="BINOMIAL pricing does not use stochastic path simulation"
+        ):
+            OptionValuation(
+                name="INVALID",
+                underlying=process,
+                spec=self.call_spec,
+                pricing_method=PricingMethod.BINOMIAL,
+            )
+
+    def test_option_valuation_bsm_rejects_path_simulation(self):
+        """Test that BSM pricing rejects PathSimulation (should use UnderlyingPricingData)."""
+        process = GeometricBrownianMotion(
+            name="STOCK",
+            market_data=self.market_data,
+            process_params=GBMParams(initial_value=100.0, volatility=0.2),
+            sim=SimulationConfig(
+                paths=1000,
+                day_count_convention=365,
+                time_grid=np.array([self.pricing_date, self.maturity]),
+            ),
+        )
+
+        with pytest.raises(
+            TypeError, match="BSM_CONTINUOUS pricing does not use stochastic path simulation"
+        ):
+            OptionValuation(
+                name="INVALID",
+                underlying=process,
+                spec=self.call_spec,
+                pricing_method=PricingMethod.BSM_CONTINUOUS,
+            )
+
+    def test_option_valuation_pde_rejects_path_simulation(self):
+        """Test that PDE_FD pricing rejects PathSimulation (should use UnderlyingPricingData)."""
+        process = GeometricBrownianMotion(
+            name="STOCK",
+            market_data=self.market_data,
+            process_params=GBMParams(initial_value=100.0, volatility=0.2),
+            sim=SimulationConfig(
+                paths=1000,
+                day_count_convention=365,
+                time_grid=np.array([self.pricing_date, self.maturity]),
+            ),
+        )
+
+        with pytest.raises(
+            TypeError, match="PDE_FD pricing does not use stochastic path simulation"
+        ):
+            OptionValuation(
+                name="INVALID",
+                underlying=process,
+                spec=self.call_spec,
+                pricing_method=PricingMethod.PDE_FD,
             )
 
     def test_option_valuation_american_bsm_not_implemented(self):
