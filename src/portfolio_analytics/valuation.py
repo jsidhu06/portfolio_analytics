@@ -15,6 +15,7 @@ from .valuation_bsm import _BSMEuropeanValuation
 from .valuation_pde_fd import _FDEuropeanValuation, _FDAmericanValuation
 from .rates import ConstantShortRate
 from .market_environment import MarketData
+from .valuation_params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,12 +297,13 @@ class OptionValuation:
         underlying: PathSimulation | UnderlyingPricingData,
         spec: OptionSpec | PayoffSpec,
         pricing_method: PricingMethod,
+        params: ValuationParams | None = None,
     ):
         self.name = name
         self.underlying = underlying
         self.spec = spec
 
-        # Pricing date + discount curve come from the underlying
+        # Pricing date + discount curve come from the underlying's market data
         self.pricing_date = underlying.pricing_date
         self.discount_curve = underlying.discount_curve
 
@@ -313,6 +315,10 @@ class OptionValuation:
         self.exercise_type = spec.exercise_type
         self.pricing_method = pricing_method
         self.contract_size = spec.contract_size
+
+        self.params: ValuationParams | None = self._validate_and_default_params(
+            pricing_method=pricing_method, params=params
+        )
 
         # Strategy guardrails
         if pricing_method == PricingMethod.BSM_CONTINUOUS and self.option_type not in (
@@ -329,7 +335,9 @@ class OptionValuation:
 
         # Only add special dates for PathSimulation (Monte Carlo)
         if isinstance(underlying, PathSimulation):
-            underlying.special_dates.extend([self.pricing_date, self.maturity])
+            for d in (self.pricing_date, self.maturity):
+                if d not in underlying.special_dates:
+                    underlying.special_dates.append(d)
 
         # Validate pricing_method
         if not isinstance(pricing_method, PricingMethod):
@@ -377,8 +385,51 @@ class OptionValuation:
                 self._impl = _FDAmericanValuation(self)
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
+        else:
+            raise ValueError(f"Unknown pricing method: {pricing_method}")
 
-    def solve(self, **kwargs):
+    @staticmethod
+    def _validate_and_default_params(
+        *,
+        pricing_method: PricingMethod,
+        params: ValuationParams | None,
+    ) -> ValuationParams | None:
+        if params is None:
+            if pricing_method == PricingMethod.MONTE_CARLO:
+                return MonteCarloParams()
+            if pricing_method == PricingMethod.BINOMIAL:
+                return BinomialParams()
+            if pricing_method == PricingMethod.PDE_FD:
+                return PDEParams()
+            return None
+
+        if pricing_method == PricingMethod.MONTE_CARLO:
+            if not isinstance(params, MonteCarloParams):
+                raise TypeError("pricing_method=MONTE_CARLO requires params=MonteCarloParams")
+            return params
+
+        if pricing_method == PricingMethod.BINOMIAL:
+            if not isinstance(params, BinomialParams):
+                raise TypeError("pricing_method=BINOMIAL requires params=BinomialParams")
+            return params
+
+        if pricing_method == PricingMethod.PDE_FD:
+            if not isinstance(params, PDEParams):
+                raise TypeError("pricing_method=PDE_FD requires params=PDEParams")
+            return params
+
+        if params is not None:
+            raise TypeError(
+                f"pricing_method={pricing_method.name} does not accept valuation params"
+            )
+        return None
+
+    def _effective_params(self, params: ValuationParams | None) -> ValuationParams | None:
+        return self._validate_and_default_params(
+            pricing_method=self.pricing_method, params=params if params is not None else self.params
+        )
+
+    def solve(self, params: ValuationParams | None = None):
         """Run the pricing method's core solver and return its raw output.
 
         This is intentionally method-specific:
@@ -389,21 +440,13 @@ class OptionValuation:
 
         Use present_value_pathwise() for discounted pathwise outputs where supported.
         """
-        return self._impl.solve(**kwargs)
+        return self._impl.solve(self._effective_params(params))
 
-    def present_value(self, **kwargs) -> float:
-        """Calculate present value of the derivative.
+    def present_value(self, params: ValuationParams | None = None) -> float:
+        """Calculate present value of the derivative."""
+        return float(self._impl.present_value(self._effective_params(params)))
 
-        Parameters
-        ==========
-        **kwargs:
-            Method-specific parameters:
-            - MCS: random_seed (int, optional), deg (int, optional, American only)
-            - Binomial: num_steps (int, optional)
-        """
-        return float(self._impl.present_value(**kwargs))
-
-    def present_value_pathwise(self, **kwargs) -> np.ndarray:
+    def present_value_pathwise(self, params: ValuationParams | None = None) -> np.ndarray:
         """Return discounted pathwise present values.
 
         Implemented for Monte Carlo pricing methods. For other pricing methods, this
@@ -414,13 +457,13 @@ class OptionValuation:
             raise NotImplementedError(
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
-        return pv_pathwise(**kwargs)
+        return pv_pathwise(self._effective_params(params))
 
     def delta(
         self,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
-        **kwargs,
+        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option delta.
 
@@ -440,9 +483,6 @@ class OptionValuation:
             Method for calculating delta. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
             - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
             - GreekCalculationMethod.NUMERICAL: Use central difference approximation
-        **kwargs:
-            Method-specific parameters for present_value calculation
-
         Returns
         =======
         float
@@ -473,7 +513,7 @@ class OptionValuation:
 
         # Use analytical formula for BSM if specified
         if use_analytical:
-            return self._impl.delta(**kwargs)
+            return self._impl.delta()
 
         # Otherwise use numerical approximation
         if epsilon is None:
@@ -483,11 +523,11 @@ class OptionValuation:
         try:
             # calculate left value for numerical Delta
             self.underlying.initial_value -= epsilon
-            value_left = self.present_value(**kwargs)
+            value_left = self.present_value(params=params)
             # numerical underlying value for right value
             self.underlying.initial_value += 2 * epsilon
             # calculate right value for numerical delta
-            value_right = self.present_value(**kwargs)
+            value_right = self.present_value(params=params)
         finally:
             # reset the initial_value of the simulation object
             self.underlying.initial_value = initial_spot
@@ -504,7 +544,7 @@ class OptionValuation:
         self,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
-        **kwargs,
+        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option gamma.
 
@@ -523,9 +563,6 @@ class OptionValuation:
             Method for calculating gamma. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
             - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
             - GreekCalculationMethod.NUMERICAL: Use central difference approximation
-        **kwargs:
-            Method-specific parameters for present_value calculation
-
         Returns
         =======
         float
@@ -556,7 +593,7 @@ class OptionValuation:
 
         # Use analytical formula for BSM if specified
         if use_analytical:
-            return self._impl.gamma(**kwargs)
+            return self._impl.gamma()
 
         # Otherwise use numerical approximation
         if epsilon is None:
@@ -566,14 +603,14 @@ class OptionValuation:
         try:
             # calculate left value for numerical Gamma
             self.underlying.initial_value -= epsilon
-            value_left = self.present_value(**kwargs)
+            value_left = self.present_value(params=params)
             # numerical underlying value for right value
             self.underlying.initial_value += 2 * epsilon
             # calculate right value for numerical gamma
-            value_right = self.present_value(**kwargs)
+            value_right = self.present_value(params=params)
             # reset to initial spot for center value
             self.underlying.initial_value = initial_spot
-            value_center = self.present_value(**kwargs)
+            value_center = self.present_value(params=params)
         finally:
             # reset the initial_value of the simulation object
             self.underlying.initial_value = initial_spot
@@ -585,7 +622,7 @@ class OptionValuation:
         self,
         epsilon: float = 0.01,
         greek_calc_method: GreekCalculationMethod | None = None,
-        **kwargs,
+        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option vega.
 
@@ -604,9 +641,6 @@ class OptionValuation:
             Method for calculating vega. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
             - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
             - GreekCalculationMethod.NUMERICAL: Use central difference approximation
-        **kwargs:
-            Method-specific parameters for present_value calculation
-
         Returns
         =======
         float
@@ -637,7 +671,7 @@ class OptionValuation:
 
         # Use analytical formula for BSM if specified
         if use_analytical:
-            return self._impl.vega(**kwargs)
+            return self._impl.vega()
 
         # Otherwise use numerical approximation
         # central-difference approximation
@@ -645,12 +679,12 @@ class OptionValuation:
         try:
             # calculate the left value for numerical Vega
             self.underlying.volatility -= epsilon
-            value_left = self.present_value(**kwargs)
+            value_left = self.present_value(params=params)
             # numerical volatility value for right value
             # update the simulation object
             self.underlying.volatility += 2 * epsilon
             # calculate the right value for numerical Vega
-            value_right = self.present_value(**kwargs)
+            value_right = self.present_value(params=params)
         finally:
             # reset volatility value of simulation object
             self.underlying.volatility = initial_vol

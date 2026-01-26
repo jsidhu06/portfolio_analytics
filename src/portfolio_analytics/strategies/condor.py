@@ -8,6 +8,7 @@ import numpy as np
 
 from ..valuation import OptionSpec, OptionValuation
 from ..enums import ExerciseType, OptionType, PositionSide
+from ..valuation_params import ValuationParams
 
 if TYPE_CHECKING:
     from ..stochastic_processes import PathSimulation
@@ -90,7 +91,7 @@ class CondorSpec:
         name: str,
         underlying: "PathSimulation | UnderlyingPricingData",
         pricing_method: "PricingMethod",
-        **kwargs,
+        params: ValuationParams | None = None,
     ) -> float:
         """Value the condor as a 4-leg strategy: sum of vanilla leg present values.
 
@@ -106,7 +107,7 @@ class CondorSpec:
             Underlying model/data passed through to per-leg `OptionValuation`.
         pricing_method:
             PricingMethod used for each leg.
-        **kwargs:
+        params:
             Forwarded to per-leg `present_value(...)` calls.
         """
         total = 0.0
@@ -125,7 +126,7 @@ class CondorSpec:
                 spec=leg_spec,
                 pricing_method=pricing_method,
             )
-            total += weight * leg_val.present_value(**kwargs)
+            total += weight * leg_val.present_value(params=params)
 
         return float(total)
 

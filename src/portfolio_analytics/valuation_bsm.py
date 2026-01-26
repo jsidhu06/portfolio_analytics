@@ -68,20 +68,8 @@ class _BSMValuationBase:
 class _BSMEuropeanValuation(_BSMValuationBase):
     """Black-Scholes-Merton European option valuation."""
 
-    def solve(self, **kwargs) -> float:
-        """Compute the BSM option value.
-
-        Parameters
-        ==========
-        **kwargs:
-            placeholder for compatibility with other pricing methods
-            No BSM specific parameters currently
-
-        Returns
-        =======
-        float
-            option value (PV)
-        """
+    def solve(self, params: None = None) -> float:
+        """Compute the BSM option value."""
 
         # Extract parameters from parent OptionValuation object
         spot = self.parent.underlying.initial_value
@@ -114,28 +102,13 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         return option_value
 
-    def present_value(
-        self,
-        **kwargs,
-    ) -> float:
-        """Calculate present value using BSM formula.
-
-        Parameters
-        ==========
-        **kwargs:
-            dividend_yield: float, optional (default: 0.0)
-                continuous dividend yield
-
-        Returns
-        =======
-        float or tuple of (pv, pv)
-            present value of the option
-        """
-        pv = self.solve(**kwargs)
+    def present_value(self, params: None = None) -> float:
+        """Calculate present value using BSM formula."""
+        pv = self.solve()
 
         return float(pv)
 
-    def delta(self, **kwargs) -> float:
+    def delta(self) -> float:
         """Calculate analytical delta for European option using closed-form BSM formula.
 
         delta = N(d1) for calls
@@ -173,7 +146,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         return delta
 
-    def gamma(self, **kwargs) -> float:
+    def gamma(self) -> float:
         """Calculate analytical gamma for European option using closed-form BSM formula.
 
         gamma = N'(d1) / (S * sigma * sqrt(T-t))
@@ -217,7 +190,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         return gamma
 
-    def vega(self, **kwargs) -> float:
+    def vega(self) -> float:
         """Calculate analytical vega for European option using closed-form BSM formula.
 
         vega = S * N'(d1) * sqrt(T-t) / 100

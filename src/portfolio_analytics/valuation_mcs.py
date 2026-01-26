@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .enums import OptionType
+from .valuation_params import MonteCarloParams
 
 if TYPE_CHECKING:
     from .valuation import OptionValuation
@@ -15,10 +16,9 @@ class _MCEuropeanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, **kwargs) -> np.ndarray:
+    def solve(self, params: MonteCarloParams) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
-        random_seed = kwargs.get("random_seed")
-        paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
+        paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
 
         # locate indices
@@ -42,17 +42,16 @@ class _MCEuropeanValuation:
             raise ValueError("Unsupported option type for Monte Carlo valuation.")
         return payoff_fn(maturity_value)
 
-    def present_value(self, **kwargs) -> float:
+    def present_value(self, params: MonteCarloParams) -> float:
         """Return the scalar present value."""
-        pv_pathwise = self.present_value_pathwise(**kwargs)
+        pv_pathwise = self.present_value_pathwise(params)
         pv = np.mean(pv_pathwise)
 
         return float(pv)
 
-    def present_value_pathwise(self, **kwargs) -> np.ndarray:
+    def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
         """Return discounted present values for each path."""
-        random_seed = kwargs.get("random_seed")
-        cash_flow = self.solve(random_seed=random_seed)
+        cash_flow = self.solve(params)
         discount_factor = float(
             self.parent.discount_curve.get_discount_factors(
                 (self.parent.pricing_date, self.parent.maturity)
@@ -67,7 +66,7 @@ class _MCAmerianValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, **kwargs) -> tuple[np.ndarray, np.ndarray, int, int]:
+    def solve(self, params: MonteCarloParams) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
 
         Parameters
@@ -79,8 +78,7 @@ class _MCAmerianValuation:
         =======
         tuple of (instrument_values, payoff, time_index_start, time_index_end)
         """
-        random_seed = kwargs.get("random_seed")
-        paths = self.parent.underlying.get_instrument_values(random_seed=random_seed)
+        paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
         # locate indices
         idx_start = np.where(time_grid == self.parent.pricing_date)[0]
@@ -109,35 +107,15 @@ class _MCAmerianValuation:
 
         return instrument_values, payoff, time_index_start, time_index_end
 
-    def present_value(
-        self,
-        deg: int = 2,
-        **kwargs,
-    ) -> float:
-        """Calculate PV using Longstaff-Schwartz regression method.
-
-        Parameters
-        ==========
-        deg: int
-            degree of polynomial for regression
-        **kwargs:
-            random_seed: int, optional
-                random seed for path generation
-
-        Returns
-        =======
-        float or tuple of (pv, pathwise_discounted_values)
-        """
-        pv_pathwise = self.present_value_pathwise(deg=deg, **kwargs)
+    def present_value(self, params: MonteCarloParams) -> float:
+        """Calculate PV using Longstaff-Schwartz regression method."""
+        pv_pathwise = self.present_value_pathwise(params)
         pv = np.mean(pv_pathwise)
         return float(pv)
 
-    def present_value_pathwise(self, deg: int = 2, **kwargs) -> np.ndarray:
+    def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
         """Return discounted present values for each path (LSM output at pricing date)."""
-        random_seed = kwargs.get("random_seed")
-        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve(
-            random_seed=random_seed
-        )
+        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve(params)
         time_list = self.parent.underlying.time_grid[time_index_start : time_index_end + 1]
         discount_factors = self.parent.discount_curve.get_discount_factors(
             time_list, dtobjects=True
@@ -150,9 +128,9 @@ class _MCAmerianValuation:
             S_itm = instrument_values[t][itm]
             V_itm = discount_factor * V[t + 1][itm]
             if len(S_itm) > 0:
-                coefficients = np.polyfit(S_itm, V_itm, deg=deg)
+                coefficients = np.polyfit(S_itm, V_itm, deg=params.deg)
             else:
-                coefficients = np.zeros(deg + 1)
+                coefficients = np.zeros(params.deg + 1)
             predicted_cv = np.zeros_like(instrument_values[t])
             predicted_cv[itm] = np.polyval(coefficients, instrument_values[t][itm])
             V[t] = np.where(

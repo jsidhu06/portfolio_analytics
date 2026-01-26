@@ -24,6 +24,7 @@ from portfolio_analytics.valuation import (
     OptionValuation,
     UnderlyingPricingData,
 )
+from portfolio_analytics.valuation_params import BinomialParams, MonteCarloParams
 
 
 class TestGreeksSetup:
@@ -303,7 +304,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         binomial_val = self._make_val(
             "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
         )
-        delta_binomial = binomial_val.delta(num_steps=2500)
+        delta_binomial = binomial_val.delta(params=BinomialParams(num_steps=2500))
 
         assert np.isclose(delta_bsm, delta_binomial, atol=0.01)
 
@@ -315,7 +316,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
 
         gbm = self._make_gbm(dividend_yield=0.0)
         mcs_val = self._make_val("call_mcs", gbm, spec, PricingMethod.MONTE_CARLO)
-        delta_mcs = mcs_val.delta(random_seed=42)
+        delta_mcs = mcs_val.delta(params=MonteCarloParams(random_seed=42))
 
         assert np.isclose(delta_bsm, delta_mcs, atol=0.03)
 
@@ -328,7 +329,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         binomial_val = self._make_val(
             "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
         )
-        gamma_binomial = binomial_val.gamma(num_steps=2500)
+        gamma_binomial = binomial_val.gamma(params=BinomialParams(num_steps=2500))
 
         assert np.isclose(gamma_bsm, gamma_binomial, atol=0.005)
 
@@ -341,7 +342,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         binomial_val = self._make_val(
             "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
         )
-        vega_binomial = binomial_val.vega(num_steps=2500)
+        vega_binomial = binomial_val.vega(params=BinomialParams(num_steps=2500))
 
         assert np.isclose(vega_bsm, vega_binomial, atol=0.1)
 

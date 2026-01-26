@@ -25,6 +25,7 @@ from portfolio_analytics.stochastic_processes import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.valuation_pde_fd import _FDAmericanValuation
+from portfolio_analytics.valuation_params import BinomialParams, MonteCarloParams, PDEParams
 
 
 class TestOptionSpec:
@@ -359,7 +360,7 @@ class TestOptionValuation:
             underlying=ud,
             spec=payoff_spec,
             pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(num_steps=2000)
+        ).present_value(params=BinomialParams(num_steps=2000))
 
         leg_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
@@ -376,7 +377,7 @@ class TestOptionValuation:
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
             )
-            leg_pv += w * leg_val.present_value(num_steps=2000)
+            leg_pv += w * leg_val.present_value(params=BinomialParams(num_steps=2000))
 
         assert np.isclose(payoff_pv, leg_pv, rtol=1e-3, atol=0)
 
@@ -409,7 +410,7 @@ class TestOptionValuation:
             underlying=gbm,
             spec=payoff_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(random_seed=42)
+        ).present_value(params=MonteCarloParams(random_seed=42))
 
         leg_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
@@ -426,7 +427,7 @@ class TestOptionValuation:
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
             )
-            leg_pv += w * leg_val.present_value(random_seed=42)
+            leg_pv += w * leg_val.present_value(params=MonteCarloParams(random_seed=42))
 
         assert np.isclose(payoff_pv, leg_pv, rtol=0.02, atol=0)
 
@@ -469,7 +470,7 @@ class TestOptionValuation:
                 underlying=ud,
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
-            ).present_value(num_steps=2500)
+            ).present_value(params=BinomialParams(num_steps=2500))
 
         mcs_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
@@ -485,7 +486,7 @@ class TestOptionValuation:
                 underlying=gbm,
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
-            ).present_value(random_seed=42)
+            ).present_value(params=MonteCarloParams(random_seed=42))
 
         assert np.isclose(binomial_pv, mcs_pv, rtol=0.01)
 
@@ -525,13 +526,13 @@ class TestOptionValuation:
             underlying=ud,
             spec=spec_am,
             pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(num_steps=500)
+        ).present_value(params=BinomialParams(num_steps=500))
         pv_binom_eu = OptionValuation(
             name="CUSTOM_EU_BINOM",
             underlying=ud,
             spec=spec_eu,
             pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(num_steps=500)
+        ).present_value(params=BinomialParams(num_steps=500))
 
         assert pv_binom_am >= pv_binom_eu
         assert 0.0 <= pv_binom_am <= 40.0 + 1e-8
@@ -545,13 +546,13 @@ class TestOptionValuation:
             underlying=gbm,
             spec=spec_am,
             pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(random_seed=42, deg=3)
+        ).present_value(params=MonteCarloParams(random_seed=42, deg=3))
         pv_mcs_eu = OptionValuation(
             name="CUSTOM_EU_MCS",
             underlying=gbm,
             spec=spec_eu,
             pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(random_seed=42)
+        ).present_value(params=MonteCarloParams(random_seed=42))
 
         assert pv_mcs_am >= pv_mcs_eu
         assert 0.0 <= pv_mcs_am <= 40.0 + 1e-8
@@ -578,7 +579,7 @@ class TestOptionValuation:
             name="CONDOR_STRATEGY",
             underlying=ud,
             pricing_method=PricingMethod.BINOMIAL,
-            num_steps=500,
+            params=BinomialParams(num_steps=500),
         )
 
         k1, k2, k3, k4 = strikes
@@ -603,7 +604,7 @@ class TestOptionValuation:
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
             )
-            leg_pv += w * leg_val.present_value(num_steps=500)
+            leg_pv += w * leg_val.present_value(params=BinomialParams(num_steps=500))
 
         assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
 
@@ -648,14 +649,13 @@ class TestOptionValuation:
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
             )
-            leg_pv += w * leg_val.present_value(random_seed=42, deg=3)
+            leg_pv += w * leg_val.present_value(params=MonteCarloParams(random_seed=42, deg=3))
 
         condor_pv = condor_spec.present_value(
             name="CONDOR_STRATEGY_MCS",
             underlying=gbm,
             pricing_method=PricingMethod.MONTE_CARLO,
-            random_seed=42,
-            deg=3,
+            params=MonteCarloParams(random_seed=42, deg=3),
         )
         assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
 
@@ -752,10 +752,12 @@ class TestOptionValuation:
         )
 
         fd_val = OptionValuation("put_fd", ud, spec, PricingMethod.PDE_FD)
-        fd_pv = fd_val.present_value(spot_steps=90, time_steps=90, max_iter=20_000)
+        fd_pv = fd_val.present_value(
+            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        )
 
         tree_val = OptionValuation("put_tree", ud, spec, PricingMethod.BINOMIAL)
-        tree_pv = tree_val.present_value(num_steps=1200)
+        tree_pv = tree_val.present_value(params=BinomialParams(num_steps=1200))
 
         # Both are numerical approximations; keep tolerance modest for test stability.
         assert np.isclose(fd_pv, tree_pv, rtol=0.01)
@@ -776,10 +778,12 @@ class TestOptionValuation:
         )
 
         fd_val = OptionValuation("call_fd", ud, spec, PricingMethod.PDE_FD)
-        fd_pv = fd_val.present_value(spot_steps=90, time_steps=90, max_iter=20_000)
+        fd_pv = fd_val.present_value(
+            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        )
 
         tree_val = OptionValuation("call_tree", ud, spec, PricingMethod.BINOMIAL)
-        tree_pv = tree_val.present_value(num_steps=1200)
+        tree_pv = tree_val.present_value(params=BinomialParams(num_steps=1200))
 
         # Both are numerical approximations; keep tolerance modest for test stability.
         assert np.isclose(fd_pv, tree_pv, rtol=0.01)
@@ -807,7 +811,9 @@ class TestOptionValuation:
         )
 
         fd_val = OptionValuation("call_fd", ud, spec_am, PricingMethod.PDE_FD)
-        fd_pv = fd_val.present_value(spot_steps=90, time_steps=90, max_iter=20_000)
+        fd_pv = fd_val.present_value(
+            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        )
 
         bsm_val = OptionValuation("call_bsm", ud, spec_eu, PricingMethod.BSM_CONTINUOUS)
         bsm_pv = bsm_val.present_value()
@@ -1078,7 +1084,7 @@ class TestBinomialValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
 
-        pv = valuation.present_value(num_steps=500)
+        pv = valuation.present_value(params=BinomialParams(num_steps=500))
         assert pv > 0
         # ATM call value should be approx 10.45 for these parameters
         assert np.isclose(pv, 10.45, rtol=0.01)
@@ -1127,8 +1133,8 @@ class TestBinomialValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
 
-        eu_price = eu_val.present_value(num_steps=500)
-        am_price = am_val.present_value(num_steps=500)
+        eu_price = eu_val.present_value(params=BinomialParams(num_steps=500))
+        am_price = am_val.present_value(params=BinomialParams(num_steps=500))
 
         # American should be >= European (early exercise premium)
         assert np.isclose(am_price, eu_price, rtol=0.005)
@@ -1177,8 +1183,8 @@ class TestBinomialValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
 
-        eu_price = eu_val.present_value(num_steps=100)
-        am_price = am_val.present_value(num_steps=100)
+        eu_price = eu_val.present_value(params=BinomialParams(num_steps=100))
+        am_price = am_val.present_value(params=BinomialParams(num_steps=100))
 
         # American put should be strictly greater (has early exercise value)
         assert am_price > eu_price
@@ -1219,8 +1225,8 @@ class TestBinomialValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
 
-        price_100 = val1.present_value(num_steps=100)
-        price_200 = val2.present_value(num_steps=200)
+        price_100 = val1.present_value(params=BinomialParams(num_steps=100))
+        price_200 = val2.present_value(params=BinomialParams(num_steps=200))
 
         # Prices should be closer with more steps (convergence)
         # This is a weak test due to oscillation in binomial, but direction should be reasonable
@@ -1273,7 +1279,7 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv = valuation.present_value(random_seed=42)
+        pv = valuation.present_value(params=MonteCarloParams(random_seed=42))
 
         # Should be positive and in reasonable range
         assert pv > 0
@@ -1310,7 +1316,7 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv = valuation.present_value(random_seed=42)
+        pv = valuation.present_value(params=MonteCarloParams(random_seed=42))
 
         # Should be positive
         assert pv > 0
@@ -1347,7 +1353,7 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv1 = val1.present_value(random_seed=123)
+        pv1 = val1.present_value(params=MonteCarloParams(random_seed=123))
 
         # Second valuation with same seed
         gbm2 = GeometricBrownianMotion(
@@ -1364,7 +1370,7 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv2 = val2.present_value(random_seed=123)
+        pv2 = val2.present_value(params=MonteCarloParams(random_seed=123))
 
         # Should be identical
         assert np.isclose(pv1, pv2)
@@ -1400,8 +1406,8 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv1 = valuation.present_value(random_seed=42, deg=2)
-        pv2 = valuation.present_value(random_seed=42, deg=5)
+        pv1 = valuation.present_value(params=MonteCarloParams(random_seed=42, deg=2))
+        pv2 = valuation.present_value(params=MonteCarloParams(random_seed=42, deg=5))
 
         # Should have positive value
         assert pv1 > 0 and pv2 > 0
@@ -1422,7 +1428,7 @@ class TestMCSValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
 
-        pv_binom = binom_valuation.present_value(num_steps=500)
+        pv_binom = binom_valuation.present_value(params=BinomialParams(num_steps=500))
 
         assert np.isclose(pv1, pv_binom, rtol=0.02)
 
@@ -1457,8 +1463,8 @@ class TestMCSValuation:
             pricing_method=PricingMethod.MONTE_CARLO,
         )
 
-        pv = valuation.present_value(random_seed=42)
-        pv_pathwise = valuation.present_value_pathwise(random_seed=42)
+        pv = valuation.present_value(params=MonteCarloParams(random_seed=42))
+        pv_pathwise = valuation.present_value_pathwise(params=MonteCarloParams(random_seed=42))
 
         assert isinstance(pv, (float, np.floating))
         assert isinstance(pv_pathwise, np.ndarray)

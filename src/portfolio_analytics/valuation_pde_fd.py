@@ -16,6 +16,7 @@ import numpy as np
 
 from .enums import OptionType
 from .utils import calculate_year_fraction
+from .valuation_params import PDEParams
 
 if TYPE_CHECKING:
     from .valuation import OptionValuation
@@ -289,12 +290,12 @@ class _FDEuropeanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
+    def solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V = self._solve(**kwargs)
+        pv, S, V = self._solve(params)
         return pv, S, V
 
-    def _solve(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
+    def _solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
@@ -306,9 +307,9 @@ class _FDEuropeanValuation:
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
 
-        smax_mult = float(kwargs.get("smax_mult", 4.0))
-        spot_steps = int(kwargs.get("spot_steps", kwargs.get("M", 400)))
-        time_steps = int(kwargs.get("time_steps", kwargs.get("N", 400)))
+        smax_mult = float(params.smax_mult)
+        spot_steps = int(params.spot_steps)
+        time_steps = int(params.time_steps)
 
         return _european_vanilla_fd_cn(
             spot=spot,
@@ -323,8 +324,8 @@ class _FDEuropeanValuation:
             time_steps=time_steps,
         )
 
-    def present_value(self, **kwargs) -> float:
-        pv, *_ = self._solve(**kwargs)
+    def present_value(self, params: PDEParams) -> float:
+        pv, *_ = self._solve(params)
         return float(pv)
 
 
@@ -334,12 +335,12 @@ class _FDAmericanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
+    def solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V = self._solve(**kwargs)
+        pv, S, V = self._solve(params)
         return pv, S, V
 
-    def _solve(self, **kwargs) -> tuple[float, np.ndarray, np.ndarray]:
+    def _solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
@@ -351,12 +352,12 @@ class _FDAmericanValuation:
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
 
-        smax_mult = float(kwargs.get("smax_mult", 4.0))
-        spot_steps = int(kwargs.get("spot_steps", kwargs.get("M", 400)))
-        time_steps = int(kwargs.get("time_steps", kwargs.get("N", 400)))
-        omega = float(kwargs.get("omega", 1.2))
-        tol = float(kwargs.get("tol", 1e-8))
-        max_iter = int(kwargs.get("max_iter", 50_000))
+        smax_mult = float(params.smax_mult)
+        spot_steps = int(params.spot_steps)
+        time_steps = int(params.time_steps)
+        omega = float(params.omega)
+        tol = float(params.tol)
+        max_iter = int(params.max_iter)
 
         return _american_vanilla_fd_cn_psor(
             spot=spot,
@@ -374,6 +375,6 @@ class _FDAmericanValuation:
             max_iter=max_iter,
         )
 
-    def present_value(self, **kwargs) -> float:
-        pv, *_ = self._solve(**kwargs)
+    def present_value(self, params: PDEParams) -> float:
+        pv, *_ = self._solve(params)
         return float(pv)

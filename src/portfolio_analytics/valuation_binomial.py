@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from .enums import OptionType
 from .utils import calculate_year_fraction
+from .valuation_params import BinomialParams
 
 if TYPE_CHECKING:
     from .valuation import OptionValuation
@@ -42,6 +43,9 @@ class _BinomialValuationBase:
         dividend_yield = self.parent.underlying.dividend_yield
         u = np.exp(sigma * np.sqrt(delta_t))
         d = 1 / u
+        assert (
+            d < np.exp((r - dividend_yield) * delta_t) < u
+        ), "Arbitrage condition violated: d < e^( (r - q) * dt ) < u"
         p = (np.exp((r - dividend_yield) * delta_t) - d) / (u - d)
 
         # Build binomial tree of stock prices
@@ -82,21 +86,9 @@ class _BinomialValuationBase:
 class _BinomialEuropeanValuation(_BinomialValuationBase):
     """Implementation of European option valuation using binomial tree."""
 
-    def solve(self, **kwargs) -> np.ndarray:
-        """Compute the option value lattice using a binomial tree.
-
-        Parameters
-        ==========
-        **kwargs:
-            num_steps: int, optional (default: 500)
-                number of steps in the binomial tree
-
-        Returns
-        =======
-        np.ndarray
-            option values at each node in the tree
-        """
-        num_steps = kwargs.get("num_steps", 500)
+    def solve(self, params: BinomialParams) -> np.ndarray:
+        """Compute the option value lattice using a binomial tree."""
+        num_steps = int(params.num_steps)
         discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
 
         # Initialize with intrinsic values at maturity
@@ -112,23 +104,9 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
         return V
 
-    def present_value(
-        self,
-        **kwargs,
-    ) -> float:
-        """Return PV using binomial tree method.
-
-        Parameters
-        **kwargs:
-            num_steps: int, optional (default: 500)
-                number of steps in the binomial tree
-
-        Returns
-        =======
-        float or tuple of (pv, option_value_matrix)
-        """
-        num_steps = kwargs.get("num_steps", 500)
-        option_value_matrix = self.solve(num_steps=num_steps)
+    def present_value(self, params: BinomialParams) -> float:
+        """Return PV using binomial tree method."""
+        option_value_matrix = self.solve(params)
         pv = option_value_matrix[0, 0]
 
         return float(pv)
@@ -137,21 +115,9 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 class _BinomialAmericanValuation(_BinomialValuationBase):
     """Implementation of American option valuation using binomial tree."""
 
-    def solve(self, **kwargs) -> np.ndarray:
-        """Compute the option value lattice using a binomial tree with early exercise.
-
-        Parameters
-        ==========
-        **kwargs:
-            num_steps: int, optional (default: 500)
-                number of steps in the binomial tree
-
-        Returns
-        =======
-        np.ndarray
-            option values at each node in the tree
-        """
-        num_steps = kwargs.get("num_steps", 500)
+    def solve(self, params: BinomialParams) -> np.ndarray:
+        """Compute the option value lattice using a binomial tree with early exercise."""
+        num_steps = int(params.num_steps)
         discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
 
         # Initialize with intrinsic values at maturity
@@ -161,12 +127,12 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         # Backward induction with early exercise decision
         z = 0
         for i in range(num_steps - 1, -1, -1):
-            # Calculate continuation values
+            # Calculate discounted present continuation values
             continuation = (
                 p * V[0 : num_steps - z, i + 1] + (1 - p) * V[1 : num_steps - z + 1, i + 1]
             ) * discount_factor
 
-            # American option: take max of intrinsic vs continuation value
+            # American option: take max of intrinsic vs discounted present continuation value
             V[0 : num_steps - z, i] = np.maximum(
                 intrinsic_values[0 : num_steps - z, i], continuation
             )
@@ -174,24 +140,9 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
         return V
 
-    def present_value(
-        self,
-        **kwargs,
-    ) -> float:
-        """Return PV using binomial tree method with American early exercise.
-
-        Parameters
-        ==========
-        **kwargs:
-            num_steps: int, optional (default: 500)
-                number of steps in the binomial tree
-
-        Returns
-        =======
-        float or tuple of (pv, option_value_matrix)
-        """
-        num_steps = kwargs.get("num_steps", 500)
-        option_value_matrix = self.solve(num_steps=num_steps)
+    def present_value(self, params: BinomialParams) -> float:
+        """Return PV using binomial tree method with American early exercise."""
+        option_value_matrix = self.solve(params)
         pv = option_value_matrix[0, 0]
 
         return float(pv)

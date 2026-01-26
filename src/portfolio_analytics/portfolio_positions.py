@@ -12,6 +12,7 @@ from .stochastic_processes import (
     SimulationConfig,
 )
 from .valuation import OptionValuation, OptionSpec, UnderlyingConfig
+from .valuation_params import MonteCarloParams
 from .enums import OptionType, ExerciseType, PricingMethod
 from .market_environment import CorrelationContext, ValuationEnvironment
 from .utils import sn_random_numbers
@@ -247,9 +248,9 @@ class DerivativesPortfolio:
                 process_params = JDParams(
                     initial_value=asset_config.initial_value,
                     volatility=asset_config.volatility,
-                    jump_intensity=asset_config.jump_intensity,
-                    jump_mean=asset_config.jump_mean,
-                    jump_std=asset_config.jump_std,
+                    lambd=asset_config.lambd,
+                    mu=asset_config.mu,
+                    delta=asset_config.delta,
                 )
             elif asset_config.model == "srd":
                 process_params = SRDParams(
@@ -294,7 +295,8 @@ class DerivativesPortfolio:
         # iterate over all positions in portfolio
         for pos, value in self.valuation_objects.items():
             p: DerivativesPosition = self.positions[pos]
-            pv = value.present_value(random_seed=random_seed)
+            params = MonteCarloParams(random_seed=random_seed)
+            pv = value.present_value(params=params)
             res_list.append(
                 [
                     p.name,
@@ -309,9 +311,9 @@ class DerivativesPortfolio:
                     # single instrument value times quantity
                     pv * p.spec.contract_size * p.quantity,
                     # calculate Delta of position
-                    value.delta(random_seed=random_seed) * p.spec.contract_size * p.quantity,
+                    value.delta(params=params) * p.spec.contract_size * p.quantity,
                     # calculate Vega of position
-                    value.vega(random_seed=random_seed) * p.spec.contract_size * p.quantity,
+                    value.vega(params=params) * p.spec.contract_size * p.quantity,
                 ]
             )
         # generate a pandas DataFrame object with all results

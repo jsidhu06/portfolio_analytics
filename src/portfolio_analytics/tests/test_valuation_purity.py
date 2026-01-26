@@ -23,6 +23,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation_params import BinomialParams
 
 
 def _make_ud(
@@ -109,7 +110,7 @@ class TestValuationPurityPresentValue:
 
         # Binomial pricing (re-using same ud)
         tree = OptionValuation("call_tree", ud, spec, PricingMethod.BINOMIAL)
-        _ = tree.present_value(num_steps=2000)
+        _ = tree.present_value(params=BinomialParams(num_steps=2000))
         assert (
             _snapshot_ud(ud) == baseline
         ), "present_value() (Binomial) mutated UnderlyingPricingData"
@@ -159,17 +160,17 @@ class TestValuationPurityGreeks:
 
         baseline = _snapshot_ud(ud)
 
-        _ = val.delta(num_steps=2000)
+        _ = val.delta(params=BinomialParams(num_steps=2000))
         assert (
             _snapshot_ud(ud) == baseline
         ), "Binomial delta() did not restore UnderlyingPricingData state"
 
-        _ = val.gamma(num_steps=2000)
+        _ = val.gamma(params=BinomialParams(num_steps=2000))
         assert (
             _snapshot_ud(ud) == baseline
         ), "Binomial gamma() did not restore UnderlyingPricingData state"
 
-        _ = val.vega(num_steps=2000)
+        _ = val.vega(params=BinomialParams(num_steps=2000))
         assert (
             _snapshot_ud(ud) == baseline
         ), "Binomial vega() did not restore UnderlyingPricingData state"
