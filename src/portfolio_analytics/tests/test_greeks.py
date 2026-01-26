@@ -403,3 +403,129 @@ class TestGreekErrorHandling(TestGreeksSetup):
             TypeError, match="greek_calc_method must be GreekCalculationMethod enum"
         ):
             valuation.delta(greek_calc_method="analytical")  # type: ignore[arg-type]
+
+
+class TestGreekImmutability(TestGreeksSetup):
+    """Test that greek calculations don't mutate underlying state (thread-safety)."""
+
+    def test_delta_does_not_mutate_underlying_pricing_data(self):
+        """Verify delta calculation doesn't mutate UnderlyingPricingData.initial_value."""
+        ud = self._make_ud()
+        spec = self._make_spec(option_type=OptionType.CALL)
+        valuation = self._make_val("call_bsm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+
+        original_spot = ud.initial_value
+        original_vol = ud.volatility
+
+        # Calculate delta with numerical method
+        delta = valuation.delta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        # Verify underlying state is unchanged
+        assert ud.initial_value == original_spot, "Delta calculation mutated initial_value"
+        assert ud.volatility == original_vol, "Delta calculation mutated volatility"
+        assert delta is not None  # sanity check
+
+    def test_gamma_does_not_mutate_underlying_pricing_data(self):
+        """Verify gamma calculation doesn't mutate UnderlyingPricingData.initial_value."""
+        ud = self._make_ud()
+        spec = self._make_spec(option_type=OptionType.CALL)
+        valuation = self._make_val("call_binomial", ud, spec, PricingMethod.BINOMIAL)
+
+        original_spot = ud.initial_value
+        original_vol = ud.volatility
+
+        # Calculate gamma
+        gamma = valuation.gamma(params=BinomialParams(num_steps=100))
+
+        # Verify underlying state is unchanged
+        assert ud.initial_value == original_spot, "Gamma calculation mutated initial_value"
+        assert ud.volatility == original_vol, "Gamma calculation mutated volatility"
+        assert gamma is not None  # sanity check
+
+    def test_vega_does_not_mutate_underlying_pricing_data(self):
+        """Verify vega calculation doesn't mutate UnderlyingPricingData.volatility."""
+        ud = self._make_ud()
+        spec = self._make_spec(option_type=OptionType.CALL)
+        valuation = self._make_val("call_bsm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+
+        original_spot = ud.initial_value
+        original_vol = ud.volatility
+
+        # Calculate vega with numerical method
+        vega = valuation.vega(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        # Verify underlying state is unchanged
+        assert ud.initial_value == original_spot, "Vega calculation mutated initial_value"
+        assert ud.volatility == original_vol, "Vega calculation mutated volatility"
+        assert vega is not None  # sanity check
+
+    def test_delta_does_not_mutate_path_simulation(self):
+        """Verify delta calculation doesn't mutate PathSimulation.initial_value."""
+        # Create PathSimulation
+        process = GeometricBrownianMotion(
+            name="STOCK",
+            market_data=self.market_data,
+            process_params=GBMParams(initial_value=self.spot, volatility=self.volatility),
+            sim=SimulationConfig(
+                paths=1000,
+                day_count_convention=365,
+                time_grid=np.array([self.pricing_date, self.maturity]),
+            ),
+        )
+
+        spec = self._make_spec(option_type=OptionType.CALL)
+        valuation = OptionValuation(
+            name="call_mc",
+            underlying=process,
+            spec=spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        )
+
+        original_spot = process.initial_value
+        original_vol = process.volatility
+
+        # Calculate delta
+        delta = valuation.delta(params=MonteCarloParams(random_seed=42))
+
+        # Verify PathSimulation state is unchanged
+        assert (
+            process.initial_value == original_spot
+        ), "Delta calculation mutated PathSimulation.initial_value"
+        assert (
+            process.volatility == original_vol
+        ), "Delta calculation mutated PathSimulation.volatility"
+        assert delta is not None  # sanity check
+
+    def test_multiple_concurrent_greeks_with_shared_underlying(self):
+        """Verify multiple valuations can share underlying without interference.
+
+        This simulates thread-safety scenario where multiple portfolios
+        might calculate greeks for the same underlying simultaneously.
+        """
+        # Shared underlying
+        ud = self._make_ud()
+        original_spot = ud.initial_value
+        original_vol = ud.volatility
+
+        # Create multiple valuations with different strikes sharing same underlying
+        spec1 = self._make_spec(option_type=OptionType.CALL, strike=90.0)
+        spec2 = self._make_spec(option_type=OptionType.CALL, strike=100.0)
+        spec3 = self._make_spec(option_type=OptionType.PUT, strike=110.0)
+
+        val1 = self._make_val("call_90", ud, spec1, PricingMethod.BSM_CONTINUOUS)
+        val2 = self._make_val("call_100", ud, spec2, PricingMethod.BSM_CONTINUOUS)
+        val3 = self._make_val("put_110", ud, spec3, PricingMethod.BSM_CONTINUOUS)
+
+        # Calculate greeks for all valuations (simulating concurrent access)
+        delta1 = val1.delta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+        gamma2 = val2.gamma(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+        vega3 = val3.vega(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        # Verify underlying state is unchanged
+        assert ud.initial_value == original_spot, "Shared underlying was mutated"
+        assert ud.volatility == original_vol, "Shared underlying volatility was mutated"
+
+        # Verify results are reasonable
+        assert 0 < delta1 < 1.0  # ITM call delta
+        assert gamma2 > 0  # ATM gamma is positive
+        assert vega3 > 0  # vega always positive

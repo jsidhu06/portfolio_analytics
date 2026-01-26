@@ -128,6 +128,29 @@ class UnderlyingPricingData:
     def currency(self) -> str:
         return self.market_data.currency
 
+    def replace(self, **kwargs) -> "UnderlyingPricingData":
+        """Create a new UnderlyingPricingData instance with modified fields.
+
+        This is used for bump-and-revalue calculations (e.g., Greeks) without
+        mutating the original object, making it thread-safe and explicit.
+
+        Parameters
+        ----------
+        **kwargs
+            Fields to override (initial_value, volatility, dividend_yield, market_data)
+
+        Returns
+        -------
+        UnderlyingPricingData
+            New instance with specified fields replaced
+        """
+        return UnderlyingPricingData(
+            initial_value=kwargs.get("initial_value", self.initial_value),
+            volatility=kwargs.get("volatility", self.volatility),
+            market_data=kwargs.get("market_data", self.market_data),
+            dividend_yield=kwargs.get("dividend_yield", self.dividend_yield),
+        )
+
 
 class OptionValuation:
     """Single-factor option valuation dispatcher.
@@ -403,22 +426,50 @@ class OptionValuation:
         if use_analytical:
             return self._impl.delta()
 
-        # Otherwise use numerical approximation
+        # Otherwise use numerical approximation via bump-and-revalue
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
-        # central difference approximation
-        initial_spot = self.underlying.initial_value
-        try:
-            # calculate left value for numerical Delta
-            self.underlying.initial_value -= epsilon
-            value_left = self.present_value(params=params)
-            # numerical underlying value for right value
-            self.underlying.initial_value += 2 * epsilon
-            # calculate right value for numerical delta
-            value_right = self.present_value(params=params)
-        finally:
-            # reset the initial_value of the simulation object
-            self.underlying.initial_value = initial_spot
+
+        # Create bumped underlyings (immutable - no mutation)
+        if isinstance(self.underlying, PathSimulation):
+            # For PathSimulation: shallow copy with modified initial_value
+            # Note: paths will be regenerated when get_instrument_values() is called
+            import copy
+
+            underlying_down = copy.copy(self.underlying)
+            underlying_down.initial_value = self.underlying.initial_value - epsilon
+            underlying_down.instrument_values = None  # will regenerate on next call
+            underlying_up = copy.copy(self.underlying)
+            underlying_up.initial_value = self.underlying.initial_value + epsilon
+            underlying_up.instrument_values = None  # will regenerate on next call
+        else:
+            # For UnderlyingPricingData: use replace() method
+            underlying_down = self.underlying.replace(
+                initial_value=self.underlying.initial_value - epsilon
+            )
+            underlying_up = self.underlying.replace(
+                initial_value=self.underlying.initial_value + epsilon
+            )
+
+        # Create temporary valuation objects with bumped underlyings
+        val_down = OptionValuation(
+            name=f"{self.name}_delta_down",
+            underlying=underlying_down,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+        val_up = OptionValuation(
+            name=f"{self.name}_delta_up",
+            underlying=underlying_up,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+
+        # Calculate central difference
+        value_left = val_down.present_value(params=params)
+        value_right = val_up.present_value(params=params)
 
         delta = (value_right - value_left) / (2 * epsilon)
         # correct for potential numerical errors
@@ -483,25 +534,51 @@ class OptionValuation:
         if use_analytical:
             return self._impl.gamma()
 
-        # Otherwise use numerical approximation
+        # Otherwise use numerical approximation via bump-and-revalue
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
-        # central-difference approximation
-        initial_spot = self.underlying.initial_value
-        try:
-            # calculate left value for numerical Gamma
-            self.underlying.initial_value -= epsilon
-            value_left = self.present_value(params=params)
-            # numerical underlying value for right value
-            self.underlying.initial_value += 2 * epsilon
-            # calculate right value for numerical gamma
-            value_right = self.present_value(params=params)
-            # reset to initial spot for center value
-            self.underlying.initial_value = initial_spot
-            value_center = self.present_value(params=params)
-        finally:
-            # reset the initial_value of the simulation object
-            self.underlying.initial_value = initial_spot
+
+        # Create bumped underlyings (immutable - no mutation)
+        if isinstance(self.underlying, PathSimulation):
+            # For PathSimulation: shallow copy with modified initial_value
+            # Note: paths will be regenerated when get_instrument_values() is called
+            import copy
+
+            underlying_down = copy.copy(self.underlying)
+            underlying_down.initial_value = self.underlying.initial_value - epsilon
+            underlying_down.instrument_values = None  # will regenerate on next call
+            underlying_up = copy.copy(self.underlying)
+            underlying_up.initial_value = self.underlying.initial_value + epsilon
+            underlying_up.instrument_values = None  # will regenerate on next call
+        else:
+            # For UnderlyingPricingData: use replace() method
+            underlying_down = self.underlying.replace(
+                initial_value=self.underlying.initial_value - epsilon
+            )
+            underlying_up = self.underlying.replace(
+                initial_value=self.underlying.initial_value + epsilon
+            )
+
+        # Create temporary valuation objects with bumped underlyings
+        val_down = OptionValuation(
+            name=f"{self.name}_gamma_down",
+            underlying=underlying_down,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+        val_up = OptionValuation(
+            name=f"{self.name}_gamma_up",
+            underlying=underlying_up,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+
+        # Calculate central difference (center uses self.present_value)
+        value_left = val_down.present_value(params=params)
+        value_right = val_up.present_value(params=params)
+        value_center = self.present_value(params=params)
 
         gamma = (value_right - 2 * value_center + value_left) / (epsilon**2)
         return gamma
@@ -561,21 +638,45 @@ class OptionValuation:
         if use_analytical:
             return self._impl.vega()
 
-        # Otherwise use numerical approximation
-        # central-difference approximation
-        initial_vol = self.underlying.volatility
-        try:
-            # calculate the left value for numerical Vega
-            self.underlying.volatility -= epsilon
-            value_left = self.present_value(params=params)
-            # numerical volatility value for right value
-            # update the simulation object
-            self.underlying.volatility += 2 * epsilon
-            # calculate the right value for numerical Vega
-            value_right = self.present_value(params=params)
-        finally:
-            # reset volatility value of simulation object
-            self.underlying.volatility = initial_vol
+        # Otherwise use numerical approximation via bump-and-revalue
+        # Create bumped underlyings (immutable - no mutation)
+        if isinstance(self.underlying, PathSimulation):
+            # For PathSimulation: shallow copy with modified volatility
+            # Note: paths will be regenerated when get_instrument_values() is called
+            import copy
+
+            underlying_down = copy.copy(self.underlying)
+            underlying_down.volatility = self.underlying.volatility - epsilon
+            underlying_down.instrument_values = None  # will regenerate on next call
+            underlying_up = copy.copy(self.underlying)
+            underlying_up.volatility = self.underlying.volatility + epsilon
+            underlying_up.instrument_values = None  # will regenerate on next call
+        else:
+            # For UnderlyingPricingData: use replace() method
+            underlying_down = self.underlying.replace(
+                volatility=self.underlying.volatility - epsilon
+            )
+            underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
+
+        # Create temporary valuation objects with bumped underlyings
+        val_down = OptionValuation(
+            name=f"{self.name}_vega_down",
+            underlying=underlying_down,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+        val_up = OptionValuation(
+            name=f"{self.name}_vega_up",
+            underlying=underlying_up,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+
+        # Calculate central difference
+        value_left = val_down.present_value(params=params)
+        value_right = val_up.present_value(params=params)
 
         vega = (value_right - value_left) / (2 * epsilon) / 100  # per 1% point change in vol
         return vega
