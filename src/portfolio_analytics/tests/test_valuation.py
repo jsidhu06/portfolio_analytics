@@ -857,6 +857,43 @@ class TestOptionValuation:
         # Both are numerical approximations; keep tolerance modest for test stability.
         assert np.isclose(fd_pv, tree_pv, rtol=0.01)
 
+    def test_american_call_no_dividend_equals_european_fd(self):
+        """American CALL with q=0 has no early exercise premium.
+
+        Regression test for the PDE fast-path that prices this case using the
+        European CN solver (skipping PSOR).
+        """
+        ud = UnderlyingPricingData(
+            initial_value=100.0,
+            volatility=0.2,
+            market_data=self.market_data,
+            dividend_yield=0.0,
+        )
+        spec_am = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+        spec_eu = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        params = PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+
+        am_val = OptionValuation("call_fd_am", ud, spec_am, PricingMethod.PDE_FD)
+        eu_val = OptionValuation("call_fd_eu", ud, spec_eu, PricingMethod.PDE_FD)
+
+        am_pv = am_val.present_value(params=params)
+        eu_pv = eu_val.present_value(params=params)
+
+        assert np.isclose(am_pv, eu_pv, rtol=1e-12, atol=1e-12)
+
     def test_american_call_no_dividend_close_to_bsm_european(self):
         ud = UnderlyingPricingData(
             initial_value=100.0,

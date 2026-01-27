@@ -55,25 +55,25 @@ class PDEParams:
         smax_mult: Multiplier for maximum spot price in grid.
                    Grid extends from 0 to smax_mult * max(spot, strike).
                    Default: 4.0
-        spot_steps: Number of spatial (spot price) steps in the grid.
-                    More steps improve accuracy. Typical: 200-500. Default: 400.
-        time_steps: Number of time steps. More steps improve stability and accuracy.
-                    Typical: 200-500. Default: 400.
+           spot_steps: Number of spatial (spot price) steps in the grid.
+                    More steps improve accuracy. Typical: 200-500. Default: 200.
+           time_steps: Number of time steps. More steps improve stability and accuracy.
+                    Typical: 200-500. Default: 200.
         omega: SOR relaxation parameter for American options (PSOR algorithm).
                Range: (1.0, 2.0). Values > 1 accelerate convergence.
-               Default: 1.2
+                Default: 1.5
         tol: Convergence tolerance for PSOR iterations (American only).
-             Default: 1e-8
+               Default: 1e-6
         max_iter: Maximum PSOR iterations per time step (American only).
-                  Default: 50000
+                   Default: 20000
     """
 
     smax_mult: float = 4.0
-    spot_steps: int = 400
-    time_steps: int = 400
-    omega: float = 1.2
-    tol: float = 1e-8
-    max_iter: int = 50_000
+    spot_steps: int = 200
+    time_steps: int = 200
+    omega: float = 1.5
+    tol: float = 1e-6
+    max_iter: int = 20_000
 
     def __post_init__(self):
         if self.smax_mult <= 0:

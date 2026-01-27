@@ -261,8 +261,21 @@ def _american_vanilla_fd_cn_psor(
         V_old = V.copy()
         rhs = R_lower * V_old[i - 1] + R_diag * V_old[i] + R_upper * V_old[i + 1]
 
-        x = V_old[i].copy()  # initial guess
         exercise_i = intrinsic[i]
+
+        # Warm-start: solve the unconstrained CN system (European step) using Thomas,
+        # then project onto the early-exercise constraint.
+        #
+        # The linear system for interior unknowns x has boundary terms embedded via V[0], V[-1].
+        rhs_adj = rhs.copy()
+        rhs_adj[0] -= L_lower[0] * V[0]
+        rhs_adj[-1] -= L_upper[-1] * V[-1]
+
+        th_lower = L_lower[1:]
+        th_diag = L_diag
+        th_upper = L_upper[:-1]
+        x = _solve_tridiagonal_thomas(th_lower, th_diag, th_upper, rhs_adj)
+        x = np.maximum(x, exercise_i)
 
         for _ in range(max_iter):
             x_prev = x.copy()
@@ -349,6 +362,30 @@ class _FDAmericanValuation:
         volatility = float(self.parent.underlying.volatility)
         risk_free_rate = float(self.parent.discount_curve.short_rate)
         dividend_yield = float(getattr(self.parent.underlying, "dividend_yield", 0.0))
+
+        # Special-case: American CALL with ~0 dividends has no early-exercise premium.
+        # Avoid the PSOR loop entirely and price as European via CN.
+        if self.parent.option_type is OptionType.CALL and abs(dividend_yield) < 1e-12:
+            time_to_maturity = calculate_year_fraction(
+                self.parent.pricing_date, self.parent.maturity
+            )
+
+            smax_mult = float(params.smax_mult)
+            spot_steps = int(params.spot_steps)
+            time_steps = int(params.time_steps)
+
+            return _european_vanilla_fd_cn(
+                spot=spot,
+                strike=float(strike),
+                time_to_maturity=float(time_to_maturity),
+                risk_free_rate=risk_free_rate,
+                volatility=volatility,
+                dividend_yield=dividend_yield,
+                option_type=self.parent.option_type,
+                smax_mult=smax_mult,
+                spot_steps=spot_steps,
+                time_steps=time_steps,
+            )
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
 
