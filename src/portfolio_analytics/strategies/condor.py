@@ -8,7 +8,7 @@ import numpy as np
 
 from ..valuation import OptionSpec, OptionValuation
 from ..enums import ExerciseType, OptionType, PositionSide
-from ..valuation_params import ValuationParams
+from ..valuation import ValuationParams
 
 if TYPE_CHECKING:
     from ..stochastic_processes import PathSimulation

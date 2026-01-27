@@ -1,7 +1,7 @@
 [project]
 name = "portfolio_analytics"
 version = "0.1.0"
-description = "Python package for portfolio analytics, including risk and return metrics"
+description = "Python package for derivatives valuation"
 authors = [
     { name = "TODO", email = "todo@example.com" }
 ]
@@ -12,7 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy",
     "pandas",
-    "yfinance"
+    "scipy"
 ]
 
 # Optional groups (e.g., dev, tests, docs)

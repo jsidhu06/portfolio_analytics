@@ -11,11 +11,11 @@ from portfolio_analytics.valuation import (
 )
 from portfolio_analytics.portfolio_positions import UnderlyingConfig
 from portfolio_analytics.strategies import CondorSpec
-from portfolio_analytics.valuation_bsm import _BSMEuropeanValuation
-from portfolio_analytics.valuation_binomial import (
+from portfolio_analytics.valuation.bsm import _BSMEuropeanValuation
+from portfolio_analytics.valuation.binomial import (
     _BinomialEuropeanValuation,
 )
-from portfolio_analytics.valuation_mcs import _MCEuropeanValuation
+from portfolio_analytics.valuation.monte_carlo import _MCEuropeanValuation
 from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod, PositionSide
 from portfolio_analytics.stochastic_processes import (
     GeometricBrownianMotion,
@@ -24,8 +24,8 @@ from portfolio_analytics.stochastic_processes import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
-from portfolio_analytics.valuation_pde_fd import _FDAmericanValuation
-from portfolio_analytics.valuation_params import BinomialParams, MonteCarloParams, PDEParams
+from portfolio_analytics.valuation.pde import _FDAmericanValuation
+from portfolio_analytics.valuation import BinomialParams, MonteCarloParams, PDEParams
 
 
 class TestOptionSpec:

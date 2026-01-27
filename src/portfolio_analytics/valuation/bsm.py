@@ -3,11 +3,11 @@
 from typing import TYPE_CHECKING
 import numpy as np
 from scipy.stats import norm
-from .utils import calculate_year_fraction
-from .enums import OptionType
+from ..utils import calculate_year_fraction
+from ..enums import OptionType
 
 if TYPE_CHECKING:
-    from .valuation import OptionValuation
+    from .core import OptionValuation
 
 
 class _BSMValuationBase:

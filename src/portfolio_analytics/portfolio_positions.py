@@ -13,7 +13,7 @@ from .stochastic_processes import (
     SimulationConfig,
 )
 from .valuation import OptionValuation, OptionSpec
-from .valuation_params import MonteCarloParams
+from .valuation import MonteCarloParams
 from .enums import OptionType, ExerciseType, PricingMethod
 from .market_environment import CorrelationContext, ValuationEnvironment
 from .utils import sn_random_numbers

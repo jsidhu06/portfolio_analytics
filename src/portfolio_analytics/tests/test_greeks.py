@@ -24,7 +24,7 @@ from portfolio_analytics.valuation import (
     OptionValuation,
     UnderlyingPricingData,
 )
-from portfolio_analytics.valuation_params import BinomialParams, MonteCarloParams
+from portfolio_analytics.valuation import BinomialParams, MonteCarloParams
 
 
 class TestGreeksSetup:

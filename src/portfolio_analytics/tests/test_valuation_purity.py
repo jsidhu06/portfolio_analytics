@@ -23,7 +23,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
-from portfolio_analytics.valuation_params import BinomialParams
+from portfolio_analytics.valuation import BinomialParams
 
 
 def _make_ud(

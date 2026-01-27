@@ -14,12 +14,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .enums import OptionType
-from .utils import calculate_year_fraction
-from .valuation_params import PDEParams
+from ..enums import OptionType
+from ..utils import calculate_year_fraction
+from .params import PDEParams
 
 if TYPE_CHECKING:
-    from .valuation import OptionValuation
+    from .core import OptionValuation
 
 
 def _solve_tridiagonal_thomas(

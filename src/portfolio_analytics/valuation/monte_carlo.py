@@ -3,11 +3,11 @@
 from typing import TYPE_CHECKING
 import numpy as np
 
-from .enums import OptionType
-from .valuation_params import MonteCarloParams
+from ..enums import OptionType
+from .params import MonteCarloParams
 
 if TYPE_CHECKING:
-    from .valuation import OptionValuation
+    from .core import OptionValuation
 
 
 class _MCEuropeanValuation:

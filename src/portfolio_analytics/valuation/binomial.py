@@ -5,12 +5,12 @@ Cox-Ross-Rubinstein
 from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
-from .enums import OptionType
-from .utils import calculate_year_fraction
-from .valuation_params import BinomialParams
+from ..enums import OptionType
+from ..utils import calculate_year_fraction
+from .params import BinomialParams
 
 if TYPE_CHECKING:
-    from .valuation import OptionValuation
+    from .core import OptionValuation
 
 
 class _BinomialValuationBase:
