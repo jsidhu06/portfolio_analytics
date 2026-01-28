@@ -1,6 +1,8 @@
 """Helper functions and classes for derivatives valuation."""
 
 from datetime import datetime
+from math import comb
+from typing import Callable, Literal
 import numpy as np
 
 SECONDS_IN_DAY = 86400
@@ -67,6 +69,28 @@ def get_year_deltas(
     return np.array(delta_list)
 
 
+def pv_discrete_dividends(
+    dividends: list[tuple[datetime, float]],
+    pricing_date: datetime,
+    maturity: datetime,
+    short_rate: float,
+    day_count_convention: int | float = 365,
+) -> float:
+    """Present value of discrete cash dividends between pricing_date and maturity.
+
+    Only dividends with pricing_date < ex_date <= maturity are included.
+    """
+    if not dividends:
+        return 0.0
+
+    pv = 0.0
+    for ex_date, amount in dividends:
+        if pricing_date < ex_date <= maturity:
+            t = calculate_year_fraction(pricing_date, ex_date, day_count_convention)
+            pv += float(amount) * np.exp(-short_rate * t)
+    return float(pv)
+
+
 def sn_random_numbers(
     shape: tuple[int, int, int],
     antithetic: bool = True,
@@ -107,3 +131,109 @@ def sn_random_numbers(
     if shape[0] == 1:
         return ran[0]
     return ran
+
+
+def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:
+    """Binomial(n, p) probability mass function.
+
+    Parameters
+    ==========
+    k:
+        Success count(s). Can be an int or a numpy array of ints.
+    n:
+        Number of trials (>= 0).
+    p:
+        Success probability in [0, 1].
+    """
+    if n < 0:
+        raise ValueError("n must be >= 0")
+    if not (0.0 <= float(p) <= 1.0):
+        raise ValueError("p must be in [0, 1]")
+
+    k_arr = np.asarray(k, dtype=int)
+    if np.any((k_arr < 0) | (k_arr > n)):
+        # Out-of-support values have pmf 0
+        out = np.zeros_like(k_arr, dtype=float)
+        in_support = (k_arr >= 0) & (k_arr <= n)
+        if np.any(in_support):
+            ks = k_arr[in_support]
+            out[in_support] = np.array([comb(n, int(kk)) for kk in ks], dtype=float) * (
+                (p**ks) * ((1.0 - p) ** (n - ks))
+            )
+        return out
+
+    return np.array([comb(n, int(kk)) for kk in k_arr], dtype=float) * (
+        (p**k_arr) * ((1.0 - p) ** (n - k_arr))
+    )
+
+
+def expected_binomial(
+    n: int,
+    p: float,
+    f: Callable[[np.ndarray], np.ndarray],
+) -> float:
+    """Compute $\mathbb{E}[f(K)]$ where $K \sim \text{Binomial}(n, p)$.
+
+    This is a small convenience wrapper around the explicit sum
+    $\sum_{k=0}^n \binom{n}{k} p^k (1-p)^{n-k} f(k)$.
+    """
+    ks = np.arange(n + 1)
+    pmf = binomial_pmf(ks, n=n, p=p)
+    vals = np.asarray(f(ks), dtype=float)
+    if vals.shape != ks.shape:
+        raise ValueError("f(k) must return an array with same shape as k")
+    return float(np.dot(pmf, vals))
+
+
+def expected_binomial_payoff(
+    *,
+    S0: float,
+    n: int,
+    T: float,
+    side: Literal["call", "put"],
+    K: float,
+    r: float,
+    q: float,
+    u: float | None = None,
+) -> float:
+    """Expected vanilla payoff under a binomial terminal distribution.
+
+    Notes
+    -----
+    In binomial-tree style models, the terminal spot is
+    $S_T(k) = S_0 u^k d^{n-k}$
+
+    Parameters
+    ==========
+    S0:
+        Initial spot.
+    n, p:
+        Binomial distribution parameters.
+    side:
+        "call" or "put".
+    K:
+        Strike.
+    u, d:
+        Optional up/down multipliers used to map k -> terminal spot. If omitted,
+        the function returns the (k-invariant) payoff at S0.
+    """
+    side_l = str(side).lower()
+    if side_l not in ("call", "put"):
+        raise ValueError("side must be 'call' or 'put'")
+
+    S0 = float(S0)
+    K = float(K)
+
+    u = float(u)
+    d = float(1 / u)
+
+    def payoff_from_k(ks: np.ndarray) -> np.ndarray:
+        ST = S0 * (u**ks) * (d ** (n - ks))
+        if side_l == "call":
+            return np.maximum(ST - K, 0.0)
+        return np.maximum(K - ST, 0.0)
+
+    delta_t = T / n
+    p = (np.exp((r - q) * delta_t) - d) / (u - d)
+
+    return expected_binomial(n=n, p=p, f=payoff_from_k)

@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 import numpy as np
 from scipy.stats import norm
-from ..utils import calculate_year_fraction
+from ..utils import calculate_year_fraction, pv_discrete_dividends
 from ..enums import OptionType
 
 if TYPE_CHECKING:
@@ -64,6 +64,20 @@ class _BSMValuationBase:
         """Calculate discount factor e^(-r*T)."""
         return np.exp(-risk_free_rate * time_to_maturity)
 
+    def _adjusted_spot(self) -> float:
+        """Adjust spot for discrete dividends using PV of future dividends."""
+        spot = float(self.parent.underlying.initial_value)
+        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
+        if not discrete_dividends:
+            return spot
+        pv_divs = pv_discrete_dividends(
+            discrete_dividends,
+            self.parent.pricing_date,
+            self.parent.maturity,
+            float(self.parent.discount_curve.short_rate),
+        )
+        return max(spot - pv_divs, 0.0)
+
 
 class _BSMEuropeanValuation(_BSMValuationBase):
     """Black-Scholes-Merton European option valuation."""
@@ -72,7 +86,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         """Compute the BSM option value."""
 
         # Extract parameters from parent OptionValuation object
-        spot = self.parent.underlying.initial_value
+        spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate
@@ -122,7 +136,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             analytical delta of the option
         """
         # Extract parameters from parent OptionValuation object
-        spot = self.parent.underlying.initial_value
+        spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate
@@ -159,7 +173,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             analytical gamma of the option
         """
         # Extract parameters from parent OptionValuation object
-        spot = self.parent.underlying.initial_value
+        spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate
@@ -204,7 +218,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             analytical vega of the option (per 1% point change in volatility)
         """
         # Extract parameters from parent OptionValuation object
-        spot = self.parent.underlying.initial_value
+        spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate
@@ -259,7 +273,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             analytical theta of the option (per day)
         """
         # Extract parameters from parent OptionValuation object
-        spot = self.parent.underlying.initial_value
+        spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate
@@ -327,7 +341,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             analytical rho of the option (per 1% change in interest rate)
         """
         # Extract parameters from parent OptionValuation object
-        spot = self.parent.underlying.initial_value
+        spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
         risk_free_rate = self.parent.discount_curve.short_rate

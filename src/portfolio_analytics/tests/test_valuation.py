@@ -693,6 +693,19 @@ class TestOptionValuation:
                 pricing_method=PricingMethod.MONTE_CARLO,
             )
 
+    def test_underlying_pricing_data_rejects_mixed_dividends(self):
+        """Continuous dividend_yield and discrete_dividends should be mutually exclusive."""
+        with pytest.raises(
+            ValueError, match="either a continuous dividend_yield or discrete_dividends"
+        ):
+            UnderlyingPricingData(
+                initial_value=100.0,
+                volatility=0.2,
+                market_data=self.market_data,
+                dividend_yield=0.02,
+                discrete_dividends=[(self.pricing_date + dt.timedelta(days=90), 1.0)],
+            )
+
     def test_option_valuation_binomial_rejects_path_simulation(self):
         """Test that Binomial pricing rejects PathSimulation (should use UnderlyingPricingData)."""
         process = GeometricBrownianMotion(
@@ -927,6 +940,37 @@ class TestOptionValuation:
         # American call with no dividends should be near European (no early exercise benefit).
         assert np.isclose(fd_pv, bsm_pv, atol=1.0)
 
+    def test_binomial_discrete_dividends_close_to_bsm(self):
+        """Binomial with discrete dividends should be close to BSM with dividend-adjusted spot."""
+        spec = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        discrete_divs = [
+            (self.pricing_date + dt.timedelta(days=90), 0.6),
+            (self.pricing_date + dt.timedelta(days=180), 0.6),
+        ]
+
+        ud = UnderlyingPricingData(
+            initial_value=100.0,
+            volatility=0.2,
+            market_data=self.market_data,
+            dividend_yield=0.0,
+            discrete_dividends=discrete_divs,
+        )
+
+        binom_val = OptionValuation("call_binom_div", ud, spec, PricingMethod.BINOMIAL)
+        bsm_val = OptionValuation("call_bsm_div", ud, spec, PricingMethod.BSM_CONTINUOUS)
+
+        binom_pv = binom_val.present_value(params=BinomialParams(num_steps=1200))
+        bsm_pv = bsm_val.present_value()
+
+        assert np.isclose(binom_pv, bsm_pv, rtol=0.02)
+
 
 class TestBSMValuation:
     """Tests for Black-Scholes-Merton valuation implementation."""
@@ -976,6 +1020,40 @@ class TestBSMValuation:
         assert pv > 0
         # ATM call value should be approx 10.45 for these parameters
         assert np.isclose(pv, 10.45, rtol=0.01)
+
+    def test_bsm_discrete_dividends_reduce_call_price(self):
+        """Discrete dividends should reduce European call price (all else equal)."""
+        spec = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        ud_no_div = UnderlyingPricingData(
+            initial_value=self.spot,
+            volatility=self.volatility,
+            market_data=self.market_data,
+            dividend_yield=0.0,
+            discrete_dividends=[],
+        )
+
+        ud_div = UnderlyingPricingData(
+            initial_value=self.spot,
+            volatility=self.volatility,
+            market_data=self.market_data,
+            dividend_yield=0.0,
+            discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
+        )
+
+        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BSM_CONTINUOUS)
+        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BSM_CONTINUOUS)
+
+        pv_no_div = val_no_div.present_value()
+        pv_div = val_div.present_value()
+
+        assert pv_div < pv_no_div
 
     def test_bsm_put_option_atm(self):
         """Test BSM pricing for ATM put option."""
@@ -1244,6 +1322,40 @@ class TestBinomialValuation:
 
         # American should be >= European (early exercise premium)
         assert np.isclose(am_price, eu_price, rtol=0.005)
+
+    def test_binomial_european_call_discrete_dividends_reduce_price(self):
+        """Discrete dividends should reduce European call price in binomial tree."""
+        spec = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+
+        ud_no_div = UnderlyingPricingData(
+            initial_value=self.spot,
+            volatility=self.volatility,
+            market_data=self.market_data,
+            dividend_yield=0.0,
+            discrete_dividends=[],
+        )
+
+        ud_div = UnderlyingPricingData(
+            initial_value=self.spot,
+            volatility=self.volatility,
+            market_data=self.market_data,
+            dividend_yield=0.0,
+            discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
+        )
+
+        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BINOMIAL)
+        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BINOMIAL)
+
+        pv_no_div = val_no_div.present_value(params=BinomialParams(num_steps=500))
+        pv_div = val_div.present_value(params=BinomialParams(num_steps=500))
+
+        assert pv_div < pv_no_div
 
     def test_binomial_american_put_early_exercise(self):
         """Test American put has early exercise premium."""

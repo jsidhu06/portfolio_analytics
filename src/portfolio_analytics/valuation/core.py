@@ -102,7 +102,8 @@ class UnderlyingPricingData:
 
     Used when pricing with methods that don't require full stochastic process simulation
     (e.g., binomial trees). Contains only essential parameters: spot price, volatility,
-    pricing date, discount curve, and continuous dividend yield (optional, default 0.0).
+    pricing date, discount curve, continuous dividend yield (optional, default 0.0),
+    and optional discrete dividends as (ex_date, amount) pairs.
     """
 
     def __init__(
@@ -111,11 +112,30 @@ class UnderlyingPricingData:
         volatility: float,
         market_data: MarketData,
         dividend_yield: float = 0.0,
+        discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
     ):
         self.initial_value = initial_value
         self.volatility = volatility
         self.market_data = market_data
         self.dividend_yield = dividend_yield
+        if discrete_dividends is None:
+            self.discrete_dividends = []
+        else:
+            cleaned: list[tuple[dt.datetime, float]] = []
+            for ex_date, amount in discrete_dividends:
+                if not isinstance(ex_date, dt.datetime):
+                    raise TypeError("discrete_dividends entries must be (datetime, amount) tuples")
+                try:
+                    amt = float(amount)
+                except (TypeError, ValueError) as exc:
+                    raise TypeError("dividend amount must be numeric") from exc
+                cleaned.append((ex_date, amt))
+            self.discrete_dividends = sorted(cleaned, key=lambda x: x[0])
+
+        if self.dividend_yield != 0.0 and self.discrete_dividends:
+            raise ValueError(
+                "Provide either a continuous dividend_yield or discrete_dividends, not both."
+            )
 
     @property
     def pricing_date(self) -> dt.datetime:
@@ -150,6 +170,7 @@ class UnderlyingPricingData:
             volatility=kwargs.get("volatility", self.volatility),
             market_data=kwargs.get("market_data", self.market_data),
             dividend_yield=kwargs.get("dividend_yield", self.dividend_yield),
+            discrete_dividends=kwargs.get("discrete_dividends", self.discrete_dividends),
         )
 
 

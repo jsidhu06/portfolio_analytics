@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 from ..enums import OptionType
-from ..utils import calculate_year_fraction
+from ..utils import calculate_year_fraction, pv_discrete_dividends
 from .params import BinomialParams
 
 if TYPE_CHECKING:
@@ -53,8 +53,26 @@ class _BinomialValuationBase:
         up = np.resize(up, (num_steps + 1, num_steps + 1))
         down = up.T * 2
 
-        S_0 = self.parent.underlying.initial_value
-        binomial_matrix = S_0 * np.exp(sigma * np.sqrt(delta_t) * (up - down))
+        S_0 = float(self.parent.underlying.initial_value)
+        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
+
+        # If no discrete dividends, use the closed-form CRR lattice.
+        if not discrete_dividends:
+            binomial_matrix = S_0 * np.exp(sigma * np.sqrt(delta_t) * (up - down))
+            return discount_factor, p, binomial_matrix
+
+        # Hull-style approach (prepaid forward): build lattice for S* = S - PV(divs)
+        pv_all = pv_discrete_dividends(discrete_dividends, start, end, float(r))
+        S_star0 = max(S_0 - pv_all, 0.0)
+        binomial_matrix = S_star0 * np.exp(sigma * np.sqrt(delta_t) * (up - down))
+
+        # Add PV of remaining dividends to each time step (same adjustment per column)
+        for i in range(num_steps + 1):
+            pv_remaining = pv_discrete_dividends(
+                discrete_dividends, time_intervals[i], end, float(r)
+            )
+            if pv_remaining != 0.0:
+                binomial_matrix[: i + 1, i] += pv_remaining
 
         return discount_factor, p, binomial_matrix
 
