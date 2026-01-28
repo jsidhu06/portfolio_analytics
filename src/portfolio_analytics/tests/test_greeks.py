@@ -291,6 +291,16 @@ class TestGreekCalculationMethods(TestGreeksSetup):
 
         assert np.isclose(vega_analytical, vega_numerical, rtol=1e-3)
 
+    def test_bsm_analytical_vs_numerical_rho(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM_CONTINUOUS)
+
+        rho_analytical = valuation.rho(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        rho_numerical = valuation.rho(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(rho_analytical, rho_numerical, rtol=1e-3)
+
 
 class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
     """Test that greeks are consistent across different pricing methods."""

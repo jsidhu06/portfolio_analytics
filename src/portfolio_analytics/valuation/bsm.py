@@ -236,3 +236,132 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         )
 
         return vega
+
+    def theta(self) -> float:
+        """Calculate analytical theta for European option using closed-form BSM formula.
+
+        Theta measures the time decay of the option value (rate of change with respect to time).
+        Returns the change in option value for a 1-day decrease in time to maturity.
+
+        For call:
+            theta = -(S * N'(d1) * sigma * e^(-qT)) / (2 * sqrt(T))
+                    - r * K * e^(-rT) * N(d2)
+                    + q * S * e^(-qT) * N(d1)
+
+        For put:
+            theta = -(S * N'(d1) * sigma * e^(-qT)) / (2 * sqrt(T))
+                    + r * K * e^(-rT) * N(-d2)
+                    - q * S * e^(-qT) * N(-d1)
+
+        Returns
+        =======
+        float
+            analytical theta of the option (per day)
+        """
+        # Extract parameters from parent OptionValuation object
+        spot = self.parent.underlying.initial_value
+        strike = self.parent.strike
+        volatility = self.parent.underlying.volatility
+        risk_free_rate = self.parent.discount_curve.short_rate
+        dividend_yield = self.parent.underlying.dividend_yield
+
+        # Calculate time to maturity in years
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+        )
+
+        if time_to_maturity <= 0:
+            return 0.0
+
+        # Calculate d1 and d2
+        d1, d2 = self._calculate_d_values(
+            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
+        )
+
+        # Standard normal PDF evaluated at d1
+        n_prime_d1 = norm.pdf(d1)
+
+        # Common term for both call and put
+        term1 = -(
+            spot
+            * np.exp(-dividend_yield * time_to_maturity)
+            * n_prime_d1
+            * volatility
+            / (2 * np.sqrt(time_to_maturity))
+        )
+
+        if self.parent.option_type is OptionType.CALL:
+            term2 = (
+                -risk_free_rate * strike * np.exp(-risk_free_rate * time_to_maturity) * norm.cdf(d2)
+            )
+            term3 = (
+                dividend_yield * spot * np.exp(-dividend_yield * time_to_maturity) * norm.cdf(d1)
+            )
+            theta_annual = term1 + term2 + term3
+        else:  # PUT
+            term2 = (
+                risk_free_rate * strike * np.exp(-risk_free_rate * time_to_maturity) * norm.cdf(-d2)
+            )
+            term3 = (
+                -dividend_yield * spot * np.exp(-dividend_yield * time_to_maturity) * norm.cdf(-d1)
+            )
+            theta_annual = term1 + term2 + term3
+
+        # Convert from annual to per-day (divide by 365)
+        theta_daily = theta_annual / 365
+
+        return theta_daily
+
+    def rho(self) -> float:
+        """Calculate analytical rho for European option using closed-form BSM formula.
+
+        Rho measures sensitivity to interest rate changes.
+        Returns the change in option value for a 1% (0.01) change in the risk-free rate.
+
+        For call: rho = K * T * e^(-rT) * N(d2) / 100
+        For put:  rho = -K * T * e^(-rT) * N(-d2) / 100
+
+        Returns
+        =======
+        float
+            analytical rho of the option (per 1% change in interest rate)
+        """
+        # Extract parameters from parent OptionValuation object
+        spot = self.parent.underlying.initial_value
+        strike = self.parent.strike
+        volatility = self.parent.underlying.volatility
+        risk_free_rate = self.parent.discount_curve.short_rate
+        dividend_yield = self.parent.underlying.dividend_yield
+
+        # Calculate time to maturity in years
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+        )
+
+        if time_to_maturity <= 0:
+            return 0.0
+
+        # Calculate d2
+        _, d2 = self._calculate_d_values(
+            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
+        )
+
+        # Rho is per 1% change in interest rate
+        if self.parent.option_type is OptionType.CALL:
+            rho = (
+                strike
+                * time_to_maturity
+                * np.exp(-risk_free_rate * time_to_maturity)
+                * norm.cdf(d2)
+                / 100
+            )
+        else:  # PUT
+            rho = (
+                -strike
+                * time_to_maturity
+                * np.exp(-risk_free_rate * time_to_maturity)
+                * norm.cdf(-d2)
+                / 100
+            )
+
+        return rho

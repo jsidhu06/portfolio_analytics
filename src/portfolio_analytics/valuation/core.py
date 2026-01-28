@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from collections.abc import Callable
+import copy
 import datetime as dt
 import numpy as np
 from ..stochastic_processes import PathSimulation
@@ -434,8 +435,6 @@ class OptionValuation:
         if isinstance(self.underlying, PathSimulation):
             # For PathSimulation: shallow copy with modified initial_value
             # Note: paths will be regenerated when get_instrument_values() is called
-            import copy
-
             underlying_down = copy.copy(self.underlying)
             underlying_down.initial_value = self.underlying.initial_value - epsilon
             underlying_down.instrument_values = None  # will regenerate on next call
@@ -542,8 +541,6 @@ class OptionValuation:
         if isinstance(self.underlying, PathSimulation):
             # For PathSimulation: shallow copy with modified initial_value
             # Note: paths will be regenerated when get_instrument_values() is called
-            import copy
-
             underlying_down = copy.copy(self.underlying)
             underlying_down.initial_value = self.underlying.initial_value - epsilon
             underlying_down.instrument_values = None  # will regenerate on next call
@@ -643,8 +640,6 @@ class OptionValuation:
         if isinstance(self.underlying, PathSimulation):
             # For PathSimulation: shallow copy with modified volatility
             # Note: paths will be regenerated when get_instrument_values() is called
-            import copy
-
             underlying_down = copy.copy(self.underlying)
             underlying_down.volatility = self.underlying.volatility - epsilon
             underlying_down.instrument_values = None  # will regenerate on next call
@@ -680,3 +675,190 @@ class OptionValuation:
 
         vega = (value_right - value_left) / (2 * epsilon) / 100  # per 1% point change in vol
         return vega
+
+    def theta(
+        self,
+        greek_calc_method: GreekCalculationMethod | None = None,
+        time_bump_days: float = 1.0,
+        params: ValuationParams | None = None,
+    ) -> float:
+        """Calculate theta (time decay) of the option.
+
+        Theta measures the rate of change of option value with respect to time.
+        For the BSM method, closed-form analytical formulas are available (default).
+        For other methods, a numerical finite-difference approach is used.
+
+        Parameters
+        ==========
+        greek_calc_method : GreekCalculationMethod | None, optional
+            Method to use for greek calculation (analytical or numerical)
+            - None (default): Uses analytical for BSM, numerical for others
+            - GreekCalculationMethod.ANALYTICAL: Uses closed-form formulas (BSM only)
+            - GreekCalculationMethod.NUMERICAL: Uses bump-and-revalue finite-difference
+        time_bump_days : float, optional
+            Time bump size in days for numerical calculation (default: 1.0)
+            This is the number of days to advance the pricing date
+
+        Returns
+        =======
+        float
+            option theta (change in option value per day)
+
+        Raises
+        ======
+        ValueError
+            if analytical method requested for non-BSM pricing method
+        """
+        # Default to analytical for BSM, numerical for others
+        if greek_calc_method is None:
+            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+        else:
+            if not isinstance(greek_calc_method, GreekCalculationMethod):
+                raise TypeError(
+                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+                )
+            use_analytical = (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            )
+            if (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+            ):
+                raise ValueError(
+                    "Analytical theta calculation only available for BSM_CONTINUOUS method"
+                )
+
+        if use_analytical:
+            return self._impl.theta()
+
+        # Numerical theta: bump pricing date forward by time_bump_days and reprice
+        bumped_date = self.pricing_date + dt.timedelta(days=time_bump_days)
+        if bumped_date >= self.maturity:
+            return 0.0
+
+        value_now = self.present_value(params=params)
+
+        # Build bumped underlying/market data
+        if isinstance(self.underlying, PathSimulation):
+            underlying_bumped = copy.copy(self.underlying)
+            underlying_bumped.pricing_date = bumped_date
+            underlying_bumped.instrument_values = None
+        else:
+            bumped_market = MarketData(
+                pricing_date=bumped_date,
+                discount_curve=self.discount_curve,
+                currency=self.underlying.currency,
+            )
+            underlying_bumped = self.underlying.replace(market_data=bumped_market)
+
+        valuation_bumped = OptionValuation(
+            name=f"{self.name}_theta_bumped",
+            underlying=underlying_bumped,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+
+        value_bumped = valuation_bumped.present_value(params=params)
+        return (value_bumped - value_now) / time_bump_days
+
+    def rho(
+        self,
+        greek_calc_method: GreekCalculationMethod | None = None,
+        rate_bump: float = 0.01,
+        params: ValuationParams | None = None,
+    ) -> float:
+        """Calculate rho (interest rate sensitivity) of the option.
+
+        Rho measures the rate of change of option value with respect to the risk-free rate.
+        For the BSM method, closed-form analytical formulas are available (default).
+        For other methods, a numerical finite-difference approach is used.
+
+        Parameters
+        ==========
+        greek_calc_method : GreekCalculationMethod | None, optional
+            Method to use for greek calculation (analytical or numerical)
+            - None (default): Uses analytical for BSM, numerical for others
+            - GreekCalculationMethod.ANALYTICAL: Uses closed-form formulas (BSM only)
+            - GreekCalculationMethod.NUMERICAL: Uses bump-and-revalue finite-difference
+        rate_bump : float, optional
+            Rate bump size for numerical calculation (default: 0.01 = 1%)
+            The result is normalized to represent change per 1% rate move
+
+        Returns
+        =======
+        float
+            option rho (change in option value per 1% change in risk-free rate)
+
+        Raises
+        ======
+        ValueError
+            if analytical method requested for non-BSM pricing method
+        """
+        # Default to analytical for BSM, numerical for others
+        if greek_calc_method is None:
+            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+        else:
+            if not isinstance(greek_calc_method, GreekCalculationMethod):
+                raise TypeError(
+                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+                )
+            use_analytical = (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            )
+            if (
+                greek_calc_method == GreekCalculationMethod.ANALYTICAL
+                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+            ):
+                raise ValueError(
+                    "Analytical rho calculation only available for BSM_CONTINUOUS method"
+                )
+
+        if use_analytical:
+            return self._impl.rho()
+
+        # Numerical rho: bump risk-free rate up and down and reprice
+        rate_up = self.discount_curve.short_rate + rate_bump / 2
+        rate_down = self.discount_curve.short_rate - rate_bump / 2
+
+        curve_up = ConstantShortRate(f"{self.discount_curve.name}_up", rate_up)
+        curve_down = ConstantShortRate(f"{self.discount_curve.name}_down", rate_down)
+
+        md_up = MarketData(self.pricing_date, curve_up, currency=self.currency)
+        md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
+
+        if isinstance(self.underlying, PathSimulation):
+            underlying_up = copy.copy(self.underlying)
+            underlying_up.discount_curve = curve_up
+            underlying_up.instrument_values = None
+
+            underlying_down = copy.copy(self.underlying)
+            underlying_down.discount_curve = curve_down
+            underlying_down.instrument_values = None
+        else:
+            underlying_up = self.underlying.replace(market_data=md_up)
+            underlying_down = self.underlying.replace(market_data=md_down)
+
+        val_up = OptionValuation(
+            name=f"{self.name}_rho_up",
+            underlying=underlying_up,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+        val_down = OptionValuation(
+            name=f"{self.name}_rho_down",
+            underlying=underlying_down,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+
+        value_up = val_up.present_value(params=params)
+        value_down = val_down.present_value(params=params)
+
+        # Central difference, normalized to per 1% rate change
+        # rate_up/down are bumped by ± rate_bump/2, so denominator is rate_bump.
+        return (value_up - value_down) / rate_bump * 0.01
