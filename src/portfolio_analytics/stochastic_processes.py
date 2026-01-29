@@ -174,6 +174,75 @@ class SRDParams:
             raise ValueError("SRDParams requires theta to be >= 0")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HestonParams:
+    """Heston stochastic volatility model parameters.
+
+    The Heston model assumes:
+        dS_t = r * S_t * dt + sqrt(V_t) * S_t * dW1_t
+        dV_t = kappa * (theta - V_t) * dt + xi * sqrt(V_t) * dW2_t
+
+    where dW1_t and dW2_t are correlated Brownian motions with correlation rho.
+    """
+
+    initial_value: float
+    v0: float  # Initial variance
+    kappa: float  # Mean reversion speed
+    theta: float  # Long-run variance
+    xi: float  # Volatility of volatility
+    rho: float  # Correlation between asset and variance
+    dividend_yield: float = 0.0
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None
+
+    def __post_init__(self):
+        if self.initial_value is None:
+            raise ValueError("HestonParams requires initial_value to be not None")
+        if not np.isfinite(float(self.initial_value)):
+            raise ValueError("HestonParams requires initial_value to be finite")
+        if float(self.initial_value) <= 0:
+            raise ValueError("HestonParams requires initial_value to be positive")
+
+        if self.v0 is None:
+            raise ValueError("HestonParams requires v0 to be not None")
+        if not np.isfinite(float(self.v0)):
+            raise ValueError("HestonParams requires v0 to be finite")
+        if float(self.v0) < 0.0:
+            raise ValueError("HestonParams requires v0 to be >= 0")
+
+        if self.kappa is None:
+            raise ValueError("HestonParams requires kappa to be not None")
+        if not np.isfinite(float(self.kappa)):
+            raise ValueError("HestonParams requires kappa to be finite")
+        if float(self.kappa) < 0.0:
+            raise ValueError("HestonParams requires kappa to be >= 0")
+
+        if self.theta is None:
+            raise ValueError("HestonParams requires theta to be not None")
+        if not np.isfinite(float(self.theta)):
+            raise ValueError("HestonParams requires theta to be finite")
+        if float(self.theta) < 0.0:
+            raise ValueError("HestonParams requires theta to be >= 0")
+
+        if self.xi is None:
+            raise ValueError("HestonParams requires xi to be not None")
+        if not np.isfinite(float(self.xi)):
+            raise ValueError("HestonParams requires xi to be finite")
+        if float(self.xi) < 0.0:
+            raise ValueError("HestonParams requires xi to be >= 0")
+
+        if self.rho is None:
+            raise ValueError("HestonParams requires rho to be not None")
+        if not np.isfinite(float(self.rho)):
+            raise ValueError("HestonParams requires rho to be finite")
+        if not (-1.0 <= float(self.rho) <= 1.0):
+            raise ValueError("HestonParams requires rho to be in [-1, 1]")
+
+        if self.discrete_dividends is not None and self.dividend_yield != 0.0:
+            raise ValueError(
+                "Provide either dividend_yield or discrete_dividends in HestonParams, not both"
+            )
+
+
 class PathSimulation(ABC):
     """Providing base methods for simulation classes.
 
@@ -204,7 +273,7 @@ class PathSimulation(ABC):
         self,
         name: str,
         market_data: MarketData,
-        process_params: GBMParams | JDParams | SRDParams,
+        process_params: GBMParams | JDParams | SRDParams | HestonParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):
@@ -214,11 +283,17 @@ class PathSimulation(ABC):
         self.discount_curve = market_data.discount_curve
 
         self.initial_value = process_params.initial_value
-        self.volatility = process_params.volatility
-        if isinstance(process_params, (GBMParams, JDParams)):
+        if isinstance(process_params, HestonParams):
+            # For Heston, volatility is sqrt(v0)
+            self.volatility = np.sqrt(process_params.v0)
+            self.dividend_yield = process_params.dividend_yield
+            self.discrete_dividends = list(process_params.discrete_dividends or [])
+        elif isinstance(process_params, (GBMParams, JDParams)):
+            self.volatility = process_params.volatility
             self.dividend_yield = process_params.dividend_yield
             self.discrete_dividends = list(process_params.discrete_dividends or [])
         else:
+            self.volatility = process_params.volatility
             self.discrete_dividends = []
 
         self.paths = sim.paths
@@ -602,3 +677,154 @@ class SquareRootDiffusion(PathSimulation):
             paths[t] = np.maximum(0, paths_hat[t])
 
         return paths
+
+
+class HestonProcess(PathSimulation):
+    """Heston (1993) stochastic volatility model.
+
+    The Heston model assumes:
+        dS_t = r * S_t * dt + sqrt(V_t) * S_t * dW1_t
+        dV_t = kappa * (theta - V_t) * dt + xi * sqrt(V_t) * dW2_t
+
+    where dW1_t and dW2_t are correlated Brownian motions with correlation rho.
+
+    Uses Euler-Maruyama discretization with full truncation for variance.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        market_data: MarketData,
+        process_params: HestonParams,
+        sim: SimulationConfig,
+        corr: CorrelationContext | None = None,
+    ):
+        super().__init__(name, market_data, process_params, sim, corr=corr)
+        self.v0 = process_params.v0
+        self.kappa = process_params.kappa
+        self.theta = process_params.theta
+        self.xi = process_params.xi
+        self.rho = process_params.rho
+        self.dividend_yield = process_params.dividend_yield
+        self.discrete_dividends = list(process_params.discrete_dividends or [])
+
+    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate Heston stochastic volatility paths."""
+        if self.time_grid is None:
+            self.generate_time_grid()
+
+        M = len(self.time_grid)
+        num_paths = self.paths
+
+        # Asset price paths
+        asset_paths = np.zeros((M, num_paths), dtype=float)
+        asset_paths[0] = self.initial_value
+
+        # Variance paths
+        variance_paths = np.zeros((M, num_paths), dtype=float)
+        variance_paths[0] = self.v0
+
+        rng = np.random.default_rng(random_seed)
+        short_rate = self.discount_curve.short_rate
+
+        dividend_by_date: dict[dt.datetime, float] = {}
+        if self.discrete_dividends:
+            time_set = set(self.time_grid)
+            for ex_date, amount in self.discrete_dividends:
+                if ex_date in time_set:
+                    dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+
+        for t in range(1, M):
+            delta_t = calculate_year_fraction(
+                self.time_grid[t - 1],
+                self.time_grid[t],
+                day_count_convention=self.day_count_convention,
+            )
+
+            # Generate correlated random numbers
+            if self.correlation_context is None:
+                Z1 = rng.standard_normal(num_paths)
+                Z2 = rng.standard_normal(num_paths)
+            else:
+                # Use correlation context if available
+                rand_all = self.correlation_context.random_numbers[:, t, :]
+                cholesky = self.correlation_context.cholesky_matrix
+                correlated = cholesky @ rand_all
+                Z1 = correlated[self.rn_set]
+                # For second Brownian motion, we'd need a second random number set
+                # For simplicity, generate independent Z2
+                Z2 = rng.standard_normal(num_paths)
+
+            # Correlated Brownian motions
+            W1 = Z1
+            W2 = self.rho * Z1 + np.sqrt(1 - self.rho**2) * Z2
+
+            # Variance process (full truncation)
+            v_prev = np.maximum(variance_paths[t - 1, :], 0.0)
+            variance_drift = self.kappa * (self.theta - v_prev) * delta_t
+            variance_diffusion = self.xi * np.sqrt(np.maximum(v_prev, 0.0)) * np.sqrt(delta_t) * W2
+            variance_paths[t, :] = np.maximum(v_prev + variance_drift + variance_diffusion, 0.0)
+
+            # Asset process
+            v_curr = variance_paths[t, :]
+            asset_drift = (short_rate - self.dividend_yield - 0.5 * v_curr) * delta_t
+            asset_diffusion = np.sqrt(np.maximum(v_curr, 0.0)) * np.sqrt(delta_t) * W1
+            asset_paths[t, :] = asset_paths[t - 1, :] * np.exp(asset_drift + asset_diffusion)
+
+            # Apply discrete dividends
+            div_amt = dividend_by_date.get(self.time_grid[t])
+            if div_amt is not None:
+                asset_paths[t, :] = np.maximum(asset_paths[t, :] - div_amt, 0.0)
+
+        return asset_paths
+
+    def get_variance_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Get variance process paths (for educational purposes).
+
+        Parameters
+        ----------
+        random_seed : int, optional
+            Random seed for path generation
+
+        Returns
+        -------
+        np.ndarray
+            Variance paths (same shape as asset paths)
+        """
+        # Regenerate paths to get variance
+        if self.time_grid is None:
+            self.generate_time_grid()
+
+        M = len(self.time_grid)
+        num_paths = self.paths
+
+        variance_paths = np.zeros((M, num_paths), dtype=float)
+        variance_paths[0] = self.v0
+
+        rng = np.random.default_rng(random_seed)
+
+        for t in range(1, M):
+            delta_t = calculate_year_fraction(
+                self.time_grid[t - 1],
+                self.time_grid[t],
+                day_count_convention=self.day_count_convention,
+            )
+
+            if self.correlation_context is None:
+                Z1 = rng.standard_normal(num_paths)
+                Z2 = rng.standard_normal(num_paths)
+            else:
+                rand_all = self.correlation_context.random_numbers[:, t, :]
+                cholesky = self.correlation_context.cholesky_matrix
+                correlated = cholesky @ rand_all
+                Z1 = correlated[self.rn_set]
+                Z2 = rng.standard_normal(num_paths)
+
+            W2 = self.rho * Z1 + np.sqrt(1 - self.rho**2) * Z2
+
+            v_prev = np.maximum(variance_paths[t - 1, :], 0.0)
+            variance_drift = self.kappa * (self.theta - v_prev) * delta_t
+            variance_diffusion = self.xi * np.sqrt(np.maximum(v_prev, 0.0)) * np.sqrt(delta_t) * W2
+            variance_paths[t, :] = np.maximum(v_prev + variance_drift + variance_diffusion, 0.0)
+
+        return variance_paths
