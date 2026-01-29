@@ -81,6 +81,7 @@ class GBMParams:
     initial_value: float
     volatility: float
     dividend_yield: float = 0.0
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None
 
     def __post_init__(self):
         if self.initial_value is None:
@@ -93,6 +94,10 @@ class GBMParams:
             raise ValueError("GBMParams requires volatility to be finite")
         if float(self.volatility) < 0.0:
             raise ValueError("GBMParams requires volatility to be >= 0")
+        if self.discrete_dividends is not None and self.dividend_yield != 0.0:
+            raise ValueError(
+                "Provide either dividend_yield or discrete_dividends in GBMParams, not both"
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -103,6 +108,7 @@ class JDParams:
     mu: float  # mu_J (mean of log jump size)
     delta: float  # delta_J (std of log jump size)
     dividend_yield: float = 0.0
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None
 
     def __post_init__(self):
         if self.initial_value is None:
@@ -129,6 +135,10 @@ class JDParams:
             raise ValueError("JDParams requires lambd to be >= 0")
         if float(self.delta) < 0.0:
             raise ValueError("JDParams requires delta to be >= 0")
+        if self.discrete_dividends is not None and self.dividend_yield != 0.0:
+            raise ValueError(
+                "Provide either dividend_yield or discrete_dividends in JDParams, not both"
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -206,6 +216,9 @@ class PathSimulation(ABC):
         self.volatility = process_params.volatility
         if isinstance(process_params, (GBMParams, JDParams)):
             self.dividend_yield = process_params.dividend_yield
+            self.discrete_dividends = list(process_params.discrete_dividends or [])
+        else:
+            self.discrete_dividends = []
 
         self.paths = sim.paths
         self.frequency = sim.frequency
@@ -213,6 +226,10 @@ class PathSimulation(ABC):
         self.day_count_convention = sim.day_count_convention
         self.time_grid = sim.time_grid
         self.special_dates = sim.special_dates
+        if self.discrete_dividends:
+            for ex_date, _ in self.discrete_dividends:
+                if ex_date not in self.special_dates:
+                    self.special_dates.append(ex_date)
 
         # horizon / end_date logic
         if self.time_grid is not None:
@@ -341,6 +358,13 @@ class GeometricBrownianMotion(PathSimulation):
         # get short rate for drift of process
         short_rate = self.discount_curve.short_rate
 
+        dividend_by_date: dict[dt.datetime, float] = {}
+        if self.discrete_dividends:
+            time_set = set(self.time_grid)
+            for ex_date, amount in self.discrete_dividends:
+                if ex_date in time_set:
+                    dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+
         for t in range(1, M):
             # select the right time slice from the relevant
             # random number set
@@ -362,6 +386,10 @@ class GeometricBrownianMotion(PathSimulation):
             diffusion = self.volatility * np.sqrt(delta_t) * ran
             # generate simulated values for the respective date
             paths[t] = paths[t - 1] * np.exp(drift + diffusion)
+
+            div_amt = dividend_by_date.get(self.time_grid[t])
+            if div_amt is not None:
+                paths[t] = np.maximum(paths[t] - div_amt, 0.0)
 
         return paths
 
@@ -417,6 +445,13 @@ class JumpDiffusion(PathSimulation):
 
         rng = np.random.default_rng(random_seed)
 
+        dividend_by_date: dict[dt.datetime, float] = {}
+        if self.discrete_dividends:
+            time_set = set(self.time_grid)
+            for ex_date, amount in self.discrete_dividends:
+                if ex_date in time_set:
+                    dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+
         for t in range(1, M):
             delta_t = calculate_year_fraction(
                 self.time_grid[t - 1],
@@ -449,6 +484,10 @@ class JumpDiffusion(PathSimulation):
             jump_multiplier = np.exp(jump_sum)
 
             paths[t] = paths[t - 1] * diffusion_multiplier * jump_multiplier
+
+            div_amt = dividend_by_date.get(self.time_grid[t])
+            if div_amt is not None:
+                paths[t] = np.maximum(paths[t] - div_amt, 0.0)
 
         return paths
 

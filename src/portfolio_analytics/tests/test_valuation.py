@@ -307,6 +307,55 @@ class TestOptionValuation:
         )
         assert isinstance(valuation._impl, _MCEuropeanValuation)
 
+    def test_mcs_discrete_dividends_reduce_call_price(self):
+        """Discrete dividends should reduce European call price under MC."""
+        ex_date = self.pricing_date + dt.timedelta(days=180)
+        time_grid = np.array([self.pricing_date, ex_date, self.maturity])
+
+        gbm_params_no_div = GBMParams(initial_value=100.0, volatility=0.2)
+        gbm_params_div = GBMParams(
+            initial_value=100.0,
+            volatility=0.2,
+            discrete_dividends=[(ex_date, 1.0)],
+        )
+
+        sim_config = SimulationConfig(
+            paths=20000,
+            day_count_convention=365,
+            time_grid=time_grid,
+        )
+
+        gbm_no_div = GeometricBrownianMotion(
+            "gbm_no_div",
+            self.market_data,
+            gbm_params_no_div,
+            sim_config,
+        )
+        gbm_div = GeometricBrownianMotion(
+            "gbm_div",
+            self.market_data,
+            gbm_params_div,
+            sim_config,
+        )
+
+        val_no_div = OptionValuation(
+            name="CALL_MCS_NO_DIV",
+            underlying=gbm_no_div,
+            spec=self.call_spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        )
+        val_div = OptionValuation(
+            name="CALL_MCS_DIV",
+            underlying=gbm_div,
+            spec=self.call_spec,
+            pricing_method=PricingMethod.MONTE_CARLO,
+        )
+
+        pv_no_div = val_no_div.present_value(params=MonteCarloParams(random_seed=42))
+        pv_div = val_div.present_value(params=MonteCarloParams(random_seed=42))
+
+        assert pv_div < pv_no_div
+
     def test_option_valuation_invalid_maturity(self):
         """Test that OptionValuation raises error if maturity <= pricing_date."""
         ud = UnderlyingPricingData(
