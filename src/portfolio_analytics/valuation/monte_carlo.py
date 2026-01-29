@@ -141,3 +141,88 @@ class _MCAmerianValuation:
 
         discount_factor_0 = discount_factors[1, 1] / discount_factors[0, 1]
         return discount_factor_0 * V[1]
+
+
+class _MCAsianValuation:
+    """Implementation of Asian option valuation using Monte Carlo.
+
+    Asian options are path-dependent options where the payoff depends on the average
+    price of the underlying over the averaging period.
+    """
+
+    def __init__(self, parent: "OptionValuation"):
+        self.parent = parent
+
+    def solve(self, params: MonteCarloParams) -> np.ndarray:
+        """Generate undiscounted payoff vector based on path averages.
+
+        Returns
+        -------
+        np.ndarray
+            Payoff for each path based on the average spot price
+        """
+        paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
+        time_grid = self.parent.underlying.time_grid
+
+        # Determine averaging period
+        spec = self.parent.spec
+        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
+
+        # Find indices for averaging period
+        idx_start = np.where(time_grid == averaging_start)[0]
+        idx_end = np.where(time_grid == self.parent.maturity)[0]
+
+        if idx_start.size == 0:
+            raise ValueError(f"averaging_start {averaging_start} not in underlying time_grid.")
+        if idx_end.size == 0:
+            raise ValueError(f"maturity {self.parent.maturity} not in underlying time_grid.")
+
+        time_index_start = int(idx_start[0])
+        time_index_end = int(idx_end[0])
+
+        # Extract paths over averaging period (inclusive)
+        averaging_paths = paths[time_index_start : time_index_end + 1, :]
+
+        # Calculate average for each path
+        if self.parent.option_type == OptionType.ASIAN_ARITHMETIC:
+            # Arithmetic average: (1/N) * Σ S_i
+            avg_prices = np.mean(averaging_paths, axis=0)
+        elif self.parent.option_type == OptionType.ASIAN_GEOMETRIC:
+            # Geometric average: (Π S_i)^(1/N)
+            # Use log space for numerical stability: exp(mean(log(S_i)))
+            epsilon = 1e-10
+            with np.errstate(divide="ignore", invalid="ignore"):
+                safe_paths = np.where(averaging_paths > 0.0, averaging_paths, epsilon)
+                log_prices = np.log(safe_paths)
+            avg_prices = np.exp(np.mean(log_prices, axis=0))
+        else:
+            raise ValueError(
+                f"Unsupported option type for Asian valuation: {self.parent.option_type}"
+            )
+
+        # Calculate payoff based on average
+        K = self.parent.strike
+        if K is None:
+            raise ValueError("strike is required for Asian option payoff.")
+
+        # Asian call: max(S_avg - K, 0)
+        # Asian put: max(K - S_avg, 0)
+        if self.parent.spec.call_put is OptionType.CALL:
+            return np.maximum(avg_prices - K, 0.0)
+        return np.maximum(K - avg_prices, 0.0)
+
+    def present_value(self, params: MonteCarloParams) -> float:
+        """Return the scalar present value."""
+        pv_pathwise = self.present_value_pathwise(params)
+        pv = np.mean(pv_pathwise)
+        return float(pv)
+
+    def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
+        """Return discounted present values for each path."""
+        cash_flow = self.solve(params)
+        discount_factor = float(
+            self.parent.discount_curve.get_discount_factors(
+                (self.parent.pricing_date, self.parent.maturity)
+            )[-1, 1]
+        )
+        return discount_factor * cash_flow

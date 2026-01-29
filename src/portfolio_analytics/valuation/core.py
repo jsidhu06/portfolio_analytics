@@ -9,8 +9,12 @@ from ..enums import (
     PricingMethod,
     GreekCalculationMethod,
 )
-from .monte_carlo import _MCEuropeanValuation, _MCAmerianValuation
-from .binomial import _BinomialEuropeanValuation, _BinomialAmericanValuation
+from .monte_carlo import _MCEuropeanValuation, _MCAmerianValuation, _MCAsianValuation
+from .binomial import (
+    _BinomialEuropeanValuation,
+    _BinomialAmericanValuation,
+    _BinomialMCAsianValuation,
+)
 from .bsm import _BSMEuropeanValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
 from ..rates import ConstantShortRate
@@ -94,6 +98,85 @@ class PayoffSpec:
         """Vectorized payoff as a function of spot."""
         # Ensure a float ndarray output (for downstream math and boolean comparisons).
         return np.asarray(self.payoff_fn(spot), dtype=float)
+
+
+@dataclass(frozen=True, slots=True)
+class AsianOptionSpec:
+    """Contract specification for an Asian option.
+
+    Asian options are path-dependent options where the payoff depends on the average
+    price of the underlying over a specified averaging period.
+
+    Parameters
+    ----------
+    option_type : OptionType
+        ASIAN_ARITHMETIC or ASIAN_GEOMETRIC
+    call_put : OptionType
+        OptionType.CALL or OptionType.PUT to specify payoff direction
+    strike : float
+        Strike price
+    maturity : dt.datetime
+        Option maturity date
+    currency : str
+        Currency denomination
+    averaging_start : dt.datetime, optional
+        Start of averaging period. If None, uses pricing date.
+    contract_size : int | float
+        Contract multiplier (default 100)
+
+    Notes
+    -----
+    - Arithmetic average: S_avg = (1/N) * Σ S_i
+    - Geometric average: S_avg = (Π S_i)^(1/N)
+    - Payoff for call: max(S_avg - K, 0)
+    - Payoff for put: max(K - S_avg, 0)
+    - Only European exercise is supported
+    """
+
+    option_type: OptionType
+    call_put: OptionType  # CALL or PUT
+    strike: float
+    maturity: dt.datetime
+    currency: str
+    averaging_start: dt.datetime | None = None
+    contract_size: int | float = 100
+
+    # Kept for compatibility
+    exercise_type: ExerciseType = ExerciseType.EUROPEAN
+
+    def __post_init__(self):
+        """Validate Asian option specification."""
+        if not isinstance(self.option_type, OptionType):
+            raise TypeError(
+                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
+            )
+        if self.option_type not in (OptionType.ASIAN_ARITHMETIC, OptionType.ASIAN_GEOMETRIC):
+            raise ValueError(
+                "AsianOptionSpec.option_type must be OptionType.ASIAN_ARITHMETIC or ASIAN_GEOMETRIC"
+            )
+        if not isinstance(self.exercise_type, ExerciseType):
+            raise TypeError(
+                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
+            )
+        if self.exercise_type != ExerciseType.EUROPEAN:
+            raise ValueError("AsianOptionSpec only supports European exercise")
+
+        if not isinstance(self.call_put, OptionType):
+            raise TypeError(f"call_put must be OptionType enum, got {type(self.call_put).__name__}")
+        if self.call_put not in (OptionType.CALL, OptionType.PUT):
+            raise ValueError("AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT")
+
+        if self.strike is None:
+            raise ValueError("AsianOptionSpec.strike must be provided")
+        try:
+            strike = float(self.strike)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("AsianOptionSpec.strike must be numeric") from exc
+        if not np.isfinite(strike):
+            raise ValueError("AsianOptionSpec.strike must be finite")
+        if strike < 0.0:
+            raise ValueError("AsianOptionSpec.strike must be >= 0")
+        object.__setattr__(self, "strike", strike)
 
 
 class UnderlyingPricingData:
@@ -215,7 +298,7 @@ class OptionValuation:
         self,
         name: str,
         underlying: PathSimulation | UnderlyingPricingData,
-        spec: OptionSpec | PayoffSpec,
+        spec: OptionSpec | PayoffSpec | AsianOptionSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ):
@@ -286,7 +369,16 @@ class OptionValuation:
             )
 
         # Dispatch to appropriate pricing method implementation
-        if pricing_method == PricingMethod.MONTE_CARLO:
+        if isinstance(spec, AsianOptionSpec):
+            if pricing_method == PricingMethod.MONTE_CARLO:
+                self._impl = _MCAsianValuation(self)
+            elif pricing_method == PricingMethod.BINOMIAL:
+                self._impl = _BinomialMCAsianValuation(self)
+            else:
+                raise ValueError(
+                    "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL (MC sampling)"
+                )
+        elif pricing_method == PricingMethod.MONTE_CARLO:
             if spec.exercise_type == ExerciseType.EUROPEAN:
                 self._impl = _MCEuropeanValuation(self)
             elif spec.exercise_type == ExerciseType.AMERICAN:

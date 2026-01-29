@@ -164,3 +164,50 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         pv = option_value_matrix[0, 0]
 
         return float(pv)
+
+
+class _BinomialMCAsianValuation(_BinomialValuationBase):
+    """Asian option valuation by Monte Carlo sampling on a binomial tree."""
+
+    def solve(self, params: BinomialParams) -> np.ndarray:
+        num_steps = int(params.num_steps)
+        discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
+
+        if params.mc_paths is None:
+            raise ValueError("BinomialParams.mc_paths must be set for Asian binomial MC")
+
+        mc_paths = int(params.mc_paths)
+        rng = np.random.default_rng(params.random_seed)
+
+        K = self.parent.strike
+        if K is None:
+            raise ValueError("strike is required for Asian option payoff.")
+
+        # Vectorized simulation of binomial paths:
+        # draw Bernoulli down-steps for each path and step
+        downs = rng.random((mc_paths, num_steps)) > p  # (I,M)
+        # cumulative count of downs gives row index at each step
+        down_counts = np.cumsum(downs, axis=1)  # (I,M)
+        # prepend time 0 (row=0)
+        row_idx = np.concatenate(
+            [np.zeros((mc_paths, 1), dtype=int), down_counts], axis=1
+        )  # (I,M+1)
+        col_idx = np.arange(num_steps + 1, dtype=int)  # (M+1,)
+
+        # gather prices along each simulated path
+        # binomial_matrix is (M+1, M+1)
+        # Advanced indexing: col_idx broadcasts to (I, M+1), so each
+        # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
+        prices = binomial_matrix[row_idx, col_idx]  # (I, M+1)
+        avg_s = prices.mean(axis=1)  # (I,)
+
+        if self.parent.spec.call_put is OptionType.CALL:
+            payoffs = np.maximum(avg_s - K, 0.0)
+        else:
+            payoffs = np.maximum(K - avg_s, 0.0)
+
+        return payoffs * (discount_factor**num_steps)
+
+    def present_value(self, params: BinomialParams) -> float:
+        pv_pathwise = self.solve(params)
+        return float(np.mean(pv_pathwise))

@@ -38,13 +38,23 @@ class BinomialParams:
         Number of time steps in the binomial tree.
         More steps increase accuracy but also computation time.
         Default: 500.
+    mc_paths:
+        Number of Monte Carlo paths when sampling the binomial tree
+        (used for path-dependent payoffs like Asian options). If None,
+        Monte Carlo sampling is disabled.
+    random_seed:
+        Random seed for binomial-tree Monte Carlo sampling.
     """
 
     num_steps: int = 500
+    mc_paths: int | None = None
+    random_seed: int | None = None
 
     def __post_init__(self):
         if self.num_steps < 1:
             raise ValueError(f"num_steps must be >= 1, got {self.num_steps}")
+        if self.mc_paths is not None and self.mc_paths < 1:
+            raise ValueError(f"mc_paths must be >= 1, got {self.mc_paths}")
 
 
 @dataclass(frozen=True, slots=True)
