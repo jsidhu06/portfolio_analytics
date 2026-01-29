@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import copy
 import datetime as dt
 import numpy as np
 import pandas as pd
@@ -272,6 +273,56 @@ class PathSimulation(ABC):
             # delete duplicates and sort
             time_grid = sorted(set(time_grid))
         self.time_grid = np.array(time_grid)
+
+    def replace(self, **kwargs) -> "PathSimulation":
+        """Return a shallow-cloned instance with selected attributes replaced.
+
+        This avoids in-place mutation and clears cached instrument values by default,
+        which is important for bump-and-revalue workflows and thread safety.
+        """
+        cloned = copy.copy(self)
+
+        # Detach mutable containers to avoid shared state across clones.
+        cloned.special_dates = list(self.special_dates)
+        cloned.discrete_dividends = list(self.discrete_dividends)
+        cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
+
+        # Always reset cached paths unless explicitly overridden.
+        cloned.instrument_values = None
+
+        # Apply replacements
+        for key, value in kwargs.items():
+            if not hasattr(cloned, key):
+                raise AttributeError(f"PathSimulation has no attribute '{key}'")
+            setattr(cloned, key, value)
+
+        # Normalize list-like overrides
+        if "special_dates" in kwargs:
+            cloned.special_dates = list(kwargs["special_dates"] or [])
+
+        if "discrete_dividends" in kwargs:
+            cloned.discrete_dividends = list(kwargs["discrete_dividends"] or [])
+
+        if "time_grid" in kwargs:
+            cloned.time_grid = (
+                None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
+            )
+            if cloned.time_grid is not None and len(cloned.time_grid) > 0:
+                cloned.end_date = max(cloned.time_grid)
+        else:
+            if any(
+                key in kwargs
+                for key in ("pricing_date", "end_date", "frequency", "num_steps", "special_dates")
+            ):
+                cloned.time_grid = None
+
+        # Ensure discrete dividend dates are included as special dates.
+        if cloned.discrete_dividends:
+            for ex_date, _ in cloned.discrete_dividends:
+                if ex_date not in cloned.special_dates:
+                    cloned.special_dates.append(ex_date)
+
+        return cloned
 
     def get_instrument_values(self, random_seed: int | None = None) -> np.ndarray:
         """Generate paths and get instrument values matrix

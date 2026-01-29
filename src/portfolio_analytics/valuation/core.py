@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from collections.abc import Callable
-import copy
 import datetime as dt
 import numpy as np
 from ..stochastic_processes import PathSimulation
@@ -456,12 +455,12 @@ class OptionValuation:
         if isinstance(self.underlying, PathSimulation):
             # For PathSimulation: shallow copy with modified initial_value
             # Note: paths will be regenerated when get_instrument_values() is called
-            underlying_down = copy.copy(self.underlying)
-            underlying_down.initial_value = self.underlying.initial_value - epsilon
-            underlying_down.instrument_values = None  # will regenerate on next call
-            underlying_up = copy.copy(self.underlying)
-            underlying_up.initial_value = self.underlying.initial_value + epsilon
-            underlying_up.instrument_values = None  # will regenerate on next call
+            underlying_down = self.underlying.replace(
+                initial_value=self.underlying.initial_value - epsilon
+            )
+            underlying_up = self.underlying.replace(
+                initial_value=self.underlying.initial_value + epsilon
+            )
         else:
             # For UnderlyingPricingData: use replace() method
             underlying_down = self.underlying.replace(
@@ -562,12 +561,12 @@ class OptionValuation:
         if isinstance(self.underlying, PathSimulation):
             # For PathSimulation: shallow copy with modified initial_value
             # Note: paths will be regenerated when get_instrument_values() is called
-            underlying_down = copy.copy(self.underlying)
-            underlying_down.initial_value = self.underlying.initial_value - epsilon
-            underlying_down.instrument_values = None  # will regenerate on next call
-            underlying_up = copy.copy(self.underlying)
-            underlying_up.initial_value = self.underlying.initial_value + epsilon
-            underlying_up.instrument_values = None  # will regenerate on next call
+            underlying_down = self.underlying.replace(
+                initial_value=self.underlying.initial_value - epsilon
+            )
+            underlying_up = self.underlying.replace(
+                initial_value=self.underlying.initial_value + epsilon
+            )
         else:
             # For UnderlyingPricingData: use replace() method
             underlying_down = self.underlying.replace(
@@ -661,12 +660,10 @@ class OptionValuation:
         if isinstance(self.underlying, PathSimulation):
             # For PathSimulation: shallow copy with modified volatility
             # Note: paths will be regenerated when get_instrument_values() is called
-            underlying_down = copy.copy(self.underlying)
-            underlying_down.volatility = self.underlying.volatility - epsilon
-            underlying_down.instrument_values = None  # will regenerate on next call
-            underlying_up = copy.copy(self.underlying)
-            underlying_up.volatility = self.underlying.volatility + epsilon
-            underlying_up.instrument_values = None  # will regenerate on next call
+            underlying_down = self.underlying.replace(
+                volatility=self.underlying.volatility - epsilon
+            )
+            underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
         else:
             # For UnderlyingPricingData: use replace() method
             underlying_down = self.underlying.replace(
@@ -760,9 +757,7 @@ class OptionValuation:
 
         # Build bumped underlying/market data
         if isinstance(self.underlying, PathSimulation):
-            underlying_bumped = copy.copy(self.underlying)
-            underlying_bumped.pricing_date = bumped_date
-            underlying_bumped.instrument_values = None
+            underlying_bumped = self.underlying.replace(pricing_date=bumped_date)
         else:
             bumped_market = MarketData(
                 pricing_date=bumped_date,
@@ -847,13 +842,8 @@ class OptionValuation:
         md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
 
         if isinstance(self.underlying, PathSimulation):
-            underlying_up = copy.copy(self.underlying)
-            underlying_up.discount_curve = curve_up
-            underlying_up.instrument_values = None
-
-            underlying_down = copy.copy(self.underlying)
-            underlying_down.discount_curve = curve_down
-            underlying_down.instrument_values = None
+            underlying_up = self.underlying.replace(discount_curve=curve_up)
+            underlying_down = self.underlying.replace(discount_curve=curve_down)
         else:
             underlying_up = self.underlying.replace(market_data=md_up)
             underlying_down = self.underlying.replace(market_data=md_down)
