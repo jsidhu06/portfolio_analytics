@@ -61,6 +61,61 @@ def _solve_tridiagonal_thomas(
     return x
 
 
+def _build_tau_grid(
+    time_to_maturity: float,
+    time_steps: int,
+    dividend_taus: list[float],
+) -> np.ndarray:
+    """Build a tau (time remaining) grid that includes dividend dates."""
+    base = np.linspace(0.0, time_to_maturity, time_steps + 1)
+    if not dividend_taus:
+        return base
+    grid = np.unique(np.concatenate([base, np.array(dividend_taus, dtype=float)]))
+    grid.sort()
+    return grid
+
+
+def _dividend_tau_schedule(
+    *,
+    discrete_dividends: list[tuple],
+    pricing_date,
+    maturity,
+) -> list[tuple[float, float]]:
+    """Return list of (tau, amount) for dividends strictly before maturity."""
+    if not discrete_dividends:
+        return []
+
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    schedule: dict[float, float] = {}
+    for ex_date, amount in discrete_dividends:
+        if pricing_date < ex_date < maturity:
+            t = calculate_year_fraction(pricing_date, ex_date)
+            tau = ttm - t
+            if 0.0 < tau < ttm:
+                key = round(float(tau), 12)
+                schedule[key] = schedule.get(key, 0.0) + float(amount)
+    return sorted(schedule.items())
+
+
+def _apply_dividend_jump(
+    values: np.ndarray,
+    spot_grid: np.ndarray,
+    amount: float,
+) -> np.ndarray:
+    """Apply the cash dividend jump condition V(S,t^-)=V(S-D,t^+)."""
+    if amount == 0.0:
+        return values
+    shifted = np.interp(
+        spot_grid - amount,
+        spot_grid,
+        values,
+        left=values[0],
+        right=values[-1],
+    )
+    values[:] = shifted
+    return values
+
+
 def _european_vanilla_fd_cn(
     *,
     spot: float,
@@ -69,6 +124,7 @@ def _european_vanilla_fd_cn(
     risk_free_rate: float,
     volatility: float,
     dividend_yield: float,
+    dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
     spot_steps: int,
@@ -96,8 +152,6 @@ def _european_vanilla_fd_cn(
 
     smax = float(smax_mult * max(spot, strike))
     dS = smax / spot_steps
-    dt = time_to_maturity / time_steps
-
     S = np.linspace(0.0, smax, spot_steps + 1)
     i = np.arange(1, spot_steps)  # interior indices 1..M-1
     Si = S[i]
@@ -119,32 +173,38 @@ def _european_vanilla_fd_cn(
             right = max(right, 0.0)
         return float(left), float(right)
 
-    # CN coefficients
-    a = (
-        0.25
-        * dt
-        * (volatility**2 * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
-    )
-    b = -0.5 * dt * (volatility**2 * (Si**2) / (dS**2) + risk_free_rate)
-    c = (
-        0.25
-        * dt
-        * (volatility**2 * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
-    )
-
-    # LHS: (I - A); RHS: (I + A)
-    # Interior system size = spot_steps - 1
-    L_lower = -a[1:]  # length n-1
-    L_diag = 1.0 - b  # length n
-    L_upper = -c[:-1]  # length n-1
-
-    R_lower = a[1:]
-    R_diag = 1.0 + b
-    R_upper = c[:-1]
+    schedule = dividend_schedule or []
+    dividend_taus = [tau for tau, _ in schedule]
+    tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
+    dividend_map = {tau: amount for tau, amount in schedule}
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
-    for n in range(time_steps):
-        tau = (n + 1) * dt
+    for n in range(1, tau_grid.size):
+        dt = tau_grid[n] - tau_grid[n - 1]
+        tau = float(tau_grid[n])
+
+        # CN coefficients (depend on dt)
+        a = (
+            0.25
+            * dt
+            * (volatility**2 * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
+        )
+        b = -0.5 * dt * (volatility**2 * (Si**2) / (dS**2) + risk_free_rate)
+        c = (
+            0.25
+            * dt
+            * (volatility**2 * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
+        )
+
+        # LHS: (I - A); RHS: (I + A)
+        # Interior system size = spot_steps - 1
+        L_lower = -a[1:]  # length n-1
+        L_diag = 1.0 - b  # length n
+        L_upper = -c[:-1]  # length n-1
+
+        R_lower = a[1:]
+        R_diag = 1.0 + b
+        R_upper = c[:-1]
         left, right = boundary_values(tau)
 
         # Apply boundary values at current tau
@@ -168,6 +228,12 @@ def _european_vanilla_fd_cn(
         x = _solve_tridiagonal_thomas(L_lower, L_diag, L_upper, rhs)
         V[i] = x
 
+        # Apply discrete dividend jump at tau if needed
+        if dividend_map:
+            amount = dividend_map.get(round(tau, 12))
+            if amount is not None:
+                _apply_dividend_jump(V, S, amount)
+
     price = np.interp(spot, S, V)
     return price, S, V
 
@@ -180,6 +246,7 @@ def _american_vanilla_fd_cn_psor(
     risk_free_rate: float,
     volatility: float,
     dividend_yield: float,
+    dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
     spot_steps: int,
@@ -207,8 +274,6 @@ def _american_vanilla_fd_cn_psor(
 
     smax = float(smax_mult * max(spot, strike))
     dS = smax / spot_steps
-    dt = time_to_maturity / time_steps
-
     S = np.linspace(0.0, smax, spot_steps + 1)
     i = np.arange(1, spot_steps)  # interior indices
     Si = S[i]
@@ -231,29 +296,36 @@ def _american_vanilla_fd_cn_psor(
             right = max(right, 0.0)
         return float(left), float(right)
 
-    a = (
-        0.25
-        * dt
-        * (volatility**2 * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
-    )
-    b = -0.5 * dt * (volatility**2 * (Si**2) / (dS**2) + risk_free_rate)
-    c = (
-        0.25
-        * dt
-        * (volatility**2 * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
-    )
+    schedule = dividend_schedule or []
+    dividend_taus = [tau for tau, _ in schedule]
+    tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
+    dividend_map = {tau: amount for tau, amount in schedule}
 
-    # LHS: (I - A); RHS: (I + A)
-    L_lower = -a
-    L_diag = 1.0 - b
-    L_upper = -c
-
-    R_lower = a
-    R_diag = 1.0 + b
-    R_upper = c
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
-    for n in range(time_steps):
-        tau = (n + 1) * dt
+    for n in range(1, tau_grid.size):
+        dt = tau_grid[n] - tau_grid[n - 1]
+        tau = float(tau_grid[n])
+
+        a = (
+            0.25
+            * dt
+            * (volatility**2 * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
+        )
+        b = -0.5 * dt * (volatility**2 * (Si**2) / (dS**2) + risk_free_rate)
+        c = (
+            0.25
+            * dt
+            * (volatility**2 * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
+        )
+
+        # LHS: (I - A); RHS: (I + A)
+        L_lower = -a
+        L_diag = 1.0 - b
+        L_upper = -c
+
+        R_lower = a
+        R_diag = 1.0 + b
+        R_upper = c
         left, right = boundary_values(tau)
         V[0] = left
         V[-1] = right
@@ -293,6 +365,13 @@ def _american_vanilla_fd_cn_psor(
 
         V[i] = x
 
+        # Apply discrete dividend jump at tau if needed
+        if dividend_map:
+            amount = dividend_map.get(round(tau, 12))
+            if amount is not None:
+                _apply_dividend_jump(V, S, amount)
+                V[:] = np.maximum(V, intrinsic)
+
     price = np.interp(spot, S, V)
     return price, S, V
 
@@ -317,8 +396,15 @@ class _FDEuropeanValuation:
         volatility = float(self.parent.underlying.volatility)
         risk_free_rate = float(self.parent.discount_curve.short_rate)
         dividend_yield = float(getattr(self.parent.underlying, "dividend_yield", 0.0))
+        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+
+        dividend_schedule = _dividend_tau_schedule(
+            discrete_dividends=discrete_dividends,
+            pricing_date=self.parent.pricing_date,
+            maturity=self.parent.maturity,
+        )
 
         smax_mult = float(params.smax_mult)
         spot_steps = int(params.spot_steps)
@@ -331,6 +417,7 @@ class _FDEuropeanValuation:
             risk_free_rate=risk_free_rate,
             volatility=volatility,
             dividend_yield=dividend_yield,
+            dividend_schedule=dividend_schedule,
             option_type=self.parent.option_type,
             smax_mult=smax_mult,
             spot_steps=spot_steps,
@@ -362,12 +449,23 @@ class _FDAmericanValuation:
         volatility = float(self.parent.underlying.volatility)
         risk_free_rate = float(self.parent.discount_curve.short_rate)
         dividend_yield = float(getattr(self.parent.underlying, "dividend_yield", 0.0))
+        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
 
         # Special-case: American CALL with ~0 dividends has no early-exercise premium.
         # Avoid the PSOR loop entirely and price as European via CN.
-        if self.parent.option_type is OptionType.CALL and abs(dividend_yield) < 1e-12:
+        if (
+            self.parent.option_type is OptionType.CALL
+            and abs(dividend_yield) < 1e-12
+            and not discrete_dividends
+        ):
             time_to_maturity = calculate_year_fraction(
                 self.parent.pricing_date, self.parent.maturity
+            )
+
+            dividend_schedule = _dividend_tau_schedule(
+                discrete_dividends=discrete_dividends,
+                pricing_date=self.parent.pricing_date,
+                maturity=self.parent.maturity,
             )
 
             smax_mult = float(params.smax_mult)
@@ -381,6 +479,7 @@ class _FDAmericanValuation:
                 risk_free_rate=risk_free_rate,
                 volatility=volatility,
                 dividend_yield=dividend_yield,
+                dividend_schedule=dividend_schedule,
                 option_type=self.parent.option_type,
                 smax_mult=smax_mult,
                 spot_steps=spot_steps,
@@ -388,6 +487,12 @@ class _FDAmericanValuation:
             )
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+
+        dividend_schedule = _dividend_tau_schedule(
+            discrete_dividends=discrete_dividends,
+            pricing_date=self.parent.pricing_date,
+            maturity=self.parent.maturity,
+        )
 
         smax_mult = float(params.smax_mult)
         spot_steps = int(params.spot_steps)
@@ -403,6 +508,7 @@ class _FDAmericanValuation:
             risk_free_rate=risk_free_rate,
             volatility=volatility,
             dividend_yield=dividend_yield,
+            dividend_schedule=dividend_schedule,
             option_type=self.parent.option_type,
             smax_mult=smax_mult,
             spot_steps=spot_steps,
