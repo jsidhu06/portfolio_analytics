@@ -23,8 +23,7 @@ class ExerciseType(Enum):
 class PricingMethod(Enum):
     MONTE_CARLO = "monte_carlo"
     BINOMIAL = "binomial"
-    BSM_CONTINUOUS = "bsm_continuous"
-    BSM_DISCRETE = "bsm_discrete"
+    BSM = "bsm"
     PDE_FD = "pde_fd"
 
 

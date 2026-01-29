@@ -262,7 +262,7 @@ class TestOptionValuation:
             name="CALL_BSM",
             underlying=ud,
             spec=self.call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
         assert valuation.name == "CALL_BSM"
         assert valuation.strike == self.strike
@@ -377,7 +377,7 @@ class TestOptionValuation:
                 name="INVALID",
                 underlying=ud,
                 spec=invalid_spec,
-                pricing_method=PricingMethod.BSM_CONTINUOUS,
+                pricing_method=PricingMethod.BSM,
             )
 
     def test_binomial_condor_equals_sum_of_legs(self):
@@ -791,14 +791,12 @@ class TestOptionValuation:
             ),
         )
 
-        with pytest.raises(
-            TypeError, match="BSM_CONTINUOUS pricing does not use stochastic path simulation"
-        ):
+        with pytest.raises(TypeError, match="BSM pricing does not use stochastic path simulation"):
             OptionValuation(
                 name="INVALID",
                 underlying=process,
                 spec=self.call_spec,
-                pricing_method=PricingMethod.BSM_CONTINUOUS,
+                pricing_method=PricingMethod.BSM,
             )
 
     def test_option_valuation_pde_rejects_path_simulation(self):
@@ -846,7 +844,7 @@ class TestOptionValuation:
                 name="CALL_AMERICAN_BSM",
                 underlying=ud,
                 spec=american_spec,
-                pricing_method=PricingMethod.BSM_CONTINUOUS,
+                pricing_method=PricingMethod.BSM,
             )
 
     def test_dispatcher_creates_fd_impl_for_american(self):
@@ -983,7 +981,7 @@ class TestOptionValuation:
             params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
         )
 
-        bsm_val = OptionValuation("call_bsm", ud, spec_eu, PricingMethod.BSM_CONTINUOUS)
+        bsm_val = OptionValuation("call_bsm", ud, spec_eu, PricingMethod.BSM)
         bsm_pv = bsm_val.present_value()
 
         # American call with no dividends should be near European (no early exercise benefit).
@@ -1013,7 +1011,7 @@ class TestOptionValuation:
         )
 
         binom_val = OptionValuation("call_binom_div", ud, spec, PricingMethod.BINOMIAL)
-        bsm_val = OptionValuation("call_bsm_div", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        bsm_val = OptionValuation("call_bsm_div", ud, spec, PricingMethod.BSM)
 
         binom_pv = binom_val.present_value(params=BinomialParams(num_steps=1200))
         bsm_pv = bsm_val.present_value()
@@ -1060,7 +1058,7 @@ class TestBSMValuation:
             name="CALL_ATM",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         pv = valuation.present_value()
@@ -1096,8 +1094,8 @@ class TestBSMValuation:
             discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
         )
 
-        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BSM_CONTINUOUS)
-        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BSM_CONTINUOUS)
+        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BSM)
+        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BSM)
 
         pv_no_div = val_no_div.present_value()
         pv_div = val_div.present_value()
@@ -1118,7 +1116,7 @@ class TestBSMValuation:
             name="PUT_ATM",
             underlying=self.ud,
             spec=put_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         pv = valuation.present_value()
@@ -1144,7 +1142,7 @@ class TestBSMValuation:
             name="CALL_ITM",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         pv = valuation.present_value()
@@ -1169,7 +1167,7 @@ class TestBSMValuation:
             name="PUT_OTM",
             underlying=self.ud,
             spec=put_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         pv = valuation.present_value()
@@ -1194,14 +1192,14 @@ class TestBSMValuation:
             name="ZERO_DIVIDEND",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         valuation_div = OptionValuation(
             name="POSITIVE_DIVIDEND",
             underlying=self.ud_div,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         pv_no_div = valuation.present_value()
@@ -1232,7 +1230,7 @@ class TestBSMValuation:
             name="CALL",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         # Create new underlying for put to avoid state pollution
@@ -1246,7 +1244,7 @@ class TestBSMValuation:
             name="PUT",
             underlying=ud_put,
             spec=put_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         call_price = call_val.present_value()
@@ -1272,7 +1270,7 @@ class TestBSMValuation:
             name="CALL",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         result = valuation.present_value()
@@ -1775,7 +1773,7 @@ class TestGreeks:
             name="CALL",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         delta = valuation.delta()
@@ -1801,7 +1799,7 @@ class TestGreeks:
             name="PUT",
             underlying=ud,
             spec=put_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         delta = valuation.delta()
@@ -1821,7 +1819,7 @@ class TestGreeks:
             name="CALL",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         vega = valuation.vega()
@@ -1842,7 +1840,7 @@ class TestGreeks:
             name="CALL",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         delta = valuation.delta(epsilon=0.5)
@@ -1862,7 +1860,7 @@ class TestGreeks:
             name="CALL",
             underlying=self.ud,
             spec=call_spec,
-            pricing_method=PricingMethod.BSM_CONTINUOUS,
+            pricing_method=PricingMethod.BSM,
         )
 
         vega = valuation.vega(epsilon=0.02)

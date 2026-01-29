@@ -127,45 +127,45 @@ class TestDeltaBasicProperties(TestGreeksSetup):
     def test_call_delta_positive(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud()
-        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() > 0
 
     def test_put_delta_negative(self):
         spec = self._make_spec(option_type=OptionType.PUT)
         ud = self._make_ud()
-        valuation = self._make_val("put_atm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("put_atm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() < 0
 
     def test_call_delta_atm_greater_than_half(self):
         """With positive r, forward > spot so ATM call delta > 0.5."""
         spec = self._make_spec(option_type=OptionType.CALL, strike=self.strike)
         ud = self._make_ud(spot=self.spot)
-        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
         delta = valuation.delta()
         assert 0.5 < delta < 1.0
 
     def test_call_delta_itm_close_to_one(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud(spot=150.0)
-        valuation = self._make_val("call_itm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_itm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() > 0.95
 
     def test_call_delta_otm_close_to_zero(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud(spot=50.0)
-        valuation = self._make_val("call_otm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_otm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() < 0.05
 
     def test_put_delta_itm_close_to_negative_one(self):
         spec = self._make_spec(option_type=OptionType.PUT)
         ud = self._make_ud(spot=50.0)
-        valuation = self._make_val("put_itm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("put_itm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() < -0.95
 
     def test_put_delta_otm_close_to_zero(self):
         spec = self._make_spec(option_type=OptionType.PUT)
         ud = self._make_ud(spot=150.0)
-        valuation = self._make_val("put_otm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("put_otm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() > -0.05
 
 
@@ -178,8 +178,8 @@ class TestGammaBasicProperties(TestGreeksSetup):
         ud_call = self._make_ud()
         ud_put = self._make_ud()
 
-        call_val = self._make_val("call", ud_call, call_spec, PricingMethod.BSM_CONTINUOUS)
-        put_val = self._make_val("put", ud_put, put_spec, PricingMethod.BSM_CONTINUOUS)
+        call_val = self._make_val("call", ud_call, call_spec, PricingMethod.BSM)
+        put_val = self._make_val("put", ud_put, put_spec, PricingMethod.BSM)
 
         assert call_val.gamma() > 0
         assert put_val.gamma() > 0
@@ -189,12 +189,12 @@ class TestGammaBasicProperties(TestGreeksSetup):
 
         # ATM gamma
         ud_atm = self._make_ud(spot=self.spot)
-        val_atm = self._make_val("call_atm", ud_atm, spec, PricingMethod.BSM_CONTINUOUS)
+        val_atm = self._make_val("call_atm", ud_atm, spec, PricingMethod.BSM)
         gamma_atm = val_atm.gamma()
 
         # ITM gamma (separate underlying instance)
         ud_itm = self._make_ud(spot=110.0)
-        val_itm = self._make_val("call_itm", ud_itm, spec, PricingMethod.BSM_CONTINUOUS)
+        val_itm = self._make_val("call_itm", ud_itm, spec, PricingMethod.BSM)
         gamma_itm = val_itm.gamma()
 
         assert gamma_atm > gamma_itm
@@ -204,12 +204,12 @@ class TestGammaBasicProperties(TestGreeksSetup):
 
         ud_short = self._make_ud(pricing_date=self.pricing_date)
         spec_short = self._make_spec(option_type=OptionType.CALL, maturity=maturity_short)
-        val_short = self._make_val("call_short", ud_short, spec_short, PricingMethod.BSM_CONTINUOUS)
+        val_short = self._make_val("call_short", ud_short, spec_short, PricingMethod.BSM)
         gamma_short = val_short.gamma()
 
         ud_long = self._make_ud(pricing_date=self.pricing_date)
         spec_long = self._make_spec(option_type=OptionType.CALL, maturity=self.maturity)
-        val_long = self._make_val("call_long", ud_long, spec_long, PricingMethod.BSM_CONTINUOUS)
+        val_long = self._make_val("call_long", ud_long, spec_long, PricingMethod.BSM)
         gamma_long = val_long.gamma()
 
         assert gamma_short > gamma_long
@@ -224,8 +224,8 @@ class TestVegaBasicProperties(TestGreeksSetup):
         ud_call = self._make_ud()
         ud_put = self._make_ud()
 
-        call_val = self._make_val("call", ud_call, call_spec, PricingMethod.BSM_CONTINUOUS)
-        put_val = self._make_val("put", ud_put, put_spec, PricingMethod.BSM_CONTINUOUS)
+        call_val = self._make_val("call", ud_call, call_spec, PricingMethod.BSM)
+        put_val = self._make_val("put", ud_put, put_spec, PricingMethod.BSM)
 
         assert call_val.vega() > 0
         assert put_val.vega() > 0
@@ -234,11 +234,11 @@ class TestVegaBasicProperties(TestGreeksSetup):
         spec = self._make_spec(option_type=OptionType.CALL)
 
         ud_atm = self._make_ud(spot=self.spot)
-        val_atm = self._make_val("call_atm", ud_atm, spec, PricingMethod.BSM_CONTINUOUS)
+        val_atm = self._make_val("call_atm", ud_atm, spec, PricingMethod.BSM)
         vega_atm = val_atm.vega()
 
         ud_itm = self._make_ud(spot=110.0)
-        val_itm = self._make_val("call_itm", ud_itm, spec, PricingMethod.BSM_CONTINUOUS)
+        val_itm = self._make_val("call_itm", ud_itm, spec, PricingMethod.BSM)
         vega_itm = val_itm.vega()
 
         assert vega_atm > vega_itm
@@ -247,12 +247,12 @@ class TestVegaBasicProperties(TestGreeksSetup):
         maturity_short = dt.datetime(2025, 3, 1)
         spec_short = self._make_spec(option_type=OptionType.CALL, maturity=maturity_short)
         ud_short = self._make_ud()
-        val_short = self._make_val("call_short", ud_short, spec_short, PricingMethod.BSM_CONTINUOUS)
+        val_short = self._make_val("call_short", ud_short, spec_short, PricingMethod.BSM)
         vega_short = val_short.vega()
 
         spec_long = self._make_spec(option_type=OptionType.CALL, maturity=self.maturity)
         ud_long = self._make_ud()
-        val_long = self._make_val("call_long", ud_long, spec_long, PricingMethod.BSM_CONTINUOUS)
+        val_long = self._make_val("call_long", ud_long, spec_long, PricingMethod.BSM)
         vega_long = val_long.vega()
 
         assert vega_long > vega_short
@@ -264,7 +264,7 @@ class TestGreekCalculationMethods(TestGreeksSetup):
     def test_bsm_analytical_vs_numerical_delta(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud()
-        valuation = self._make_val("call", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
 
         delta_analytical = valuation.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
         delta_numerical = valuation.delta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
@@ -274,7 +274,7 @@ class TestGreekCalculationMethods(TestGreeksSetup):
     def test_bsm_analytical_vs_numerical_gamma(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud()
-        valuation = self._make_val("call", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
 
         gamma_analytical = valuation.gamma(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
         gamma_numerical = valuation.gamma(greek_calc_method=GreekCalculationMethod.NUMERICAL)
@@ -284,7 +284,7 @@ class TestGreekCalculationMethods(TestGreeksSetup):
     def test_bsm_analytical_vs_numerical_vega(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud()
-        valuation = self._make_val("call", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
 
         vega_analytical = valuation.vega(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
         vega_numerical = valuation.vega(greek_calc_method=GreekCalculationMethod.NUMERICAL)
@@ -294,7 +294,7 @@ class TestGreekCalculationMethods(TestGreeksSetup):
     def test_bsm_analytical_vs_numerical_rho(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         ud = self._make_ud()
-        valuation = self._make_val("call", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
 
         rho_analytical = valuation.rho(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
         rho_numerical = valuation.rho(greek_calc_method=GreekCalculationMethod.NUMERICAL)
@@ -308,7 +308,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
     def test_call_delta_consistency_bsm_binomial(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
-        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM_CONTINUOUS)
+        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
         delta_bsm = bsm_val.delta()
 
         binomial_val = self._make_val(
@@ -321,7 +321,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
     def test_call_delta_consistency_bsm_mcs(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
-        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM_CONTINUOUS)
+        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
         delta_bsm = bsm_val.delta()
 
         gbm = self._make_gbm(dividend_yield=0.0)
@@ -333,7 +333,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
     def test_gamma_consistency_bsm_binomial(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
-        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM_CONTINUOUS)
+        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
         gamma_bsm = bsm_val.gamma()
 
         binomial_val = self._make_val(
@@ -346,7 +346,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
     def test_vega_consistency_bsm_binomial(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
-        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM_CONTINUOUS)
+        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
         vega_bsm = bsm_val.vega()
 
         binomial_val = self._make_val(
@@ -364,12 +364,12 @@ class TestGreeksDividendYieldEffect(TestGreeksSetup):
         spec = self._make_spec(option_type=OptionType.CALL)
 
         val_no_div = self._make_val(
-            "call_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM_CONTINUOUS
+            "call_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM
         )
         delta_no_div = val_no_div.delta()
 
         val_with_div = self._make_val(
-            "call_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM_CONTINUOUS
+            "call_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM
         )
         delta_with_div = val_with_div.delta()
 
@@ -379,12 +379,12 @@ class TestGreeksDividendYieldEffect(TestGreeksSetup):
         spec = self._make_spec(option_type=OptionType.PUT)
 
         val_no_div = self._make_val(
-            "put_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM_CONTINUOUS
+            "put_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM
         )
         delta_no_div = val_no_div.delta()
 
         val_with_div = self._make_val(
-            "put_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM_CONTINUOUS
+            "put_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM
         )
         delta_with_div = val_with_div.delta()
 
@@ -399,15 +399,13 @@ class TestGreekErrorHandling(TestGreeksSetup):
 
         valuation = self._make_val("call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL)
 
-        with pytest.raises(
-            ValueError, match="Analytical greeks are only available for BSM_CONTINUOUS"
-        ):
+        with pytest.raises(ValueError, match="Analytical greeks are only available for BSM"):
             valuation.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
 
     def test_invalid_greek_calc_method_type_raises_error(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
-        valuation = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
 
         with pytest.raises(
             TypeError, match="greek_calc_method must be GreekCalculationMethod enum"
@@ -422,7 +420,7 @@ class TestGreekImmutability(TestGreeksSetup):
         """Verify delta calculation doesn't mutate UnderlyingPricingData.initial_value."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
-        valuation = self._make_val("call_bsm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_bsm", ud, spec, PricingMethod.BSM)
 
         original_spot = ud.initial_value
         original_vol = ud.volatility
@@ -456,7 +454,7 @@ class TestGreekImmutability(TestGreeksSetup):
         """Verify vega calculation doesn't mutate UnderlyingPricingData.volatility."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
-        valuation = self._make_val("call_bsm", ud, spec, PricingMethod.BSM_CONTINUOUS)
+        valuation = self._make_val("call_bsm", ud, spec, PricingMethod.BSM)
 
         original_spot = ud.initial_value
         original_vol = ud.volatility
@@ -522,9 +520,9 @@ class TestGreekImmutability(TestGreeksSetup):
         spec2 = self._make_spec(option_type=OptionType.CALL, strike=100.0)
         spec3 = self._make_spec(option_type=OptionType.PUT, strike=110.0)
 
-        val1 = self._make_val("call_90", ud, spec1, PricingMethod.BSM_CONTINUOUS)
-        val2 = self._make_val("call_100", ud, spec2, PricingMethod.BSM_CONTINUOUS)
-        val3 = self._make_val("put_110", ud, spec3, PricingMethod.BSM_CONTINUOUS)
+        val1 = self._make_val("call_90", ud, spec1, PricingMethod.BSM)
+        val2 = self._make_val("call_100", ud, spec2, PricingMethod.BSM)
+        val3 = self._make_val("put_110", ud, spec3, PricingMethod.BSM)
 
         # Calculate greeks for all valuations (simulating concurrent access)
         delta1 = val1.delta(greek_calc_method=GreekCalculationMethod.NUMERICAL)

@@ -242,7 +242,7 @@ class OptionValuation:
         )
 
         # Strategy guardrails
-        if pricing_method == PricingMethod.BSM_CONTINUOUS and self.option_type not in (
+        if pricing_method == PricingMethod.BSM and self.option_type not in (
             OptionType.CALL,
             OptionType.PUT,
         ):
@@ -278,7 +278,7 @@ class OptionValuation:
         # (they only need UnderlyingPricingData; paths would be ignored)
         if pricing_method in (
             PricingMethod.BINOMIAL,
-            PricingMethod.BSM_CONTINUOUS,
+            PricingMethod.BSM,
             PricingMethod.PDE_FD,
         ) and isinstance(underlying, PathSimulation):
             raise TypeError(
@@ -301,7 +301,7 @@ class OptionValuation:
                 self._impl = _BinomialAmericanValuation(self)
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.BSM_CONTINUOUS:
+        elif pricing_method == PricingMethod.BSM:
             if spec.exercise_type == ExerciseType.EUROPEAN:
                 self._impl = _BSMEuropeanValuation(self)
             elif spec.exercise_type == ExerciseType.AMERICAN:
@@ -424,7 +424,7 @@ class OptionValuation:
         # Determine which method to use
         if greek_calc_method is None:
             # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            use_analytical = self.pricing_method == PricingMethod.BSM
         else:
             if not isinstance(greek_calc_method, GreekCalculationMethod):
                 raise TypeError(
@@ -432,15 +432,15 @@ class OptionValuation:
                 )
             use_analytical = (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method == PricingMethod.BSM
             )
             # Validate that analytical is only used with BSM
             if (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method != PricingMethod.BSM
             ):
                 raise ValueError(
-                    "Analytical greeks are only available for BSM_CONTINUOUS pricing method. "
+                    "Analytical greeks are only available for BSM pricing method. "
                     "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
                 )
 
@@ -530,7 +530,7 @@ class OptionValuation:
         # Determine which method to use
         if greek_calc_method is None:
             # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            use_analytical = self.pricing_method == PricingMethod.BSM
         else:
             if not isinstance(greek_calc_method, GreekCalculationMethod):
                 raise TypeError(
@@ -538,15 +538,15 @@ class OptionValuation:
                 )
             use_analytical = (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method == PricingMethod.BSM
             )
             # Validate that analytical is only used with BSM
             if (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method != PricingMethod.BSM
             ):
                 raise ValueError(
-                    "Analytical greeks are only available for BSM_CONTINUOUS pricing method. "
+                    "Analytical greeks are only available for BSM pricing method. "
                     "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
                 )
 
@@ -632,7 +632,7 @@ class OptionValuation:
         # Determine which method to use
         if greek_calc_method is None:
             # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            use_analytical = self.pricing_method == PricingMethod.BSM
         else:
             if not isinstance(greek_calc_method, GreekCalculationMethod):
                 raise TypeError(
@@ -640,15 +640,15 @@ class OptionValuation:
                 )
             use_analytical = (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method == PricingMethod.BSM
             )
             # Validate that analytical is only used with BSM
             if (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method != PricingMethod.BSM
             ):
                 raise ValueError(
-                    "Analytical greeks are only available for BSM_CONTINUOUS pricing method. "
+                    "Analytical greeks are only available for BSM pricing method. "
                     "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
                 )
 
@@ -732,7 +732,7 @@ class OptionValuation:
         """
         # Default to analytical for BSM, numerical for others
         if greek_calc_method is None:
-            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            use_analytical = self.pricing_method == PricingMethod.BSM
         else:
             if not isinstance(greek_calc_method, GreekCalculationMethod):
                 raise TypeError(
@@ -740,15 +740,13 @@ class OptionValuation:
                 )
             use_analytical = (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method == PricingMethod.BSM
             )
             if (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method != PricingMethod.BSM
             ):
-                raise ValueError(
-                    "Analytical theta calculation only available for BSM_CONTINUOUS method"
-                )
+                raise ValueError("Analytical theta calculation only available for BSM method")
 
         if use_analytical:
             return self._impl.theta()
@@ -819,7 +817,7 @@ class OptionValuation:
         """
         # Default to analytical for BSM, numerical for others
         if greek_calc_method is None:
-            use_analytical = self.pricing_method == PricingMethod.BSM_CONTINUOUS
+            use_analytical = self.pricing_method == PricingMethod.BSM
         else:
             if not isinstance(greek_calc_method, GreekCalculationMethod):
                 raise TypeError(
@@ -827,15 +825,13 @@ class OptionValuation:
                 )
             use_analytical = (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method == PricingMethod.BSM
             )
             if (
                 greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM_CONTINUOUS
+                and self.pricing_method != PricingMethod.BSM
             ):
-                raise ValueError(
-                    "Analytical rho calculation only available for BSM_CONTINUOUS method"
-                )
+                raise ValueError("Analytical rho calculation only available for BSM method")
 
         if use_analytical:
             return self._impl.rho()
