@@ -1,7 +1,7 @@
 "Path simulation classes for various stochastic processes"
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
 import copy
 import datetime as dt
 import numpy as np
@@ -209,9 +209,7 @@ class PathSimulation(ABC):
         corr: CorrelationContext | None = None,
     ):
         self.name = name
-        self.pricing_date = market_data.pricing_date
-        self.currency = market_data.currency
-        self.discount_curve = market_data.discount_curve
+        self.market_data = market_data
 
         self.initial_value = process_params.initial_value
         self.volatility = process_params.volatility
@@ -274,15 +272,53 @@ class PathSimulation(ABC):
             time_grid = sorted(set(time_grid))
         self.time_grid = np.array(time_grid)
 
+    @property
+    def pricing_date(self) -> dt.datetime:
+        return self.market_data.pricing_date
+
+    @property
+    def currency(self) -> str:
+        return self.market_data.currency
+
+    @property
+    def discount_curve(self):
+        return self.market_data.discount_curve
+
     def replace(self, **kwargs) -> "PathSimulation":
         """Return a shallow-cloned instance with selected attributes replaced.
 
         This avoids in-place mutation and clears cached instrument values by default,
         which is important for bump-and-revalue workflows and thread safety.
         """
+        allowed_fields = {
+            "name",
+            "market_data",
+            "initial_value",
+            "volatility",
+            "dividend_yield",
+            "discrete_dividends",
+            "paths",
+            "frequency",
+            "num_steps",
+            "day_count_convention",
+            "time_grid",
+            "special_dates",
+            "end_date",
+            "pricing_date",
+            "discount_curve",
+            "currency",
+        }
+        unknown = set(kwargs).difference(allowed_fields)
+        if unknown:
+            raise ValueError(
+                f"replace() only supports overriding {sorted(allowed_fields)}; "
+                f"unknown: {sorted(unknown)}"
+            )
+
         cloned = copy.copy(self)
 
         # Detach mutable containers to avoid shared state across clones.
+        cloned.market_data = self.market_data  # immutable so fine
         cloned.special_dates = list(self.special_dates)
         cloned.discrete_dividends = list(self.discrete_dividends)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
@@ -290,10 +326,11 @@ class PathSimulation(ABC):
         # Always reset cached paths unless explicitly overridden.
         cloned.instrument_values = None
 
-        # Apply replacements
+        # Apply replacements (skip market_data & market_data-derived keys)
+        deferred = {"market_data", "pricing_date", "discount_curve", "currency"}
         for key, value in kwargs.items():
-            if not hasattr(cloned, key):
-                raise AttributeError(f"PathSimulation has no attribute '{key}'")
+            if key in deferred:
+                continue
             setattr(cloned, key, value)
 
         # Normalize list-like overrides
@@ -315,6 +352,20 @@ class PathSimulation(ABC):
                 for key in ("pricing_date", "end_date", "frequency", "num_steps", "special_dates")
             ):
                 cloned.time_grid = None
+
+        # Update market_data if any related fields were overridden
+        if "market_data" in kwargs:
+            cloned.market_data = kwargs["market_data"]
+        else:
+            updates = {}
+            if "pricing_date" in kwargs:
+                updates["pricing_date"] = kwargs["pricing_date"]
+            if "discount_curve" in kwargs:
+                updates["discount_curve"] = kwargs["discount_curve"]
+            if "currency" in kwargs:
+                updates["currency"] = kwargs["currency"]
+            if updates:
+                cloned.market_data = dc_replace(cloned.market_data, **updates)
 
         # Ensure discrete dividend dates are included as special dates.
         if cloned.discrete_dividends:

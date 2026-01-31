@@ -177,8 +177,9 @@ class UnderlyingPricingData:
     """Minimal data container for option valuation underlying asset.
 
     Used when pricing with methods that don't require full stochastic process simulation
-    (e.g., binomial trees). Contains only essential parameters: spot price, volatility,
-    pricing date, discount curve, continuous dividend yield (optional, default 0.0),
+    (e.g., BSM, binomial trees, FD approximation to PDE).
+    Contains only essential parameters: spot price, volatility, pricing date, discount curve,
+    continuous dividend yield (optional, default 0.0),
     and optional discrete dividends as (ex_date, amount) pairs.
     """
 
@@ -241,6 +242,9 @@ class UnderlyingPricingData:
         UnderlyingPricingData
             New instance with specified fields replaced
         """
+        if set(kwargs).difference(self.__dict__.keys()):
+            raise ValueError(f"replace() only supports overriding {list(self.__dict__.keys())}")
+
         return UnderlyingPricingData(
             initial_value=kwargs.get("initial_value", self.initial_value),
             volatility=kwargs.get("volatility", self.volatility),
@@ -260,14 +264,14 @@ class OptionValuation:
     name: str
         Name of the valuation object/trade.
     underlying: PathSimulation | UnderlyingPricingData
-        Stochastic process simulator (Monte Carlo) or minimal data container (BSM, Binomial).
+        Stochastic process simulator (Monte Carlo) or minimal data container (BSM, Binomial, PDE).
         For Monte Carlo: must be PathSimulation instance.
-        For BSM and Binomial: UnderlyingPricingData.
+        For BSM, Binomial, PDE: UnderlyingPricingData.
     spec: OptionSpec | PayoffSpec | AsianOptionSpec
         Contract terms (type, exercise type, strike, maturity, currency, contract_size)
         for a vanilla option, a custom single-contract payoff, or an Asian option.
     pricing_method: PricingMethod
-        Valuation methodology to use (Monte Carlo, BSM, Binomial, etc).
+        Valuation methodology to use (Monte Carlo, BSM, Binomial, FD approximation to PDE, etc).
     pricing_date: datetime
         Pricing date (taken from underlying).
     discount_curve:
@@ -277,6 +281,9 @@ class OptionValuation:
     =======
     present_value:
         Returns the present value of the derivative.
+    present_value_pathwise:
+        Returns the present value of the derivative for each MC simulated path (only applicable
+        when PricingMethod is MONTE_CARLO).
     delta:
         Calculate option delta. For BSM: defaults to analytical closed-form formula,
         can be overridden with greek_calc_method kwarg.
@@ -286,6 +293,12 @@ class OptionValuation:
     vega:
         Calculate option vega. For BSM: defaults to analytical closed-form formula,
         can be overridden with greek_calc_method kwarg.
+    theta:
+        Calculate option theta. For BSM, defaults to analytical closed-form formula,
+         can be overridden with greek_calc_method kwarg.
+    rho:
+        Calculate option rho. For BSM, defaults to analytical closed-form formula,
+            can be overridden with greek_calc_method kwarg.
     """
 
     def __init__(
@@ -542,25 +555,13 @@ class OptionValuation:
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
 
-        # Create bumped underlyings (immutable - no mutation)
-        if isinstance(self.underlying, PathSimulation):
-            # For PathSimulation: shallow copy with modified initial_value
-            # Note: paths will be regenerated when get_instrument_values() is called
-            underlying_down = self.underlying.replace(
-                initial_value=self.underlying.initial_value - epsilon
-            )
-            underlying_up = self.underlying.replace(
-                initial_value=self.underlying.initial_value + epsilon
-            )
-        else:
-            # For UnderlyingPricingData: use replace() method
-            underlying_down = self.underlying.replace(
-                initial_value=self.underlying.initial_value - epsilon
-            )
-            underlying_up = self.underlying.replace(
-                initial_value=self.underlying.initial_value + epsilon
-            )
-
+        # Create bumped underlyings
+        underlying_down = self.underlying.replace(
+            initial_value=self.underlying.initial_value - epsilon
+        )
+        underlying_up = self.underlying.replace(
+            initial_value=self.underlying.initial_value + epsilon
+        )
         # Create temporary valuation objects with bumped underlyings
         val_down = OptionValuation(
             name=f"{self.name}_delta_down",
@@ -648,24 +649,13 @@ class OptionValuation:
         if epsilon is None:
             epsilon = self.underlying.initial_value / 100
 
-        # Create bumped underlyings (immutable - no mutation)
-        if isinstance(self.underlying, PathSimulation):
-            # For PathSimulation: shallow copy with modified initial_value
-            # Note: paths will be regenerated when get_instrument_values() is called
-            underlying_down = self.underlying.replace(
-                initial_value=self.underlying.initial_value - epsilon
-            )
-            underlying_up = self.underlying.replace(
-                initial_value=self.underlying.initial_value + epsilon
-            )
-        else:
-            # For UnderlyingPricingData: use replace() method
-            underlying_down = self.underlying.replace(
-                initial_value=self.underlying.initial_value - epsilon
-            )
-            underlying_up = self.underlying.replace(
-                initial_value=self.underlying.initial_value + epsilon
-            )
+        # Create bumped underlyings
+        underlying_down = self.underlying.replace(
+            initial_value=self.underlying.initial_value - epsilon
+        )
+        underlying_up = self.underlying.replace(
+            initial_value=self.underlying.initial_value + epsilon
+        )
 
         # Create temporary valuation objects with bumped underlyings
         val_down = OptionValuation(
@@ -747,20 +737,9 @@ class OptionValuation:
             return self._impl.vega()
 
         # Otherwise use numerical approximation via bump-and-revalue
-        # Create bumped underlyings (immutable - no mutation)
-        if isinstance(self.underlying, PathSimulation):
-            # For PathSimulation: shallow copy with modified volatility
-            # Note: paths will be regenerated when get_instrument_values() is called
-            underlying_down = self.underlying.replace(
-                volatility=self.underlying.volatility - epsilon
-            )
-            underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
-        else:
-            # For UnderlyingPricingData: use replace() method
-            underlying_down = self.underlying.replace(
-                volatility=self.underlying.volatility - epsilon
-            )
-            underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
+        # Create bumped underlyings
+        underlying_down = self.underlying.replace(volatility=self.underlying.volatility - epsilon)
+        underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
 
         # Create temporary valuation objects with bumped underlyings
         val_down = OptionValuation(
@@ -846,16 +825,13 @@ class OptionValuation:
 
         value_now = self.present_value(params=params)
 
-        # Build bumped underlying/market data
-        if isinstance(self.underlying, PathSimulation):
-            underlying_bumped = self.underlying.replace(pricing_date=bumped_date)
-        else:
-            bumped_market = MarketData(
-                pricing_date=bumped_date,
-                discount_curve=self.discount_curve,
-                currency=self.underlying.currency,
-            )
-            underlying_bumped = self.underlying.replace(market_data=bumped_market)
+        # Build bumped underlying
+        bumped_market = MarketData(
+            pricing_date=bumped_date,
+            discount_curve=self.discount_curve,
+            currency=self.underlying.currency,
+        )
+        underlying_bumped = self.underlying.replace(market_data=bumped_market)
 
         valuation_bumped = OptionValuation(
             name=f"{self.name}_theta_bumped",
@@ -932,12 +908,8 @@ class OptionValuation:
         md_up = MarketData(self.pricing_date, curve_up, currency=self.currency)
         md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
 
-        if isinstance(self.underlying, PathSimulation):
-            underlying_up = self.underlying.replace(discount_curve=curve_up)
-            underlying_down = self.underlying.replace(discount_curve=curve_down)
-        else:
-            underlying_up = self.underlying.replace(market_data=md_up)
-            underlying_down = self.underlying.replace(market_data=md_down)
+        underlying_up = self.underlying.replace(market_data=md_up)
+        underlying_down = self.underlying.replace(market_data=md_down)
 
         val_up = OptionValuation(
             name=f"{self.name}_rho_up",
