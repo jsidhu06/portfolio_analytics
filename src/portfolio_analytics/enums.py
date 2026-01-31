@@ -6,10 +6,11 @@ from enum import Enum
 class OptionType(Enum):
     CALL = "call"
     PUT = "put"
-    CONDOR = "condor"
-    CUSTOM = "custom"
-    ASIAN_ARITHMETIC = "asian_arithmetic"
-    ASIAN_GEOMETRIC = "asian_geometric"
+
+
+class AsianAveraging(Enum):
+    ARITHMETIC = "arithmetic"
+    GEOMETRIC = "geometric"
 
 
 class PositionSide(Enum):

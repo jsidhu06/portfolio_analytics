@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 import numpy as np
 
-from ..enums import OptionType
+from ..enums import OptionType, AsianAveraging
 from .params import MonteCarloParams
 
 if TYPE_CHECKING:
@@ -184,10 +184,10 @@ class _MCAsianValuation:
         averaging_paths = paths[time_index_start : time_index_end + 1, :]
 
         # Calculate average for each path
-        if self.parent.option_type == OptionType.ASIAN_ARITHMETIC:
+        if spec.averaging is AsianAveraging.ARITHMETIC:
             # Arithmetic average: (1/N) * Σ S_i
             avg_prices = np.mean(averaging_paths, axis=0)
-        elif self.parent.option_type == OptionType.ASIAN_GEOMETRIC:
+        elif spec.averaging is AsianAveraging.GEOMETRIC:
             # Geometric average: (Π S_i)^(1/N)
             # Use log space for numerical stability: exp(mean(log(S_i)))
             epsilon = 1e-10
@@ -196,9 +196,7 @@ class _MCAsianValuation:
                 log_prices = np.log(safe_paths)
             avg_prices = np.exp(np.mean(log_prices, axis=0))
         else:
-            raise ValueError(
-                f"Unsupported option type for Asian valuation: {self.parent.option_type}"
-            )
+            raise ValueError(f"Unsupported averaging method for Asian valuation: {spec.averaging}")
 
         # Calculate payoff based on average
         K = self.parent.strike

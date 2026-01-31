@@ -5,6 +5,7 @@ import numpy as np
 from ..stochastic_processes import PathSimulation
 from ..enums import (
     OptionType,
+    AsianAveraging,
     ExerciseType,
     PricingMethod,
     GreekCalculationMethod,
@@ -81,7 +82,6 @@ class PayoffSpec:
     contract_size: int | float = 100
 
     # Kept for compatibility with vanilla valuation interfaces
-    option_type: OptionType = OptionType.CUSTOM
     strike: None = None
 
     def __post_init__(self):
@@ -89,8 +89,6 @@ class PayoffSpec:
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
-        if not isinstance(self.option_type, OptionType) or self.option_type != OptionType.CUSTOM:
-            raise TypeError("PayoffSpec.option_type must be OptionType.CUSTOM")
         if not callable(self.payoff_fn):
             raise TypeError("payoff_fn must be callable")
 
@@ -109,8 +107,8 @@ class AsianOptionSpec:
 
     Parameters
     ----------
-    option_type : OptionType
-        ASIAN_ARITHMETIC or ASIAN_GEOMETRIC
+    averaging : AsianAveraging
+        AsianAveraging.ARITHMETIC or AsianAveraging.GEOMETRIC
     call_put : OptionType
         OptionType.CALL or OptionType.PUT to specify payoff direction
     strike : float
@@ -133,7 +131,7 @@ class AsianOptionSpec:
     - Only European exercise is supported
     """
 
-    option_type: OptionType
+    averaging: AsianAveraging
     call_put: OptionType  # CALL or PUT
     strike: float
     maturity: dt.datetime
@@ -146,13 +144,9 @@ class AsianOptionSpec:
 
     def __post_init__(self):
         """Validate Asian option specification."""
-        if not isinstance(self.option_type, OptionType):
+        if not isinstance(self.averaging, AsianAveraging):
             raise TypeError(
-                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
-            )
-        if self.option_type not in (OptionType.ASIAN_ARITHMETIC, OptionType.ASIAN_GEOMETRIC):
-            raise ValueError(
-                "AsianOptionSpec.option_type must be OptionType.ASIAN_ARITHMETIC or ASIAN_GEOMETRIC"
+                f"averaging must be AsianAveraging enum, got {type(self.averaging).__name__}"
             )
         if not isinstance(self.exercise_type, ExerciseType):
             raise TypeError(
@@ -269,9 +263,9 @@ class OptionValuation:
         Stochastic process simulator (Monte Carlo) or minimal data container (BSM, Binomial).
         For Monte Carlo: must be PathSimulation instance.
         For BSM and Binomial: UnderlyingPricingData.
-    spec: OptionSpec | PayoffSpec
+    spec: OptionSpec | PayoffSpec | AsianOptionSpec
         Contract terms (type, exercise type, strike, maturity, currency, contract_size)
-        for either a vanilla option or a custom single-contract payoff.
+        for a vanilla option, a custom single-contract payoff, or an Asian option.
     pricing_method: PricingMethod
         Valuation methodology to use (Monte Carlo, BSM, Binomial, etc).
     pricing_date: datetime
@@ -314,7 +308,12 @@ class OptionValuation:
         self.maturity = spec.maturity
         self.strike = spec.strike
         self.currency = spec.currency
-        self.option_type = spec.option_type
+        if hasattr(spec, "option_type") and isinstance(spec.option_type, OptionType):
+            self.option_type = spec.option_type
+        elif hasattr(spec, "call_put") and isinstance(spec.call_put, OptionType):
+            self.option_type = spec.call_put
+        else:
+            self.option_type = None
         self.exercise_type = spec.exercise_type
         self.pricing_method = pricing_method
         self.contract_size = spec.contract_size
