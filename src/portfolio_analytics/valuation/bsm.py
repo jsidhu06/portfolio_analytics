@@ -67,7 +67,7 @@ class _BSMValuationBase:
     def _adjusted_spot(self) -> float:
         """Adjust spot for discrete dividends using PV of future dividends."""
         spot = float(self.parent.underlying.initial_value)
-        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
+        discrete_dividends = self.parent.underlying.discrete_dividends
         if not discrete_dividends:
             return spot
         pv_divs = pv_discrete_dividends(

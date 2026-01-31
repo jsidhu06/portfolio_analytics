@@ -54,7 +54,7 @@ class _BinomialValuationBase:
         down = up.T * 2
 
         S_0 = float(self.parent.underlying.initial_value)
-        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
+        discrete_dividends = self.parent.underlying.discrete_dividends
 
         # If no discrete dividends, use the closed-form CRR lattice.
         if not discrete_dividends:

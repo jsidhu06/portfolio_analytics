@@ -395,8 +395,8 @@ class _FDEuropeanValuation:
 
         volatility = float(self.parent.underlying.volatility)
         risk_free_rate = float(self.parent.discount_curve.short_rate)
-        dividend_yield = float(getattr(self.parent.underlying, "dividend_yield", 0.0))
-        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
+        dividend_yield = float(self.parent.underlying.dividend_yield)
+        discrete_dividends = self.parent.underlying.discrete_dividends
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
 
@@ -448,8 +448,8 @@ class _FDAmericanValuation:
 
         volatility = float(self.parent.underlying.volatility)
         risk_free_rate = float(self.parent.discount_curve.short_rate)
-        dividend_yield = float(getattr(self.parent.underlying, "dividend_yield", 0.0))
-        discrete_dividends = getattr(self.parent.underlying, "discrete_dividends", [])
+        dividend_yield = float(self.parent.underlying.dividend_yield)
+        discrete_dividends = self.parent.underlying.discrete_dividends
 
         # Special-case: American CALL with ~0 dividends has no early-exercise premium.
         # Avoid the PSOR loop entirely and price as European via CN.
