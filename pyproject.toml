@@ -24,6 +24,16 @@ dev = [
     "mypy",
     "pre-commit",
 ]
+viz = [
+    "matplotlib>=3.7.0",
+]
+notebooks = [
+    "jupyter>=1.0.0",
+    "ipywidgets>=8.0.0",
+]
+all = [
+    "portfolio_analytics[viz,notebooks]",
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]

@@ -18,6 +18,7 @@ from .binomial import (
 )
 from .bsm import _BSMEuropeanValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
+from .heston import _HestonEuropeanValuation
 from ..rates import ConstantShortRate
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
@@ -421,6 +422,14 @@ class OptionValuation:
                 self._impl = _FDAmericanValuation(self)
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
+        elif pricing_method == PricingMethod.HESTON:
+            if spec.exercise_type == ExerciseType.EUROPEAN:
+                self._impl = _HestonEuropeanValuation(self)
+            else:
+                raise NotImplementedError(
+                    "Heston pricing is only available for European options. "
+                    "Use Monte Carlo for American options with stochastic volatility."
+                )
         else:
             raise ValueError(f"Unknown pricing method: {pricing_method}")
 
