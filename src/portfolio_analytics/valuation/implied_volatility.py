@@ -1,0 +1,258 @@
+"""Implied volatility solvers for Black-Scholes-Merton European options."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+import numpy as np
+from scipy import optimize
+
+from ..enums import (
+    ExerciseType,
+    ImpliedVolMethod,
+    OptionType,
+    PricingMethod,
+    GreekCalculationMethod,
+)
+from ..utils import calculate_year_fraction, pv_discrete_dividends
+from .core import OptionValuation, UnderlyingPricingData
+
+
+@dataclass(frozen=True, slots=True)
+class ImpliedVolResult:
+    """Result container for implied volatility calculation."""
+
+    implied_vol: float
+    iterations: int
+    converged: bool
+
+
+def _adjusted_spot_and_dividend_yield(valuation: OptionValuation) -> tuple[float, float]:
+    spot = float(valuation.underlying.initial_value)
+    dividend_yield = float(valuation.underlying.dividend_yield)
+    discrete_dividends = valuation.underlying.discrete_dividends
+    if not discrete_dividends:
+        return spot, dividend_yield
+
+    pv_divs = pv_discrete_dividends(
+        discrete_dividends,
+        valuation.pricing_date,
+        valuation.maturity,
+        float(valuation.discount_curve.short_rate),
+    )
+    return max(spot - pv_divs, 0.0), dividend_yield
+
+
+def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
+    time_to_maturity = calculate_year_fraction(
+        valuation.pricing_date, valuation.maturity, day_count_convention=365
+    )
+    if time_to_maturity <= 0:
+        raise ValueError("Option maturity must be after pricing date.")
+
+    spot, dividend_yield = _adjusted_spot_and_dividend_yield(valuation)
+    strike = float(valuation.strike)
+    risk_free_rate = float(valuation.discount_curve.short_rate)
+
+    discount_factor = np.exp(-risk_free_rate * time_to_maturity)
+    forward_discount = np.exp(-dividend_yield * time_to_maturity)
+
+    if valuation.option_type is OptionType.CALL:
+        lower = max(0.0, spot * forward_discount - strike * discount_factor)
+        upper = spot * forward_discount
+    else:  # PUT
+        lower = max(0.0, strike * discount_factor - spot * forward_discount)
+        upper = strike * discount_factor
+
+    return lower, upper
+
+
+def _valuation_with_vol(valuation: OptionValuation, vol: float) -> OptionValuation:
+    if not isinstance(valuation.underlying, UnderlyingPricingData):
+        raise TypeError("Implied volatility requires UnderlyingPricingData (not PathSimulation).")
+
+    bumped_underlying = valuation.underlying.replace(volatility=float(vol))
+    return OptionValuation(
+        name=valuation.name,
+        underlying=bumped_underlying,
+        spec=valuation.spec,
+        pricing_method=valuation.pricing_method,
+        params=valuation.params,
+    )
+
+
+def _newton_raphson(
+    *,
+    f: Callable[[float], float],
+    vega: Callable[[float], float],
+    low: float,
+    high: float,
+    initial: float,
+    tol: float,
+    max_iter: int,
+) -> ImpliedVolResult:
+    vol = float(initial)
+    iterations = 0
+
+    for i in range(max_iter):
+        iterations = i + 1
+        diff = f(vol)
+        if abs(diff) <= tol:
+            return ImpliedVolResult(implied_vol=vol, iterations=iterations, converged=True)
+
+        slope = vega(vol)
+        if slope <= 0 or not np.isfinite(slope):
+            break
+
+        step = diff / slope
+        candidate = vol - step
+
+        if not np.isfinite(candidate) or candidate <= low or candidate >= high:
+            candidate = 0.5 * (low + high)
+
+        if diff > 0:
+            high = min(high, vol)
+        else:
+            low = max(low, vol)
+
+        if abs(high - low) <= tol:
+            return ImpliedVolResult(implied_vol=candidate, iterations=iterations, converged=True)
+
+        vol = candidate
+
+    return ImpliedVolResult(implied_vol=vol, iterations=iterations, converged=False)
+
+
+def _bisection(
+    *,
+    f: Callable[[float], float],
+    low: float,
+    high: float,
+    tol: float,
+    max_iter: int,
+) -> ImpliedVolResult:
+    f_low = f(low)
+    f_high = f(high)
+
+    if f_low > 0 or f_high < 0:
+        raise ValueError("Price not bracketed by vol_bounds; adjust bounds.")
+
+    vol = 0.5 * (low + high)
+    for i in range(max_iter):
+        f_mid = f(vol)
+        if abs(f_mid) <= tol or abs(high - low) <= tol:
+            return ImpliedVolResult(implied_vol=vol, iterations=i + 1, converged=True)
+        if f_mid > 0:
+            high = vol
+        else:
+            low = vol
+        vol = 0.5 * (low + high)
+
+    return ImpliedVolResult(implied_vol=vol, iterations=max_iter, converged=False)
+
+
+def implied_volatility(
+    target_price: float,
+    valuation: OptionValuation,
+    method: ImpliedVolMethod = ImpliedVolMethod.NEWTON_RAPHSON,
+    *,
+    initial_vol: float | None = None,
+    vol_bounds: tuple[float, float] = (1.0e-6, 5.0),
+    tol: float = 1.0e-8,
+    max_iter: int = 100,
+) -> ImpliedVolResult:
+    """Solve for implied volatility using BSM European pricing.
+
+    Parameters
+    ==========
+    target_price:
+        Observed option price (per unit, not multiplied by contract size).
+    valuation:
+        OptionValuation instance configured for BSM European pricing.
+    method:
+        Root-finding method to use for the solver.
+    initial_vol:
+        Initial guess for volatility (annualized, decimal). If None, uses
+        valuation.underlying.volatility or 0.2.
+    vol_bounds:
+        Lower/upper bounds for volatility search.
+    tol:
+        Absolute tolerance on price difference.
+    max_iter:
+        Maximum iterations for iterative solvers.
+
+    Returns
+    =======
+    ImpliedVolResult
+        implied_vol: implied volatility (annualized, decimal)
+        iterations: number of iterations performed
+        converged: whether solver reached tolerance
+    """
+
+    if not isinstance(valuation, OptionValuation):
+        raise TypeError("valuation must be an OptionValuation instance")
+    if valuation.pricing_method != PricingMethod.BSM:
+        raise NotImplementedError("Implied volatility is implemented for BSM only.")
+    if valuation.exercise_type != ExerciseType.EUROPEAN:
+        raise NotImplementedError("Implied volatility is implemented for European options only.")
+
+    if not np.isfinite(target_price):
+        raise ValueError("target_price must be finite")
+    if target_price < 0:
+        raise ValueError("target_price must be non-negative")
+
+    low, high = vol_bounds
+    if low <= 0 or high <= 0 or low >= high:
+        raise ValueError("vol_bounds must be positive and satisfy low < high")
+
+    min_price, max_price = _price_bounds(valuation)
+    if target_price < min_price - tol or target_price > max_price + tol:
+        raise ValueError("target_price is outside no-arbitrage bounds for the provided inputs")
+
+    def price_at(vol: float) -> float:
+        return _valuation_with_vol(valuation, vol).present_value()
+
+    def f(vol: float) -> float:
+        return price_at(vol) - target_price
+
+    def vega_at(vol: float) -> float:
+        val = _valuation_with_vol(valuation, vol)
+        vega = val.vega(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        return float(vega) * 100.0  # convert from per-1% to per-1.0 volatility
+
+    f_low = f(low)
+    f_high = f(high)
+    if f_low > 0 or f_high < 0:
+        raise ValueError("Price not bracketed by vol_bounds; adjust bounds.")
+
+    initial = (
+        float(initial_vol)
+        if initial_vol is not None
+        else max(low, min(high, float(valuation.underlying.volatility or 0.2)))
+    )
+
+    if method == ImpliedVolMethod.NEWTON_RAPHSON:
+        result = _newton_raphson(
+            f=f,
+            vega=vega_at,
+            low=low,
+            high=high,
+            initial=initial,
+            tol=tol,
+            max_iter=max_iter,
+        )
+        if result.converged:
+            return result
+        return _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
+
+    if method == ImpliedVolMethod.BISECTION:
+        return _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
+
+    if method == ImpliedVolMethod.BRENTQ:
+        implied = optimize.brentq(f, low, high, xtol=tol, maxiter=max_iter)
+        return ImpliedVolResult(implied_vol=float(implied), iterations=max_iter, converged=True)
+
+    raise NotImplementedError(
+        f"Implied vol method '{method.value}' is not implemented in this solver."
+    )

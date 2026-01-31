@@ -33,3 +33,9 @@ class PricingMethod(Enum):
 class GreekCalculationMethod(Enum):
     ANALYTICAL = "analytical"
     NUMERICAL = "numerical"
+
+
+class ImpliedVolMethod(Enum):
+    NEWTON_RAPHSON = "newton_raphson"
+    BISECTION = "bisection"
+    BRENTQ = "brentq"

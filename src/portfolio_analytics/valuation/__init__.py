@@ -31,6 +31,7 @@ from .params import (
     PDEParams,
     ValuationParams,
 )
+from .implied_volatility import ImpliedVolResult, implied_volatility
 
 __all__ = [
     # Core valuation classes
@@ -43,4 +44,6 @@ __all__ = [
     "BinomialParams",
     "PDEParams",
     "ValuationParams",
+    "ImpliedVolResult",
+    "implied_volatility",
 ]
