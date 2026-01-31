@@ -51,13 +51,13 @@ class _MCEuropeanValuation:
 
     def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
         """Return discounted present values for each path."""
-        cash_flow = self.solve(params)
+        payoff_vector = self.solve(params)
         discount_factor = float(
             self.parent.discount_curve.get_discount_factors(
                 (self.parent.pricing_date, self.parent.maturity)
             )[-1, 1]
         )
-        return discount_factor * cash_flow
+        return discount_factor * payoff_vector
 
 
 class _MCAmerianValuation:
@@ -217,10 +217,10 @@ class _MCAsianValuation:
 
     def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
         """Return discounted present values for each path."""
-        cash_flow = self.solve(params)
+        payoff_vector = self.solve(params)
         discount_factor = float(
             self.parent.discount_curve.get_discount_factors(
                 (self.parent.pricing_date, self.parent.maturity)
             )[-1, 1]
         )
-        return discount_factor * cash_flow
+        return discount_factor * payoff_vector
