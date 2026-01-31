@@ -147,24 +147,22 @@ def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:
     """
     if n < 0:
         raise ValueError("n must be >= 0")
-    if not (0.0 <= float(p) <= 1.0):
+
+    p = float(p)
+    if not (0.0 <= p <= 1.0):
         raise ValueError("p must be in [0, 1]")
 
     k_arr = np.asarray(k, dtype=int)
-    if np.any((k_arr < 0) | (k_arr > n)):
-        # Out-of-support values have pmf 0
-        out = np.zeros_like(k_arr, dtype=float)
-        in_support = (k_arr >= 0) & (k_arr <= n)
-        if np.any(in_support):
-            ks = k_arr[in_support]
-            out[in_support] = np.array([comb(n, int(kk)) for kk in ks], dtype=float) * (
-                (p**ks) * ((1.0 - p) ** (n - ks))
-            )
+    out = np.zeros_like(k_arr, dtype=float)
+
+    in_support = (k_arr >= 0) & (k_arr <= n)
+    if not np.any(in_support):
         return out
 
-    return np.array([comb(n, int(kk)) for kk in k_arr], dtype=float) * (
-        (p**k_arr) * ((1.0 - p) ** (n - k_arr))
-    )
+    ks = k_arr[in_support]
+    combs = np.array([comb(n, int(kk)) for kk in ks], dtype=float)
+    out[in_support] = combs * (p**ks) * ((1.0 - p) ** (n - ks))
+    return out
 
 
 def expected_binomial(
@@ -177,6 +175,12 @@ def expected_binomial(
     This is a small convenience wrapper around the explicit sum
     $\sum_{k=0}^n \binom{n}{k} p^k (1-p)^{n-k} f(k)$.
     """
+    if n < 0:
+        raise ValueError("n must be >= 0")
+    p = float(p)
+    if not (0.0 <= p <= 1.0):
+        raise ValueError("p must be in [0, 1]")
+
     ks = np.arange(n + 1)
     pmf = binomial_pmf(ks, n=n, p=p)
     vals = np.asarray(f(ks), dtype=float)
@@ -198,34 +202,48 @@ def expected_binomial_payoff(
 ) -> float:
     """Expected vanilla payoff under a binomial terminal distribution.
 
-    Notes
-    -----
-    In binomial-tree style models, the terminal spot is
-    $S_T(k) = S_0 u^k d^{n-k}$
-
     Parameters
     ==========
     S0:
         Initial spot.
-    n, p:
-        Binomial distribution parameters.
+    n:
+        Number of steps.
+    T:
+        Time to maturity (years).
     side:
         "call" or "put".
     K:
         Strike.
-    u, d:
-        Optional up/down multipliers used to map k -> terminal spot. If omitted,
-        the function returns the (k-invariant) payoff at S0.
+    u:
+        Up multiplier for one step. Down multiplier is set to d = 1 / u.
+
+    Notes
+    -----
+    In a CRR-style model, the terminal spot is $S_T(k) = S_0 u^k d^{n-k}$
+    with risk-neutral probability
+    $p = (e^{(r-q)\Delta t} - d) / (u - d)$.
+    This function returns the expected terminal payoff (not discounted).
     """
     side_l = str(side).lower()
     if side_l not in ("call", "put"):
         raise ValueError("side must be 'call' or 'put'")
 
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    if T <= 0:
+        raise ValueError("T must be positive")
+
     S0 = float(S0)
     K = float(K)
+    r = float(r)
+    q = float(q)
 
+    if u is None:
+        raise ValueError("u must be provided")
     u = float(u)
-    d = float(1 / u)
+    if u <= 0:
+        raise ValueError("u must be positive")
+    d = 1.0 / u
 
     def payoff_from_k(ks: np.ndarray) -> np.ndarray:
         ST = S0 * (u**ks) * (d ** (n - ks))
@@ -235,5 +253,7 @@ def expected_binomial_payoff(
 
     delta_t = T / n
     p = (np.exp((r - q) * delta_t) - d) / (u - d)
+    if not (0.0 <= p <= 1.0):
+        raise ValueError("risk-neutral probability p must be in [0, 1]")
 
     return expected_binomial(n=n, p=p, f=payoff_from_k)
