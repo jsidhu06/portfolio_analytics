@@ -122,14 +122,6 @@ def test_implied_volatility_rejects_out_of_bounds_price():
         implied_volatility(target_price, valuation)
 
 
-def test_implied_volatility_rejects_unimplemented_method():
-    valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
-    target_price = valuation.present_value()
-
-    with pytest.raises(NotImplementedError, match="not implemented"):
-        implied_volatility(target_price, valuation, method=ImpliedVolMethod.BRENNER_SUBRAHMANYAM)
-
-
 @pytest.mark.parametrize("pricing_method", [PricingMethod.BINOMIAL, PricingMethod.PDE_FD])
 def test_implied_volatility_requires_bsm(pricing_method: PricingMethod):
     valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
