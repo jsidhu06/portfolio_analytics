@@ -427,6 +427,30 @@ class TestOptionValuation:
                 pricing_method=PricingMethod.BSM,
             )
 
+    def test_option_valuation_currency_mismatch(self):
+        """Test that OptionValuation raises for cross-currency inputs."""
+        ud = UnderlyingPricingData(
+            initial_value=100.0,
+            volatility=0.2,
+            market_data=self.market_data,
+        )
+
+        eur_spec = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="EUR",
+        )
+
+        with pytest.raises(NotImplementedError, match="Cross-currency valuation is not supported"):
+            OptionValuation(
+                name="CALL_EUR",
+                underlying=ud,
+                spec=eur_spec,
+                pricing_method=PricingMethod.BSM,
+            )
+
     def test_binomial_condor_equals_sum_of_legs(self):
         """A European condor payoff priced directly equals sum of vanilla legs (binomial)."""
         ud = UnderlyingPricingData(

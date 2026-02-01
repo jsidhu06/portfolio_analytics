@@ -327,6 +327,12 @@ class OptionValuation:
             self.option_type = spec.call_put
         else:
             self.option_type = None
+
+        if self.currency != underlying.currency:
+            raise NotImplementedError(
+                "Cross-currency valuation is not supported. "
+                "Option currency must match the underlying market currency."
+            )
         self.exercise_type = spec.exercise_type
         self.pricing_method = pricing_method
         self.contract_size = spec.contract_size
