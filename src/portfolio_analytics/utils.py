@@ -91,6 +91,101 @@ def pv_discrete_dividends(
     return float(pv)
 
 
+def forward_price(
+    *,
+    spot: float,
+    pricing_date: datetime,
+    maturity: datetime,
+    short_rate: float,
+    dividend_yield: float = 0.0,
+    discrete_dividends: list[tuple[datetime, float]] | None = None,
+    day_count_convention: int | float = 365,
+) -> float:
+    """Compute the no-arbitrage forward price for an equity-style underlying.
+
+    Supports either continuous dividend yield or discrete dividends (not both).
+    """
+    if dividend_yield != 0.0 and discrete_dividends:
+        raise ValueError(
+            "Provide either a continuous dividend_yield or discrete_dividends, not both."
+        )
+
+    t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
+    if t <= 0:
+        raise ValueError("maturity must be after pricing_date")
+
+    spot = float(spot)
+    short_rate = float(short_rate)
+    dividend_yield = float(dividend_yield)
+
+    if discrete_dividends:
+        pv_divs = pv_discrete_dividends(
+            discrete_dividends, pricing_date, maturity, short_rate, day_count_convention
+        )
+        prepaid_forward = spot - pv_divs
+        return float(prepaid_forward * np.exp(short_rate * t))
+
+    return float(spot * np.exp((short_rate - dividend_yield) * t))
+
+
+def put_call_parity_rhs(
+    *,
+    spot: float,
+    strike: float,
+    pricing_date: datetime,
+    maturity: datetime,
+    short_rate: float,
+    dividend_yield: float = 0.0,
+    discrete_dividends: list[tuple[datetime, float]] | None = None,
+    day_count_convention: int | float = 365,
+) -> float:
+    """Compute the RHS of put-call parity for European options.
+
+    Returns C - P implied by no-arbitrage (i.e., PV(F - K)).
+    """
+    t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
+    if t <= 0:
+        raise ValueError("maturity must be after pricing_date")
+
+    fwd = forward_price(
+        spot=spot,
+        pricing_date=pricing_date,
+        maturity=maturity,
+        short_rate=short_rate,
+        dividend_yield=dividend_yield,
+        discrete_dividends=discrete_dividends,
+        day_count_convention=day_count_convention,
+    )
+    return float(np.exp(-short_rate * t) * (fwd - float(strike)))
+
+
+def put_call_parity_gap(
+    *,
+    call_price: float,
+    put_price: float,
+    spot: float,
+    strike: float,
+    pricing_date: datetime,
+    maturity: datetime,
+    short_rate: float,
+    dividend_yield: float = 0.0,
+    discrete_dividends: list[tuple[datetime, float]] | None = None,
+    day_count_convention: int | float = 365,
+) -> float:
+    """Return call-put parity residual: (C - P) - RHS."""
+    rhs = put_call_parity_rhs(
+        spot=spot,
+        strike=strike,
+        pricing_date=pricing_date,
+        maturity=maturity,
+        short_rate=short_rate,
+        dividend_yield=dividend_yield,
+        discrete_dividends=discrete_dividends,
+        day_count_convention=day_count_convention,
+    )
+    return float(call_price - put_price - rhs)
+
+
 def sn_random_numbers(
     shape: tuple[int, int, int],
     antithetic: bool = True,
