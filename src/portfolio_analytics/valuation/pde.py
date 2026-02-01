@@ -199,34 +199,33 @@ def _european_vanilla_fd_cn(
 
         # LHS: (I - A); RHS: (I + A)
         # Interior system size = spot_steps - 1
-        L_lower = -a[1:]  # length M-2
-        L_diag = 1.0 - b  # length M-1
-        L_upper = -c[:-1]  # length M-2
+        L_lower = -a
+        L_diag = 1.0 - b
+        L_upper = -c
 
-        R_lower = a[1:]
+        R_lower = a
         R_diag = 1.0 + b
-        R_upper = c[:-1]
+        R_upper = c
         left, right = boundary_values(tau)
 
-        # Apply boundary values at current tau
+        # Store previous time level before applying new boundary values
+        V_old = V.copy()
+
+        # Apply boundary values at current tau (new time level)
         V[0] = left
         V[-1] = right
 
-        V_old = V.copy()
-
         # RHS for interior nodes
-        rhs = (
-            R_diag * V_old[i]
-            + np.concatenate(([0.0], R_lower)) * V_old[i - 1]  # align lengths safely
-            + np.concatenate((R_upper, [0.0])) * V_old[i + 1]
-        )
+        rhs = R_lower * V_old[i - 1] + R_diag * V_old[i] + R_upper * V_old[i + 1]
 
         # Boundary adjustments (interior equation references V[0] and V[-1])
-        rhs[0] += a[0] * V_old[0]  # i=1 uses V[0]
-        rhs[-1] += c[-1] * V_old[-1]  # i=M-1 uses V[M]
+        # Crank–Nicolson uses (I + A) V_old on the RHS and (I - A) V_new on the LHS,
+        # so boundary contributions from both time levels appear in the RHS.
+        rhs[0] += a[0] * V[0]  # i=1 uses V[0]
+        rhs[-1] += c[-1] * V[-1]  # i=M-1 uses V[M]
 
         # Solve tridiagonal system for interior values at new tau
-        x = _solve_tridiagonal_thomas(L_lower, L_diag, L_upper, rhs)
+        x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs)
         V[i] = x
 
         # Apply discrete dividend jump at tau if needed
@@ -328,10 +327,12 @@ def _american_vanilla_fd_cn_psor(
         R_diag = 1.0 + b
         R_upper = c
         left, right = boundary_values(tau)
+        # Store previous time level before applying new boundary values
+        V_old = V.copy()
+
+        # Apply boundary values at current tau (new time level)
         V[0] = left
         V[-1] = right
-
-        V_old = V.copy()
         rhs = R_lower * V_old[i - 1] + R_diag * V_old[i] + R_upper * V_old[i + 1]
 
         exercise_i = intrinsic[i]
