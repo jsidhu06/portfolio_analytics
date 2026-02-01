@@ -101,8 +101,10 @@ def _apply_dividend_jump(
     values: np.ndarray,
     spot_grid: np.ndarray,
     amount: float,
-) -> np.ndarray:
-    """Apply the cash dividend jump condition V(S,t^-)=V(S-D,t^+)."""
+) -> None:
+    """Apply the cash dividend jump condition V(S,t^-)=V(S-D,t^+).
+    values ndarray is amended in place
+    """
     if amount == 0.0:
         return values
     shifted = np.interp(
@@ -113,7 +115,6 @@ def _apply_dividend_jump(
         right=values[-1],
     )
     values[:] = shifted
-    return values
 
 
 def _european_vanilla_fd_cn(
@@ -198,9 +199,9 @@ def _european_vanilla_fd_cn(
 
         # LHS: (I - A); RHS: (I + A)
         # Interior system size = spot_steps - 1
-        L_lower = -a[1:]  # length n-1
-        L_diag = 1.0 - b  # length n
-        L_upper = -c[:-1]  # length n-1
+        L_lower = -a[1:]  # length M-2
+        L_diag = 1.0 - b  # length M-1
+        L_upper = -c[:-1]  # length M-2
 
         R_lower = a[1:]
         R_diag = 1.0 + b
