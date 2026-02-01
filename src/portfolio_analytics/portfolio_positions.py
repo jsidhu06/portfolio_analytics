@@ -272,7 +272,7 @@ class DerivativesPortfolio:
         self.underlying_objects: dict[str, PathSimulation] = {}
         self.valuation_objects: dict[str, OptionValuation] = {}
         self.random_seed = random_seed
-        self.special_dates = []
+        self.special_dates = set()
 
         # Validate inputs + derive portfolio schedule
         if not positions:

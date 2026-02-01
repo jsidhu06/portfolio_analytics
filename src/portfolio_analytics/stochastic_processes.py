@@ -34,7 +34,7 @@ class SimulationConfig:
     num_steps: int | None = None
     day_count_convention: int | float = 365
     time_grid: np.ndarray | None = None  # optional portfolio override
-    special_dates: list[dt.datetime] = field(default_factory=list)
+    special_dates: set[dt.datetime] = field(default_factory=set)
 
     def __post_init__(self):
         if self.paths is None or int(self.paths) <= 0:
@@ -224,11 +224,10 @@ class PathSimulation(ABC):
         self.num_steps = sim.num_steps
         self.day_count_convention = sim.day_count_convention
         self.time_grid = sim.time_grid
-        self.special_dates = sim.special_dates
+        self.special_dates = set(sim.special_dates)
         if self.discrete_dividends:
             for ex_date, _ in self.discrete_dividends:
-                if ex_date not in self.special_dates:
-                    self.special_dates.append(ex_date)
+                self.special_dates.add(ex_date)
 
         # horizon / end_date logic
         if self.time_grid is not None:
@@ -319,7 +318,7 @@ class PathSimulation(ABC):
 
         # Detach mutable containers to avoid shared state across clones.
         cloned.market_data = self.market_data  # immutable so fine
-        cloned.special_dates = list(self.special_dates)
+        cloned.special_dates = set(self.special_dates)
         cloned.discrete_dividends = list(self.discrete_dividends)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
 
@@ -335,7 +334,7 @@ class PathSimulation(ABC):
 
         # Normalize list-like overrides
         if "special_dates" in kwargs:
-            cloned.special_dates = list(kwargs["special_dates"] or [])
+            cloned.special_dates = set(kwargs["special_dates"] or [])
 
         if "discrete_dividends" in kwargs:
             cloned.discrete_dividends = list(kwargs["discrete_dividends"] or [])
@@ -370,8 +369,7 @@ class PathSimulation(ABC):
         # Ensure discrete dividend dates are included as special dates.
         if cloned.discrete_dividends:
             for ex_date, _ in cloned.discrete_dividends:
-                if ex_date not in cloned.special_dates:
-                    cloned.special_dates.append(ex_date)
+                cloned.special_dates.add(ex_date)
 
         return cloned
 

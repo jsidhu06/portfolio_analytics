@@ -351,8 +351,7 @@ class OptionValuation:
         # Only add special dates for PathSimulation (Monte Carlo)
         if isinstance(underlying, PathSimulation):
             for d in (self.pricing_date, self.maturity):
-                if d not in underlying.special_dates:
-                    underlying.special_dates.append(d)
+                underlying.special_dates.add(d)
 
         # Validate pricing_method
         if not isinstance(pricing_method, PricingMethod):

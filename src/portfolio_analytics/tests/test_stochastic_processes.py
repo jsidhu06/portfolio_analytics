@@ -406,10 +406,10 @@ class TestSimulationConfig:
 
     def test_simulation_config_with_special_dates(self):
         """Test SimulationConfig with special dates."""
-        special_dates = [
+        special_dates = {
             dt.datetime(2025, 3, 17),
             dt.datetime(2025, 6, 20),
-        ]
+        }
 
         config = SimulationConfig(
             paths=1000,
