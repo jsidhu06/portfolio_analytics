@@ -2,10 +2,10 @@
 
 from datetime import datetime
 from math import comb
-from typing import Callable, Literal
+from typing import Callable
 import numpy as np
 
-from .enums import DayCountConvention
+from .enums import DayCountConvention, OptionType
 
 SECONDS_IN_DAY = 86400
 
@@ -29,9 +29,6 @@ def calculate_year_fraction(
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Calculate year fraction between two dates.
-
-    This is a fundamental calculation in finance for time-value of money,
-    discount factors, and accrued interest calculations.
 
     Parameters
     ==========
@@ -321,7 +318,7 @@ def expected_binomial_payoff(
     S0: float,
     n: int,
     T: float,
-    side: Literal["call", "put"],
+    option_type: OptionType,
     K: float,
     r: float,
     q: float,
@@ -337,8 +334,8 @@ def expected_binomial_payoff(
         Number of steps.
     T:
         Time to maturity (years).
-    side:
-        "call" or "put".
+    option_type: OptionType
+        Option type (Call or Put).
     K:
         Strike.
     u:
@@ -351,9 +348,8 @@ def expected_binomial_payoff(
     $p = (e^{(r-q)\Delta t} - d) / (u - d)$.
     This function returns the expected terminal payoff (not discounted).
     """
-    side_l = str(side).lower()
-    if side_l not in ("call", "put"):
-        raise ValueError("side must be 'call' or 'put'")
+    if option_type not in (OptionType.CALL, OptionType.PUT):
+        raise ValueError("option_type must be OptionType.CALL or OptionType.PUT")
 
     if n < 1:
         raise ValueError("n must be >= 1")
@@ -374,7 +370,7 @@ def expected_binomial_payoff(
 
     def payoff_from_k(ks: np.ndarray) -> np.ndarray:
         ST = S0 * (u**ks) * (d ** (n - ks))
-        if side_l == "call":
+        if option_type is OptionType.CALL:
             return np.maximum(ST - K, 0.0)
         return np.maximum(K - ST, 0.0)
 
