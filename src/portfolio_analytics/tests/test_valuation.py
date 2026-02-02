@@ -206,54 +206,6 @@ class TestUnderlyingPricingData:
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
 
-
-def test_binomial_pv_matches_expected_binomial_payoff():
-    pricing_date = dt.datetime(2025, 1, 1)
-    maturity = dt.datetime(2026, 1, 1)
-    r = 0.05
-    spot = 100.0
-    strike = 100.0
-    vol = 0.2
-    dividend_yield = 0.0
-    n_steps = 250
-
-    market_data = MarketData(pricing_date, ConstantShortRate("csr", r), currency="USD")
-    underlying = UnderlyingPricingData(
-        initial_value=spot,
-        volatility=vol,
-        market_data=market_data,
-        dividend_yield=dividend_yield,
-    )
-    spec = OptionSpec(
-        option_type=OptionType.CALL,
-        exercise_type=ExerciseType.EUROPEAN,
-        strike=strike,
-        maturity=maturity,
-        currency="USD",
-    )
-    valuation = OptionValuation("call_binom", underlying, spec, PricingMethod.BINOMIAL)
-    pv_binom = valuation.present_value(params=BinomialParams(num_steps=n_steps))
-
-    T = calculate_year_fraction(
-        pricing_date, maturity, day_count_convention=DayCountConvention.ACT_365F
-    )
-    dt_step = T / n_steps
-    u = np.exp(vol * np.sqrt(dt_step))
-
-    expected_payoff = expected_binomial_payoff(
-        S0=spot,
-        n=n_steps,
-        T=T,
-        side="call",
-        K=strike,
-        r=r,
-        q=dividend_yield,
-        u=u,
-    )
-    pv_expected = np.exp(-r * T) * expected_payoff
-
-    assert np.isclose(pv_binom, pv_expected, rtol=1.0e-4)
-
     def test_underlying_data_creation(self):
         """Test successful creation of UnderlyingPricingData."""
         ud = UnderlyingPricingData(
@@ -1584,6 +1536,39 @@ class TestBinomialValuation:
         # Prices should be closer with more steps (convergence)
         # This is a weak test due to oscillation in binomial, but direction should be reasonable
         assert abs(price_200 - price_100) < 1.0
+
+    def test_binomial_pv_matches_expected_binomial_payoff(self):
+        n_steps = 250
+
+        spec = OptionSpec(
+            option_type=OptionType.CALL,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency="USD",
+        )
+        valuation = OptionValuation("call_binom", self.ud, spec, PricingMethod.BINOMIAL)
+        pv_binom = valuation.present_value(params=BinomialParams(num_steps=n_steps))
+
+        T = calculate_year_fraction(
+            self.pricing_date, self.maturity, day_count_convention=DayCountConvention.ACT_365F
+        )
+        dt_step = T / n_steps
+        u = np.exp(self.volatility * np.sqrt(dt_step))
+
+        expected_payoff = expected_binomial_payoff(
+            S0=self.spot,
+            n=n_steps,
+            T=T,
+            option_type=OptionType.CALL,
+            K=self.strike,
+            r=self.rate,
+            q=0,
+            u=u,
+        )
+        pv_expected = np.exp(-self.rate * T) * expected_payoff
+
+        assert np.isclose(pv_binom, pv_expected, rtol=1.0e-4)
 
 
 class TestMCSValuation:
