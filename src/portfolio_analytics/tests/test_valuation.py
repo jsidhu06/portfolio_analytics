@@ -9,7 +9,6 @@ from portfolio_analytics.valuation import (
     UnderlyingPricingData,
     OptionValuation,
 )
-from portfolio_analytics.portfolio_positions import UnderlyingConfig
 from portfolio_analytics.strategies import CondorSpec
 from portfolio_analytics.valuation.bsm import _BSMEuropeanValuation
 from portfolio_analytics.valuation.binomial import (
@@ -147,54 +146,6 @@ class TestCondorSpec:
                 maturity=dt.datetime(2026, 12, 31),
                 currency="USD",
             )
-
-
-class TestUnderlyingConfig:
-    """Tests for UnderlyingConfig dataclass."""
-
-    def test_gbm_config_creation(self):
-        """Test UnderlyingConfig for GBM model."""
-        config = UnderlyingConfig(
-            name="STOCK",
-            model="gbm",
-            initial_value=100.0,
-            volatility=0.2,
-        )
-        assert config.name == "STOCK"
-        assert config.model == "gbm"
-        assert config.initial_value == 100.0
-        assert config.lambd is None
-        assert config.kappa is None
-
-    def test_jd_config_creation(self):
-        """Test UnderlyingConfig for Jump Diffusion model."""
-        config = UnderlyingConfig(
-            name="STOCK_JD",
-            model="jd",
-            initial_value=100.0,
-            volatility=0.2,
-            lambd=0.5,
-            mu=-0.1,
-            delta=0.3,
-        )
-        assert config.model == "jd"
-        assert config.lambd == 0.5
-        assert config.mu == -0.1
-        assert config.delta == 0.3
-
-    def test_srd_config_creation(self):
-        """Test UnderlyingConfig for Square Root Diffusion model."""
-        config = UnderlyingConfig(
-            name="RATE",
-            model="srd",
-            initial_value=0.03,
-            volatility=0.015,
-            kappa=0.2,
-            theta=0.05,
-        )
-        assert config.model == "srd"
-        assert config.kappa == 0.2
-        assert config.theta == 0.05
 
 
 class TestUnderlyingPricingData:
