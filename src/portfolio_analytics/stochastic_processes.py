@@ -209,42 +209,79 @@ class PathSimulation(ABC):
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):
-        self.name = name
-        self.market_data = market_data
+        self._name = name
+        self._market_data = market_data
+        self._process_params = process_params
+        self._sim = sim
+        self._correlation_context = corr
 
-        self.initial_value = process_params.initial_value
-        self.volatility = process_params.volatility
+        # Mutable working state (not from config)
         if isinstance(process_params, (GBMParams, JDParams)):
-            self.dividend_yield = process_params.dividend_yield
             self.discrete_dividends = list(process_params.discrete_dividends or [])
         else:
             self.discrete_dividends = []
 
-        self.paths = sim.paths
-        self.frequency = sim.frequency
-        self.num_steps = sim.num_steps
-        self.day_count_convention = sim.day_count_convention
         self.time_grid = sim.time_grid
         self.special_dates = set(sim.special_dates)
         if self.discrete_dividends:
             for ex_date, _ in self.discrete_dividends:
                 self.special_dates.add(ex_date)
 
-        # horizon / end_date logic
-        if self.time_grid is not None:
-            self.end_date = max(self.time_grid)
-        else:
-            self.end_date = sim.end_date
-
         self.instrument_values = None
-        self.correlation_context = corr
 
         if corr is not None:
             # only needed in a portfolio context when
             # risk factors are correlated
             self.cholesky_matrix = corr.cholesky_matrix
-            self.rn_set = corr.rn_set[self.name]
+            self.rn_set = corr.rn_set[self._name]
             self.random_numbers = corr.random_numbers
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def market_data(self) -> MarketData:
+        return self._market_data
+
+    @property
+    def initial_value(self) -> float:
+        return self._process_params.initial_value
+
+    @property
+    def volatility(self) -> float:
+        return self._process_params.volatility
+
+    @property
+    def dividend_yield(self) -> float:
+        return getattr(self._process_params, "dividend_yield", None)
+
+    @property
+    def paths(self) -> int:
+        return self._sim.paths
+
+    @property
+    def frequency(self) -> str | None:
+        return self._sim.frequency
+
+    @property
+    def num_steps(self) -> int | None:
+        return self._sim.num_steps
+
+    @property
+    def day_count_convention(self) -> DayCountConvention:
+        return self._sim.day_count_convention
+
+    @property
+    def end_date(self) -> dt.datetime | None:
+        # Computed based on time_grid if present, else from sim config
+        if self.time_grid is not None:
+            return max(self.time_grid)
+        return self._sim.end_date
+
+    @property
+    def correlation_context(self) -> CorrelationContext | None:
+        return self._correlation_context
 
     def generate_time_grid(self) -> None:
         "Generate time grid for simulation of stochastic process"
@@ -274,15 +311,15 @@ class PathSimulation(ABC):
 
     @property
     def pricing_date(self) -> dt.datetime:
-        return self.market_data.pricing_date
+        return self._market_data.pricing_date
 
     @property
     def currency(self) -> str:
-        return self.market_data.currency
+        return self._market_data.currency
 
     @property
     def discount_curve(self):
-        return self.market_data.discount_curve
+        return self._market_data.discount_curve
 
     def replace(self, **kwargs) -> "PathSimulation":
         """Return a shallow-cloned instance with selected attributes replaced.
@@ -318,7 +355,6 @@ class PathSimulation(ABC):
         cloned = copy.copy(self)
 
         # Detach mutable containers to avoid shared state across clones.
-        cloned.market_data = self.market_data  # immutable so fine
         cloned.special_dates = set(self.special_dates)
         cloned.discrete_dividends = list(self.discrete_dividends)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
@@ -326,12 +362,39 @@ class PathSimulation(ABC):
         # Always reset cached paths unless explicitly overridden.
         cloned.instrument_values = None
 
-        # Apply replacements (skip market_data & market_data-derived keys)
-        deferred = {"market_data", "pricing_date", "discount_curve", "currency"}
-        for key, value in kwargs.items():
-            if key in deferred:
-                continue
-            setattr(cloned, key, value)
+        # Handle simple name override
+        if "name" in kwargs:
+            cloned._name = kwargs["name"]
+
+        # Build updated process_params if any of its fields changed
+        process_param_keys = {"initial_value", "volatility", "dividend_yield", "discrete_dividends"}
+        if process_param_keys.intersection(kwargs):
+            param_updates = {}
+            for key in ("initial_value", "volatility", "dividend_yield", "discrete_dividends"):
+                if key in kwargs:
+                    if not hasattr(cloned._process_params, key):
+                        raise ValueError(
+                            f"{key} is not supported for {type(cloned._process_params).__name__}"
+                        )
+                    param_updates[key] = kwargs[key]
+            if param_updates:
+                cloned._process_params = dc_replace(cloned._process_params, **param_updates)
+
+        # Build updated sim config if any of its fields changed
+        sim_keys = {"paths", "frequency", "num_steps", "day_count_convention", "end_date"}
+        if sim_keys.intersection(kwargs):
+            sim_updates = {}
+            if "paths" in kwargs:
+                sim_updates["paths"] = kwargs["paths"]
+            if "frequency" in kwargs:
+                sim_updates["frequency"] = kwargs["frequency"]
+            if "num_steps" in kwargs:
+                sim_updates["num_steps"] = kwargs["num_steps"]
+            if "day_count_convention" in kwargs:
+                sim_updates["day_count_convention"] = kwargs["day_count_convention"]
+            if "end_date" in kwargs:
+                sim_updates["end_date"] = kwargs["end_date"]
+            cloned._sim = dc_replace(cloned._sim, **sim_updates)
 
         # Normalize list-like overrides
         if "special_dates" in kwargs:
@@ -344,8 +407,6 @@ class PathSimulation(ABC):
             cloned.time_grid = (
                 None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
             )
-            if cloned.time_grid is not None and len(cloned.time_grid) > 0:
-                cloned.end_date = max(cloned.time_grid)
         else:
             if any(
                 key in kwargs
@@ -355,17 +416,18 @@ class PathSimulation(ABC):
 
         # Update market_data if any related fields were overridden
         if "market_data" in kwargs:
-            cloned.market_data = kwargs["market_data"]
+            cloned._market_data = kwargs["market_data"]
         else:
-            updates = {}
-            if "pricing_date" in kwargs:
-                updates["pricing_date"] = kwargs["pricing_date"]
-            if "discount_curve" in kwargs:
-                updates["discount_curve"] = kwargs["discount_curve"]
-            if "currency" in kwargs:
-                updates["currency"] = kwargs["currency"]
-            if updates:
-                cloned.market_data = dc_replace(cloned.market_data, **updates)
+            market_data_keys = {"pricing_date", "discount_curve", "currency"}
+            if market_data_keys.intersection(kwargs):
+                updates = {}
+                if "pricing_date" in kwargs:
+                    updates["pricing_date"] = kwargs["pricing_date"]
+                if "discount_curve" in kwargs:
+                    updates["discount_curve"] = kwargs["discount_curve"]
+                if "currency" in kwargs:
+                    updates["currency"] = kwargs["currency"]
+                cloned._market_data = dc_replace(cloned._market_data, **updates)
 
         # Ensure discrete dividend dates are included as special dates.
         if cloned.discrete_dividends:
@@ -517,9 +579,18 @@ class JumpDiffusion(PathSimulation):
         corr: CorrelationContext | None = None,
     ):
         super().__init__(name, market_data, process_params, sim, corr=corr)
-        self.lambd = process_params.lambd  # lambda (average number of jumps per year)
-        self.mu = process_params.mu  # mu_J (mean of log jump size)
-        self.delta = process_params.delta  # delta_J (std of log jump size)
+
+    @property
+    def lambd(self) -> float:
+        return self._process_params.lambd
+
+    @property
+    def mu(self) -> float:
+        return self._process_params.mu
+
+    @property
+    def delta(self) -> float:
+        return self._process_params.delta
 
     def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         # TO DO: Check these calcs
@@ -611,8 +682,14 @@ class SquareRootDiffusion(PathSimulation):
         corr: CorrelationContext | None = None,
     ):
         super().__init__(name, market_data, process_params, sim, corr=corr)
-        self.kappa = process_params.kappa
-        self.theta = process_params.theta
+
+    @property
+    def kappa(self) -> float:
+        return self._process_params.kappa
+
+    @property
+    def theta(self) -> float:
+        return self._process_params.theta
 
     def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
