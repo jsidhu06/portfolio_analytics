@@ -13,6 +13,7 @@ from portfolio_analytics.stochastic_processes import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.enums import DayCountConvention
 
 
 class TestPathSimulation:
@@ -391,7 +392,7 @@ class TestSimulationConfig:
         assert config.paths == 5000
         assert config.frequency == "D"
         assert config.end_date == dt.datetime(2026, 1, 1)
-        assert config.day_count_convention == 365  # default
+        assert config.day_count_convention == DayCountConvention.ACT_365F  # default
 
     def test_simulation_config_custom_day_count(self):
         """Test SimulationConfig with custom day count convention."""

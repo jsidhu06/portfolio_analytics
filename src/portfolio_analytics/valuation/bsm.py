@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.stats import norm
 from ..utils import calculate_year_fraction, pv_discrete_dividends
-from ..enums import OptionType
+from ..enums import DayCountConvention, OptionType
 
 if TYPE_CHECKING:
     from .core import OptionValuation
@@ -94,7 +94,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
-            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
         )
 
         # Calculate d1 and d2
@@ -144,7 +146,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
-            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
         )
 
         # Calculate d1
@@ -181,7 +185,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
-            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
         )
 
         if time_to_maturity <= 0:
@@ -226,7 +232,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
-            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
         )
 
         if time_to_maturity <= 0:
@@ -281,7 +289,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
-            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
         )
 
         if time_to_maturity <= 0:
@@ -349,7 +359,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
-            self.parent.pricing_date, self.parent.maturity, day_count_convention=365
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
         )
 
         if time_to_maturity <= 0:

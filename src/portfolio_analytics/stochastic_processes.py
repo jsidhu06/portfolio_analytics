@@ -7,6 +7,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 from .market_environment import MarketData, CorrelationContext
+from .enums import DayCountConvention
 from .utils import calculate_year_fraction, sn_random_numbers
 
 
@@ -32,7 +33,7 @@ class SimulationConfig:
     frequency: str | None = None
     end_date: dt.datetime | None = None
     num_steps: int | None = None
-    day_count_convention: int | float = 365
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: set[dt.datetime] = field(default_factory=set)
 

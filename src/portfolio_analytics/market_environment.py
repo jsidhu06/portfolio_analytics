@@ -4,6 +4,7 @@
 from dataclasses import dataclass
 import datetime as dt
 import numpy as np
+from .enums import DayCountConvention
 from .rates import ConstantShortRate
 
 
@@ -105,10 +106,10 @@ class ValuationEnvironment:
     frequency:
         Time grid frequency (e.g. 'D', 'W', 'M').
     day_count_convention:
-        Day count basis (default 365).
+        Day count basis (default ACT/365F).
     """
 
     market_data: MarketData
     paths: int
     frequency: str
-    day_count_convention: int = 365
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F

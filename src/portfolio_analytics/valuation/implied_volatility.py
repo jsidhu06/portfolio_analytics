@@ -9,6 +9,7 @@ import numpy as np
 from scipy import optimize
 
 from ..enums import (
+    DayCountConvention,
     ExerciseType,
     ImpliedVolMethod,
     OptionType,
@@ -46,7 +47,9 @@ def _adjusted_spot_and_dividend_yield(valuation: OptionValuation) -> tuple[float
 
 def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
     time_to_maturity = calculate_year_fraction(
-        valuation.pricing_date, valuation.maturity, day_count_convention=365
+        valuation.pricing_date,
+        valuation.maturity,
+        day_count_convention=DayCountConvention.ACT_365F,
     )
     if time_to_maturity <= 0:
         raise ValueError("Option maturity must be after pricing date.")

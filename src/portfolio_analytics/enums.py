@@ -39,3 +39,10 @@ class ImpliedVolMethod(Enum):
     NEWTON_RAPHSON = "newton_raphson"
     BISECTION = "bisection"
     BRENTQ = "brentq"
+
+
+class DayCountConvention(Enum):
+    ACT_360 = "ACT/360"
+    ACT_365F = "ACT/365F"
+    ACT_365_25 = "ACT/365.25"
+    THIRTY_360_US = "30/360 US"

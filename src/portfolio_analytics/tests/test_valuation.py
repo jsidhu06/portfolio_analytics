@@ -16,7 +16,13 @@ from portfolio_analytics.valuation.binomial import (
     _BinomialEuropeanValuation,
 )
 from portfolio_analytics.valuation.monte_carlo import _MCEuropeanValuation
-from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod, PositionSide
+from portfolio_analytics.enums import (
+    DayCountConvention,
+    OptionType,
+    ExerciseType,
+    PricingMethod,
+    PositionSide,
+)
 from portfolio_analytics.stochastic_processes import (
     GeometricBrownianMotion,
     GBMParams,
@@ -228,7 +234,9 @@ def test_binomial_pv_matches_expected_binomial_payoff():
     valuation = OptionValuation("call_binom", underlying, spec, PricingMethod.BINOMIAL)
     pv_binom = valuation.present_value(params=BinomialParams(num_steps=n_steps))
 
-    T = calculate_year_fraction(pricing_date, maturity, day_count_convention=365)
+    T = calculate_year_fraction(
+        pricing_date, maturity, day_count_convention=DayCountConvention.ACT_365F
+    )
     dt_step = T / n_steps
     u = np.exp(vol * np.sqrt(dt_step))
 
@@ -368,7 +376,7 @@ class TestOptionValuation:
 
         sim_config = SimulationConfig(
             paths=20000,
-            day_count_convention=365,
+            day_count_convention=DayCountConvention.ACT_365F,
             time_grid=time_grid,
         )
 
@@ -505,7 +513,10 @@ class TestOptionValuation:
         """A European condor payoff priced directly equals sum of vanilla legs (Monte Carlo)."""
 
         simulation_config = SimulationConfig(
-            paths=200_000, frequency="W", day_count_convention=365, end_date=self.maturity
+            paths=200_000,
+            frequency="W",
+            day_count_convention=DayCountConvention.ACT_365F,
+            end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
         gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
@@ -562,7 +573,10 @@ class TestOptionValuation:
             dividend_yield=0.0,
         )
         simulation_config = SimulationConfig(
-            paths=200_000, frequency="W", day_count_convention=365, end_date=self.maturity
+            paths=200_000,
+            frequency="W",
+            day_count_convention=DayCountConvention.ACT_365F,
+            end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=initial_value, volatility=volatility)
         gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
@@ -731,7 +745,10 @@ class TestOptionValuation:
     def test_american_condor_is_sum_of_american_legs_mcs(self):
         """Same semantics under MCS/LSM: CondorSpec AMERICAN aggregates per-leg exercise."""
         simulation_config = SimulationConfig(
-            paths=50_000, frequency="W", day_count_convention=365, end_date=self.maturity
+            paths=50_000,
+            frequency="W",
+            day_count_convention=DayCountConvention.ACT_365F,
+            end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
         gbm = GeometricBrownianMotion(
@@ -834,7 +851,7 @@ class TestOptionValuation:
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim=SimulationConfig(
                 paths=1000,
-                day_count_convention=365,
+                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )
@@ -857,7 +874,7 @@ class TestOptionValuation:
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim=SimulationConfig(
                 paths=1000,
-                day_count_convention=365,
+                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )
@@ -878,7 +895,7 @@ class TestOptionValuation:
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim=SimulationConfig(
                 paths=1000,
-                day_count_convention=365,
+                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )

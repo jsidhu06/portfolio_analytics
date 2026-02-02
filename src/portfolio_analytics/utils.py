@@ -5,10 +5,29 @@ from math import comb
 from typing import Callable, Literal
 import numpy as np
 
+from .enums import DayCountConvention
+
 SECONDS_IN_DAY = 86400
 
 
-def calculate_year_fraction(start_date, end_date, day_count_convention: int | float = 365) -> float:
+def _day_count_30_360_us(start_date: datetime, end_date: datetime) -> float:
+    """30/360 (US) day-count fraction between two dates."""
+    y1, m1, d1 = start_date.year, start_date.month, start_date.day
+    y2, m2, d2 = end_date.year, end_date.month, end_date.day
+
+    if d1 == 31:
+        d1 = 30
+    if d2 == 31 and d1 in (30, 31):
+        d2 = 30
+
+    return (360 * (y2 - y1) + 30 * (m2 - m1) + (d2 - d1)) / 360.0
+
+
+def calculate_year_fraction(
+    start_date,
+    end_date,
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
+) -> float:
     """Calculate year fraction between two dates.
 
     This is a fundamental calculation in finance for time-value of money,
@@ -20,11 +39,12 @@ def calculate_year_fraction(start_date, end_date, day_count_convention: int | fl
         starting date
     end_date: datetime
         ending date
-    day_count_convention: int or float, default 365
-        number of days per year (day count convention):
-        - 365: Actual/365 Fixed
-        - 360: 30/360 (US)
-        - 365.25: Actual/Actual (approximate)
+    day_count_convention: DayCountConvention, default DayCountConvention.ACT_365F
+        Day-count basis. Supported:
+        - DayCountConvention.ACT_365F
+        - DayCountConvention.ACT_360
+        - DayCountConvention.ACT_365_25
+        - DayCountConvention.THIRTY_360_US
 
     Returns
     =======
@@ -39,13 +59,25 @@ def calculate_year_fraction(start_date, end_date, day_count_convention: int | fl
     >>> calculate_year_fraction(start, end)  # doctest: +SKIP
     0.00273972...
     """
+    if day_count_convention is DayCountConvention.THIRTY_360_US:
+        return _day_count_30_360_us(start_date, end_date)
+    if day_count_convention is DayCountConvention.ACT_360:
+        denom = 360.0
+    elif day_count_convention is DayCountConvention.ACT_365_25:
+        denom = 365.25
+    elif day_count_convention is DayCountConvention.ACT_365F:
+        denom = 365.0
+    else:
+        raise ValueError(f"Unsupported day_count_convention: {day_count_convention}")
+
     delta_days = (end_date - start_date).total_seconds() / SECONDS_IN_DAY
-    year_fraction = delta_days / day_count_convention
+    year_fraction = delta_days / denom
     return year_fraction
 
 
 def get_year_deltas(
-    date_list: list[datetime], day_count_convention: int | float = 365
+    date_list: list[datetime],
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> np.ndarray:
     """Return vector of floats with day deltas in year fractions.
 
@@ -56,7 +88,7 @@ def get_year_deltas(
     ==========
     date_list: list or array-like
         collection of datetime objects
-    day_count_convention: int or float, default 365
+    day_count_convention: DayCountConvention, default DayCountConvention.ACT_365F
         number of days per year (day count convention)
 
     Returns
@@ -74,7 +106,7 @@ def pv_discrete_dividends(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    day_count_convention: int | float = 365,
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Present value of discrete cash dividends between pricing_date and maturity.
 
@@ -99,7 +131,7 @@ def forward_price(
     short_rate: float,
     dividend_yield: float = 0.0,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
-    day_count_convention: int | float = 365,
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Compute the no-arbitrage forward price for an equity-style underlying.
 
@@ -137,7 +169,7 @@ def put_call_parity_rhs(
     short_rate: float,
     dividend_yield: float = 0.0,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
-    day_count_convention: int | float = 365,
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Compute the RHS of put-call parity for European options.
 
@@ -170,7 +202,7 @@ def put_call_parity_gap(
     short_rate: float,
     dividend_yield: float = 0.0,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
-    day_count_convention: int | float = 365,
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Return call-put parity residual: (C - P) - RHS."""
     rhs = put_call_parity_rhs(
