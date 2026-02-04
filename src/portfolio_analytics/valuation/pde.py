@@ -175,7 +175,7 @@ def _vanilla_fd_cn_core(
     schedule = dividend_schedule or []
     dividend_taus = [tau for tau, _ in schedule]
     tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
-    dividend_map = {tau: amount for tau, amount in schedule}
+    dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
     for n in range(1, tau_grid.size):
