@@ -97,8 +97,8 @@ def _european_vanilla_fd_implicit(
     smax = float(smax_mult * max(spot, strike))
     dS = smax / spot_steps
     S = np.linspace(0.0, smax, spot_steps + 1)
-    i = np.arange(1, spot_steps)
-    Si = S[i]
+    j = np.arange(1, spot_steps)
+    Sj = S[j]
 
     if option_type is OptionType.PUT:
         payoff = np.maximum(strike - S, 0.0)
@@ -109,20 +109,20 @@ def _european_vanilla_fd_implicit(
 
     dt = time_to_maturity / time_steps
 
+    a = (
+        0.5
+        * dt
+        * ((risk_free_rate - dividend_yield) * Sj / dS - (volatility**2) * (Sj**2) / (dS**2))
+    )
+    b = 1.0 + dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
+    c = (
+        -0.5
+        * dt
+        * ((risk_free_rate - dividend_yield) * Sj / dS + (volatility**2) * (Sj**2) / (dS**2))
+    )
+
     for n in range(1, time_steps + 1):
         tau = float(n * dt)
-
-        a = (
-            0.5
-            * dt
-            * ((volatility**2) * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
-        )
-        b = 1.0 + dt * ((volatility**2) * (Si**2) / (dS**2) + risk_free_rate)
-        c = (
-            0.5
-            * dt
-            * ((volatility**2) * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
-        )
 
         left, right = _boundary_values(
             option_type=option_type,
@@ -135,12 +135,12 @@ def _european_vanilla_fd_implicit(
         V[0] = left
         V[-1] = right
 
-        rhs = V[i].copy()
-        rhs[0] += a[0] * V[0]
-        rhs[-1] += c[-1] * V[-1]
+        rhs = V[j].copy()
+        rhs[0] -= a[0] * V[0]
+        rhs[-1] -= c[-1] * V[-1]
 
-        x = _solve_tridiagonal_thomas(-a[1:], b, -c[:-1], rhs)
-        V[i] = x
+        x = _solve_tridiagonal_thomas(a[1:], b, c[:-1], rhs)
+        V[j] = x
 
     price = np.interp(spot, S, V)
     return price, S, V
@@ -177,8 +177,8 @@ def _american_vanilla_fd_implicit_simple(
     smax = float(smax_mult * max(spot, strike))
     dS = smax / spot_steps
     S = np.linspace(0.0, smax, spot_steps + 1)
-    i = np.arange(1, spot_steps)
-    Si = S[i]
+    j = np.arange(1, spot_steps)
+    Sj = S[j]
 
     if option_type is OptionType.PUT:
         payoff = np.maximum(strike - S, 0.0)
@@ -190,20 +190,20 @@ def _american_vanilla_fd_implicit_simple(
 
     dt = time_to_maturity / time_steps
 
+    a = (
+        0.5
+        * dt
+        * ((risk_free_rate - dividend_yield) * Sj / dS - (volatility**2) * (Sj**2) / (dS**2))
+    )
+    b = 1.0 + dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
+    c = (
+        -0.5
+        * dt
+        * ((risk_free_rate - dividend_yield) * Sj / dS + (volatility**2) * (Sj**2) / (dS**2))
+    )
+
     for n in range(1, time_steps + 1):
         tau = float(n * dt)
-
-        a = (
-            0.5
-            * dt
-            * ((volatility**2) * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
-        )
-        b = 1.0 + dt * ((volatility**2) * (Si**2) / (dS**2) + risk_free_rate)
-        c = (
-            0.5
-            * dt
-            * ((volatility**2) * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
-        )
 
         left, right = _boundary_values(
             option_type=option_type,
@@ -216,13 +216,13 @@ def _american_vanilla_fd_implicit_simple(
         V[0] = left
         V[-1] = right
 
-        rhs = V[i].copy()
-        rhs[0] += a[0] * V[0]
-        rhs[-1] += c[-1] * V[-1]
+        rhs = V[j].copy()
+        rhs[0] -= a[0] * V[0]
+        rhs[-1] -= c[-1] * V[-1]
 
         # Solve the implicit system (European step), then apply early exercise
-        x = _solve_tridiagonal_thomas(-a[1:], b, -c[:-1], rhs)
-        V[i] = np.maximum(x, intrinsic[i])
+        x = _solve_tridiagonal_thomas(a[1:], b, c[:-1], rhs)
+        V[j] = np.maximum(x, intrinsic[j])
 
     price = np.interp(spot, S, V)
     return price, S, V
