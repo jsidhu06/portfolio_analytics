@@ -106,7 +106,7 @@ def _apply_dividend_jump(
     values ndarray is amended in place
     """
     if amount == 0.0:
-        return values
+        return
     shifted = np.interp(
         spot_grid - amount,
         spot_grid,
@@ -117,7 +117,7 @@ def _apply_dividend_jump(
     values[:] = shifted
 
 
-def _european_vanilla_fd_cn(
+def _vanilla_fd_cn_core(
     *,
     spot: float,
     strike: float,
@@ -130,16 +130,11 @@ def _european_vanilla_fd_cn(
     smax_mult: float,
     spot_steps: int,
     time_steps: int,
+    early_exercise: bool,
+    omega: float | None = None,
+    tol: float | None = None,
+    max_iter: int | None = None,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    """European vanilla option price via Crank–Nicolson FD.
-
-    Solves in the transformed time variable tau (time remaining):
-    - at maturity: tau = 0
-    - at pricing date: tau = T
-
-    Returns:
-      (price_at_spot, spot_grid_S, values_V_at_tau=T)
-    """
     if option_type not in (OptionType.CALL, OptionType.PUT):
         raise NotImplementedError("FD PDE valuation supports only vanilla CALL/PUT.")
     if time_to_maturity <= 0:
@@ -150,12 +145,14 @@ def _european_vanilla_fd_cn(
         raise ValueError("time_steps must be >= 1")
     if volatility <= 0:
         raise ValueError("volatility must be positive")
+    if early_exercise and (omega is None or tol is None or max_iter is None):
+        raise ValueError("PSOR params (omega/tol/max_iter) are required for early exercise")
 
     smax = float(smax_mult * max(spot, strike))
     dS = smax / spot_steps
     S = np.linspace(0.0, smax, spot_steps + 1)
-    i = np.arange(1, spot_steps)  # interior indices 1..M-1
-    Si = S[i]
+    j = np.arange(1, spot_steps)  # interior indices 1..M-1
+    Sj = S[j]
 
     if option_type is OptionType.PUT:
         payoff = np.maximum(strike - S, 0.0)
@@ -163,6 +160,7 @@ def _european_vanilla_fd_cn(
         payoff = np.maximum(S - strike, 0.0)
 
     V = payoff.copy()  # V at tau=0 (maturity)
+    intrinsic = payoff if early_exercise else None
 
     def boundary_values(tau: float) -> tuple[float, float]:
         if option_type is OptionType.PUT:
@@ -188,24 +186,24 @@ def _european_vanilla_fd_cn(
         a = (
             0.25
             * dt
-            * (volatility**2 * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
+            * ((risk_free_rate - dividend_yield) * Sj / dS - (volatility**2) * (Sj**2) / (dS**2))
         )
-        b = -0.5 * dt * (volatility**2 * (Si**2) / (dS**2) + risk_free_rate)
+        b = 0.5 * dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
         c = (
-            0.25
+            -0.25
             * dt
-            * (volatility**2 * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
+            * ((risk_free_rate - dividend_yield) * Sj / dS + (volatility**2) * (Sj**2) / (dS**2))
         )
 
-        # LHS: (I - A); RHS: (I + A)
+        # LHS: (I + A); RHS: (I - A)
         # Interior system size = spot_steps - 1
-        L_lower = -a
-        L_diag = 1.0 - b
-        L_upper = -c
+        L_lower = a
+        L_diag = 1.0 + b
+        L_upper = c
 
-        R_lower = a
-        R_diag = 1.0 + b
-        R_upper = c
+        R_lower = -a
+        R_diag = 1.0 - b
+        R_upper = -c
         left, right = boundary_values(tau)
 
         # Store previous time level before applying new boundary values
@@ -215,27 +213,90 @@ def _european_vanilla_fd_cn(
         V[0] = left
         V[-1] = right
 
-        # RHS for interior nodes
-        rhs = R_lower * V_old[i - 1] + R_diag * V_old[i] + R_upper * V_old[i + 1]
+        # RHS for interior nodes (no boundary terms yet)
+        rhs = R_lower * V_old[j - 1] + R_diag * V_old[j] + R_upper * V_old[j + 1]
 
-        # Boundary adjustments (interior equation references V[0] and V[-1])
-        # Crank–Nicolson uses (I + A) V_old on the RHS and (I - A) V_new on the LHS,
-        # so boundary contributions from both time levels appear in the RHS.
-        rhs[0] += a[0] * V[0]  # i=1 uses V[0]
-        rhs[-1] += c[-1] * V[-1]  # i=M-1 uses V[M]
+        # Boundary adjustments for direct solve; PSOR uses the unadjusted rhs in its
+        # iterative updates while rhs_adj is only for the warm-start linear solve.
+        rhs_adj = rhs.copy()
+        rhs_adj[0] -= L_lower[0] * V[0]  # j=1 uses V[0]
+        rhs_adj[-1] -= L_upper[-1] * V[-1]  # j=M-1 uses V[M]
 
-        # Solve tridiagonal system for interior values at new tau
-        x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs)
-        V[i] = x
+        if not early_exercise:
+            x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs_adj)
+            V[j] = x
+        else:
+            exercise_j = intrinsic[j]
+
+            # Warm-start: unconstrained CN system (European step), then project
+            x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs_adj)
+            x = np.maximum(x, exercise_j)
+
+            for _ in range(int(max_iter)):
+                x_prev = x.copy()
+
+                for k in range(x.size):
+                    left_val = x[k - 1] if k > 0 else V[0]
+                    right_val = x[k + 1] if k < x.size - 1 else V[-1]
+
+                    gs = (rhs[k] - L_lower[k] * left_val - L_upper[k] * right_val) / L_diag[k]
+                    sor = x[k] + float(omega) * (gs - x[k])
+                    x[k] = max(sor, exercise_j[k])
+
+                if np.max(np.abs(x - x_prev)) < float(tol):
+                    break
+
+            V[j] = x
 
         # Apply discrete dividend jump at tau if needed
         if dividend_map:
             amount = dividend_map.get(round(tau, 12))
             if amount is not None:
                 _apply_dividend_jump(V, S, amount)
+                if early_exercise:
+                    V[:] = np.maximum(V, intrinsic)
 
     price = np.interp(spot, S, V)
     return price, S, V
+
+
+def _european_vanilla_fd_cn(
+    *,
+    spot: float,
+    strike: float,
+    time_to_maturity: float,
+    risk_free_rate: float,
+    volatility: float,
+    dividend_yield: float,
+    dividend_schedule: list[tuple[float, float]] | None,
+    option_type: OptionType,
+    smax_mult: float,
+    spot_steps: int,
+    time_steps: int,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """European vanilla option price via Crank–Nicolson FD.
+
+    Solves in the transformed time variable tau (time remaining):
+    - at maturity: tau = 0
+    - at pricing date: tau = T
+
+    Returns:
+      (price_at_spot, spot_grid_S, values_V_at_tau=T)
+    """
+    return _vanilla_fd_cn_core(
+        spot=spot,
+        strike=strike,
+        time_to_maturity=time_to_maturity,
+        risk_free_rate=risk_free_rate,
+        volatility=volatility,
+        dividend_yield=dividend_yield,
+        dividend_schedule=dividend_schedule,
+        option_type=option_type,
+        smax_mult=smax_mult,
+        spot_steps=spot_steps,
+        time_steps=time_steps,
+        early_exercise=False,
+    )
 
 
 def _american_vanilla_fd_cn_psor(
@@ -261,121 +322,23 @@ def _american_vanilla_fd_cn_psor(
     - at maturity: tau = 0
     - at pricing date: tau = T
     """
-    if option_type not in (OptionType.CALL, OptionType.PUT):
-        raise NotImplementedError("FD PDE valuation supports only vanilla CALL/PUT.")
-    if time_to_maturity <= 0:
-        raise ValueError("time_to_maturity must be positive")
-    if spot_steps < 3:
-        raise ValueError("spot_steps must be >= 3")
-    if time_steps < 1:
-        raise ValueError("time_steps must be >= 1")
-    if volatility <= 0:
-        raise ValueError("volatility must be positive")
-
-    smax = float(smax_mult * max(spot, strike))
-    dS = smax / spot_steps
-    S = np.linspace(0.0, smax, spot_steps + 1)
-    i = np.arange(1, spot_steps)  # interior indices
-    Si = S[i]
-
-    if option_type is OptionType.PUT:
-        payoff = np.maximum(strike - S, 0.0)
-    else:
-        payoff = np.maximum(S - strike, 0.0)
-
-    V = payoff.copy()  # V at tau=0
-    intrinsic = payoff  # intrinsic is time-invariant on this grid
-
-    def boundary_values(tau: float) -> tuple[float, float]:
-        if option_type is OptionType.PUT:
-            left = strike * np.exp(-risk_free_rate * tau)
-            right = 0.0
-        else:
-            left = 0.0
-            right = smax * np.exp(-dividend_yield * tau) - strike * np.exp(-risk_free_rate * tau)
-            right = max(right, 0.0)
-        return float(left), float(right)
-
-    schedule = dividend_schedule or []
-    dividend_taus = [tau for tau, _ in schedule]
-    tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
-    dividend_map = {tau: amount for tau, amount in schedule}
-
-    # March forward in tau: 0 -> T (equivalently backward in calendar time)
-    for n in range(1, tau_grid.size):
-        dt = tau_grid[n] - tau_grid[n - 1]
-        tau = float(tau_grid[n])
-
-        a = (
-            0.25
-            * dt
-            * (volatility**2 * (Si**2) / (dS**2) - (risk_free_rate - dividend_yield) * Si / dS)
-        )
-        b = -0.5 * dt * (volatility**2 * (Si**2) / (dS**2) + risk_free_rate)
-        c = (
-            0.25
-            * dt
-            * (volatility**2 * (Si**2) / (dS**2) + (risk_free_rate - dividend_yield) * Si / dS)
-        )
-
-        # LHS: (I - A); RHS: (I + A)
-        L_lower = -a
-        L_diag = 1.0 - b
-        L_upper = -c
-
-        R_lower = a
-        R_diag = 1.0 + b
-        R_upper = c
-        left, right = boundary_values(tau)
-        # Store previous time level before applying new boundary values
-        V_old = V.copy()
-
-        # Apply boundary values at current tau (new time level)
-        V[0] = left
-        V[-1] = right
-        rhs = R_lower * V_old[i - 1] + R_diag * V_old[i] + R_upper * V_old[i + 1]
-
-        exercise_i = intrinsic[i]
-
-        # Warm-start: solve the unconstrained CN system (European step) using Thomas,
-        # then project onto the early-exercise constraint.
-        #
-        # The linear system for interior unknowns x has boundary terms embedded via V[0], V[-1].
-        rhs_adj = rhs.copy()
-        rhs_adj[0] -= L_lower[0] * V[0]
-        rhs_adj[-1] -= L_upper[-1] * V[-1]
-
-        th_lower = L_lower[1:]
-        th_diag = L_diag
-        th_upper = L_upper[:-1]
-        x = _solve_tridiagonal_thomas(th_lower, th_diag, th_upper, rhs_adj)
-        x = np.maximum(x, exercise_i)
-
-        for _ in range(max_iter):
-            x_prev = x.copy()
-
-            for k in range(x.size):
-                left_val = x[k - 1] if k > 0 else V[0]
-                right_val = x[k + 1] if k < x.size - 1 else V[-1]
-
-                gs = (rhs[k] - L_lower[k] * left_val - L_upper[k] * right_val) / L_diag[k]
-                sor = x[k] + omega * (gs - x[k])
-                x[k] = max(sor, exercise_i[k])
-
-            if np.max(np.abs(x - x_prev)) < tol:
-                break
-
-        V[i] = x
-
-        # Apply discrete dividend jump at tau if needed
-        if dividend_map:
-            amount = dividend_map.get(round(tau, 12))
-            if amount is not None:
-                _apply_dividend_jump(V, S, amount)
-                V[:] = np.maximum(V, intrinsic)
-
-    price = np.interp(spot, S, V)
-    return price, S, V
+    return _vanilla_fd_cn_core(
+        spot=spot,
+        strike=strike,
+        time_to_maturity=time_to_maturity,
+        risk_free_rate=risk_free_rate,
+        volatility=volatility,
+        dividend_yield=dividend_yield,
+        dividend_schedule=dividend_schedule,
+        option_type=option_type,
+        smax_mult=smax_mult,
+        spot_steps=spot_steps,
+        time_steps=time_steps,
+        early_exercise=True,
+        omega=omega,
+        tol=tol,
+        max_iter=max_iter,
+    )
 
 
 class _FDEuropeanValuation:
