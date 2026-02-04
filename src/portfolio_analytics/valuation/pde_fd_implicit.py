@@ -69,7 +69,7 @@ def _boundary_values(
     return float(left), float(right)
 
 
-def _european_vanilla_fd_implicit(
+def _vanilla_fd_implicit_core(
     *,
     spot: float,
     strike: float,
@@ -81,8 +81,8 @@ def _european_vanilla_fd_implicit(
     smax_mult: float,
     spot_steps: int,
     time_steps: int,
+    early_exercise: bool,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    """European vanilla option price via implicit FD (backward Euler)."""
     if option_type not in (OptionType.CALL, OptionType.PUT):
         raise NotImplementedError("Implicit FD supports only vanilla CALL/PUT.")
     if time_to_maturity <= 0:
@@ -106,6 +106,7 @@ def _european_vanilla_fd_implicit(
         payoff = np.maximum(S - strike, 0.0)
 
     V = payoff.copy()  # V at tau=0 (maturity)
+    intrinsic = payoff if early_exercise else None
 
     dt = time_to_maturity / time_steps
 
@@ -140,10 +141,42 @@ def _european_vanilla_fd_implicit(
         rhs[-1] -= c[-1] * V[-1]
 
         x = _solve_tridiagonal_thomas(a[1:], b, c[:-1], rhs)
-        V[j] = x
+        if early_exercise:
+            V[j] = np.maximum(x, intrinsic[j])
+        else:
+            V[j] = x
 
     price = np.interp(spot, S, V)
     return price, S, V
+
+
+def _european_vanilla_fd_implicit(
+    *,
+    spot: float,
+    strike: float,
+    time_to_maturity: float,
+    risk_free_rate: float,
+    volatility: float,
+    dividend_yield: float,
+    option_type: OptionType,
+    smax_mult: float,
+    spot_steps: int,
+    time_steps: int,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """European vanilla option price via implicit FD (backward Euler)."""
+    return _vanilla_fd_implicit_core(
+        spot=spot,
+        strike=strike,
+        time_to_maturity=time_to_maturity,
+        risk_free_rate=risk_free_rate,
+        volatility=volatility,
+        dividend_yield=dividend_yield,
+        option_type=option_type,
+        smax_mult=smax_mult,
+        spot_steps=spot_steps,
+        time_steps=time_steps,
+        early_exercise=False,
+    )
 
 
 def _american_vanilla_fd_implicit_simple(
@@ -163,69 +196,19 @@ def _american_vanilla_fd_implicit_simple(
     max_iter: int,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     """American vanilla option price via implicit FD with immediate exercise projection."""
-    if option_type not in (OptionType.CALL, OptionType.PUT):
-        raise NotImplementedError("Implicit FD supports only vanilla CALL/PUT.")
-    if time_to_maturity <= 0:
-        raise ValueError("time_to_maturity must be positive")
-    if spot_steps < 3:
-        raise ValueError("spot_steps must be >= 3")
-    if time_steps < 1:
-        raise ValueError("time_steps must be >= 1")
-    if volatility <= 0:
-        raise ValueError("volatility must be positive")
-
-    smax = float(smax_mult * max(spot, strike))
-    dS = smax / spot_steps
-    S = np.linspace(0.0, smax, spot_steps + 1)
-    j = np.arange(1, spot_steps)
-    Sj = S[j]
-
-    if option_type is OptionType.PUT:
-        payoff = np.maximum(strike - S, 0.0)
-    else:
-        payoff = np.maximum(S - strike, 0.0)
-
-    V = payoff.copy()
-    intrinsic = payoff.copy()
-
-    dt = time_to_maturity / time_steps
-
-    a = (
-        0.5
-        * dt
-        * ((risk_free_rate - dividend_yield) * Sj / dS - (volatility**2) * (Sj**2) / (dS**2))
+    return _vanilla_fd_implicit_core(
+        spot=spot,
+        strike=strike,
+        time_to_maturity=time_to_maturity,
+        risk_free_rate=risk_free_rate,
+        volatility=volatility,
+        dividend_yield=dividend_yield,
+        option_type=option_type,
+        smax_mult=smax_mult,
+        spot_steps=spot_steps,
+        time_steps=time_steps,
+        early_exercise=True,
     )
-    b = 1.0 + dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
-    c = (
-        -0.5
-        * dt
-        * ((risk_free_rate - dividend_yield) * Sj / dS + (volatility**2) * (Sj**2) / (dS**2))
-    )
-
-    for n in range(1, time_steps + 1):
-        tau = float(n * dt)
-
-        left, right = _boundary_values(
-            option_type=option_type,
-            strike=strike,
-            smax=smax,
-            tau=tau,
-            r=risk_free_rate,
-            q=dividend_yield,
-        )
-        V[0] = left
-        V[-1] = right
-
-        rhs = V[j].copy()
-        rhs[0] -= a[0] * V[0]
-        rhs[-1] -= c[-1] * V[-1]
-
-        # Solve the implicit system (European step), then apply early exercise
-        x = _solve_tridiagonal_thomas(a[1:], b, c[:-1], rhs)
-        V[j] = np.maximum(x, intrinsic[j])
-
-    price = np.interp(spot, S, V)
-    return price, S, V
 
 
 class _FDEuropeanImplicitValuation:
