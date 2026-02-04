@@ -20,7 +20,7 @@ class _BinomialValuationBase:
         self.parent = parent
 
     def _setup_binomial_parameters(self, num_steps: int) -> tuple:
-        """Setup binomial tree parameters.
+        """Setup binomial tree parameters and lattice.
 
         Parameters
         ==========
@@ -29,7 +29,7 @@ class _BinomialValuationBase:
 
         Returns
         =======
-        tuple of (discount_factor, p, binomial_matrix)
+        tuple of (discount_factor, p, spot_lattice)
         """
         start = self.parent.pricing_date
         end = self.parent.maturity
@@ -43,38 +43,58 @@ class _BinomialValuationBase:
         dividend_yield = self.parent.underlying.dividend_yield
         u = np.exp(sigma * np.sqrt(delta_t))
         d = 1 / u
-        assert (
-            d < np.exp((r - dividend_yield) * delta_t) < u
-        ), "Arbitrage condition violated: d < e^( (r - q) * dt ) < u"
+        if not (d < np.exp((r - dividend_yield) * delta_t) < u):
+            raise ValueError("Arbitrage condition violated: d < exp((r-q)*dt) < u")
         p = (np.exp((r - dividend_yield) * delta_t) - d) / (u - d)
 
-        # Build binomial tree of stock prices
-        up = np.arange(num_steps + 1)
-        up = np.resize(up, (num_steps + 1, num_steps + 1))
-        down = up.T * 2
+        spot_lattice = self._build_spot_lattice(
+            num_steps=num_steps,
+            time_intervals=time_intervals,
+            up=u,
+            down=d,
+            short_rate=float(r),
+        )
 
-        S_0 = float(self.parent.underlying.initial_value)
+        return discount_factor, p, spot_lattice
+
+    def _build_spot_lattice(
+        self,
+        *,
+        num_steps: int,
+        time_intervals: pd.DatetimeIndex,
+        up: float,
+        down: float,
+        short_rate: float,
+    ) -> np.ndarray:
+        """Build a CRR spot lattice with time on columns (row=down moves, col=time)."""
+        spot = float(self.parent.underlying.initial_value)
         discrete_dividends = self.parent.underlying.discrete_dividends
 
-        # If no discrete dividends, use the closed-form CRR lattice.
-        if not discrete_dividends:
-            binomial_matrix = S_0 * np.exp(sigma * np.sqrt(delta_t) * (up - down))
-            return discount_factor, p, binomial_matrix
+        i_idx = np.arange(num_steps + 1)[:, None]
+        t_idx = np.arange(num_steps + 1)[None, :]
+        up_pow = t_idx - i_idx
+        down_pow = i_idx
 
-        # Hull-style approach (prepaid forward): build lattice for S* = S - PV(divs)
-        pv_all = pv_discrete_dividends(discrete_dividends, start, end, float(r))
-        S_star0 = max(S_0 - pv_all, 0.0)
-        binomial_matrix = S_star0 * np.exp(sigma * np.sqrt(delta_t) * (up - down))
-
-        # Add PV of remaining dividends to each time step (same adjustment per column)
-        for i in range(num_steps + 1):
-            pv_remaining = pv_discrete_dividends(
-                discrete_dividends, time_intervals[i], end, float(r)
+        if discrete_dividends:
+            pv_all = pv_discrete_dividends(
+                discrete_dividends, time_intervals[0], time_intervals[-1], short_rate
             )
-            if pv_remaining != 0.0:
-                binomial_matrix[: i + 1, i] += pv_remaining
+            spot = max(spot - pv_all, 0.0)
 
-        return discount_factor, p, binomial_matrix
+        lattice = spot * (up**up_pow) * (down**down_pow)
+
+        if not discrete_dividends:
+            return lattice
+
+        pv_remaining = np.array(
+            [
+                pv_discrete_dividends(discrete_dividends, t, time_intervals[-1], short_rate)
+                for t in time_intervals
+            ],
+            dtype=float,
+        )
+        lattice += pv_remaining[None, :]
+        return lattice
 
     def _get_intrinsic_values(self, instrument_values: np.ndarray) -> np.ndarray:
         """Calculate intrinsic values at each node.
@@ -107,20 +127,19 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
     def solve(self, params: BinomialParams) -> np.ndarray:
         """Compute the option value lattice using a binomial tree."""
         num_steps = int(params.num_steps)
-        discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
+        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
-        # Initialize with intrinsic values at maturity
-        V = self._get_intrinsic_values(binomial_matrix)
+        option_lattice = np.zeros_like(spot_lattice)
+        option_lattice[:, num_steps] = self._get_intrinsic_values(spot_lattice[:, num_steps])
 
-        # Backward induction through the tree
-        z = 0
-        for i in range(num_steps - 1, -1, -1):
-            V[0 : num_steps - z, i] = (
-                p * V[0 : num_steps - z, i + 1] + (1 - p) * V[1 : num_steps - z + 1, i + 1]
+        # Backward induction through the tree (time in columns)
+        for t in range(num_steps - 1, -1, -1):
+            continuation = (
+                p * option_lattice[: t + 1, t + 1] + (1 - p) * option_lattice[1 : t + 2, t + 1]
             ) * discount_factor
-            z += 1
+            option_lattice[: t + 1, t] = continuation
 
-        return V
+        return option_lattice
 
     def present_value(self, params: BinomialParams) -> float:
         """Return PV using binomial tree method."""
@@ -136,27 +155,20 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
     def solve(self, params: BinomialParams) -> np.ndarray:
         """Compute the option value lattice using a binomial tree with early exercise."""
         num_steps = int(params.num_steps)
-        discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
+        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
-        # Initialize with intrinsic values at maturity
-        V = self._get_intrinsic_values(binomial_matrix)
-        intrinsic_values = V.copy()
+        option_lattice = np.zeros_like(spot_lattice)
+        intrinsic = self._get_intrinsic_values(spot_lattice)
+        option_lattice[:, num_steps] = intrinsic[:, num_steps]
 
         # Backward induction with early exercise decision
-        z = 0
-        for i in range(num_steps - 1, -1, -1):
-            # Calculate discounted present continuation values
+        for t in range(num_steps - 1, -1, -1):
             continuation = (
-                p * V[0 : num_steps - z, i + 1] + (1 - p) * V[1 : num_steps - z + 1, i + 1]
+                p * option_lattice[: t + 1, t + 1] + (1 - p) * option_lattice[1 : t + 2, t + 1]
             ) * discount_factor
+            option_lattice[: t + 1, t] = np.maximum(intrinsic[: t + 1, t], continuation)
 
-            # American option: take max of intrinsic vs discounted present continuation value
-            V[0 : num_steps - z, i] = np.maximum(
-                intrinsic_values[0 : num_steps - z, i], continuation
-            )
-            z += 1
-
-        return V
+        return option_lattice
 
     def present_value(self, params: BinomialParams) -> float:
         """Return PV using binomial tree method with American early exercise."""
@@ -171,7 +183,7 @@ class _BinomialMCAsianValuation(_BinomialValuationBase):
 
     def solve(self, params: BinomialParams) -> np.ndarray:
         num_steps = int(params.num_steps)
-        discount_factor, p, binomial_matrix = self._setup_binomial_parameters(num_steps)
+        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         if params.mc_paths is None:
             raise ValueError("BinomialParams.mc_paths must be set for Asian binomial MC")
@@ -198,7 +210,7 @@ class _BinomialMCAsianValuation(_BinomialValuationBase):
         # binomial_matrix is (M+1, M+1)
         # Advanced indexing: col_idx broadcasts to (I, M+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
-        prices = binomial_matrix[row_idx, col_idx]  # (I, M+1)
+        prices = spot_lattice[row_idx, col_idx]  # (I, M+1)
         avg_s = prices.mean(axis=1)  # (I,)
 
         if self.parent.spec.call_put is OptionType.CALL:
