@@ -58,14 +58,16 @@ def _boundary_values(
     tau: float,
     r: float,
     q: float,
+    early_exercise: bool,
 ) -> tuple[float, float]:
     if option_type is OptionType.PUT:
-        left = strike * np.exp(-r * tau)
+        left = strike if early_exercise else strike * np.exp(-r * tau)
         right = 0.0
     else:
         left = 0.0
-        right = smax * np.exp(-q * tau) - strike * np.exp(-r * tau)
-        right = max(right, 0.0)
+        continuation = smax * np.exp(-q * tau) - strike * np.exp(-r * tau)
+        intrinsic = smax - strike
+        right = max(continuation, intrinsic) if early_exercise else max(continuation, 0.0)
     return float(left), float(right)
 
 
@@ -132,6 +134,7 @@ def _vanilla_fd_implicit_core(
             tau=tau,
             r=risk_free_rate,
             q=dividend_yield,
+            early_exercise=early_exercise,
         )
         V[0] = left
         V[-1] = right

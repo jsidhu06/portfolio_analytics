@@ -1,6 +1,7 @@
 """Compare PDE FD American pricing vs QuantLib for reference."""
 
 import datetime as dt
+import logging
 
 import numpy as np
 import pytest
@@ -12,6 +13,8 @@ from portfolio_analytics.valuation import OptionSpec, OptionValuation, Underlyin
 from portfolio_analytics.valuation.params import PDEParams
 
 ql = pytest.importorskip("QuantLib")
+
+logger = logging.getLogger(__name__)
 
 
 PRICING_DATE = dt.datetime(2025, 1, 1)
@@ -150,6 +153,15 @@ def test_american_fd_vs_quantlib_no_div(spot, strike, option_type):
         discrete_dividends=None,
     )
 
+    logger.info(
+        "No-div American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde,
+        ql_price,
+    )
+
     assert np.isclose(pde, ql_price, rtol=0.01)
 
 
@@ -176,6 +188,15 @@ def test_american_fd_vs_quantlib_continuous_div(spot, strike, option_type):
         discrete_dividends=None,
     )
 
+    logger.info(
+        "Cont-div American %s S=%.2f K=%.2f q=0.03 | PDE=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde,
+        ql_price,
+    )
+
     assert np.isclose(pde, ql_price, rtol=0.01)
 
 
@@ -200,6 +221,16 @@ def test_american_fd_vs_quantlib_discrete_div():
         option_type=OptionType.PUT,
         dividend_yield=0.0,
         discrete_dividends=divs,
+    )
+
+    logger.info(
+        "Disc-div American %s S=%.2f K=%.2f divs=%d | PDE=%.6f QL=%.6f",
+        OptionType.PUT.value,
+        spot,
+        strike,
+        len(divs),
+        pde,
+        ql_price,
     )
 
     assert np.isclose(pde, ql_price, rtol=0.01)

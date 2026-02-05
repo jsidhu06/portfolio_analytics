@@ -164,12 +164,15 @@ def _vanilla_fd_cn_core(
 
     def boundary_values(tau: float) -> tuple[float, float]:
         if option_type is OptionType.PUT:
-            left = strike * np.exp(-risk_free_rate * tau)
+            left = strike if early_exercise else strike * np.exp(-risk_free_rate * tau)
             right = 0.0
         else:
             left = 0.0
-            right = smax * np.exp(-dividend_yield * tau) - strike * np.exp(-risk_free_rate * tau)
-            right = max(right, 0.0)
+            continuation = smax * np.exp(-dividend_yield * tau) - strike * np.exp(
+                -risk_free_rate * tau
+            )
+            intrinsic = smax - strike
+            right = max(continuation, intrinsic) if early_exercise else max(continuation, 0.0)
         return float(left), float(right)
 
     schedule = dividend_schedule or []
