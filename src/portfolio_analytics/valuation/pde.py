@@ -198,7 +198,7 @@ def _vanilla_fd_cn_core(
             * ((risk_free_rate - dividend_yield) * Sj / dS + (volatility**2) * (Sj**2) / (dS**2))
         )
 
-        # LHS: (I + A); RHS: (I - A)
+        # LHS: (I + 1/2 A); RHS: (I - 1/2 A)
         # Interior system size = spot_steps - 1
         L_lower = a
         L_diag = 1.0 + b
@@ -418,41 +418,6 @@ class _FDAmericanValuation:
         risk_free_rate = float(self.parent.discount_curve.short_rate)
         dividend_yield = float(self.parent.underlying.dividend_yield)
         discrete_dividends = self.parent.underlying.discrete_dividends
-
-        # Special-case: American CALL with ~0 dividends has no early-exercise premium.
-        # Avoid the PSOR loop entirely and price as European via CN.
-        if (
-            self.parent.option_type is OptionType.CALL
-            and abs(dividend_yield) < 1e-12
-            and not discrete_dividends
-        ):
-            time_to_maturity = calculate_year_fraction(
-                self.parent.pricing_date, self.parent.maturity
-            )
-
-            dividend_schedule = _dividend_tau_schedule(
-                discrete_dividends=discrete_dividends,
-                pricing_date=self.parent.pricing_date,
-                maturity=self.parent.maturity,
-            )
-
-            smax_mult = float(params.smax_mult)
-            spot_steps = int(params.spot_steps)
-            time_steps = int(params.time_steps)
-
-            return _european_vanilla_fd_cn(
-                spot=spot,
-                strike=float(strike),
-                time_to_maturity=float(time_to_maturity),
-                risk_free_rate=risk_free_rate,
-                volatility=volatility,
-                dividend_yield=dividend_yield,
-                dividend_schedule=dividend_schedule,
-                option_type=self.parent.option_type,
-                smax_mult=smax_mult,
-                spot_steps=spot_steps,
-                time_steps=time_steps,
-            )
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
 
