@@ -96,7 +96,12 @@ class GBMParams:
             raise ValueError("GBMParams requires volatility to be finite")
         if float(self.volatility) < 0.0:
             raise ValueError("GBMParams requires volatility to be >= 0")
-        if self.discrete_dividends is not None and self.dividend_yield != 0.0:
+        object.__setattr__(
+            self,
+            "discrete_dividends",
+            tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
+        )
+        if self.dividend_yield != 0.0 and self.discrete_dividends:
             raise ValueError(
                 "Provide either dividend_yield or discrete_dividends in GBMParams, not both"
             )
@@ -137,7 +142,12 @@ class JDParams:
             raise ValueError("JDParams requires lambd to be >= 0")
         if float(self.delta) < 0.0:
             raise ValueError("JDParams requires delta to be >= 0")
-        if self.discrete_dividends is not None and self.dividend_yield != 0.0:
+        object.__setattr__(
+            self,
+            "discrete_dividends",
+            tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
+        )
+        if self.dividend_yield != 0.0 and self.discrete_dividends:
             raise ValueError(
                 "Provide either dividend_yield or discrete_dividends in JDParams, not both"
             )
@@ -217,9 +227,9 @@ class PathSimulation(ABC):
 
         # Mutable working state (not from config)
         if isinstance(process_params, (GBMParams, JDParams)):
-            self.discrete_dividends = list(process_params.discrete_dividends or [])
+            self.discrete_dividends = process_params.discrete_dividends
         else:
-            self.discrete_dividends = []
+            self.discrete_dividends = tuple()
 
         self.time_grid = sim.time_grid
         self.special_dates = set(sim.special_dates)
@@ -284,30 +294,59 @@ class PathSimulation(ABC):
         return self._correlation_context
 
     def generate_time_grid(self) -> None:
-        "Generate time grid for simulation of stochastic process"
+        "Generate time grid for simulation of stochastic process."
+        self.time_grid = self._build_time_grid()
+
+    def _build_time_grid(self) -> np.ndarray:
         start = self.pricing_date
         end = self.end_date
+
         if self.num_steps is not None:
-            time_grid = list(
-                pd.date_range(start=start, end=end, periods=int(self.num_steps) + 1).to_pydatetime()
-            )
+            grid = pd.date_range(
+                start=start,
+                end=end,
+                periods=int(self.num_steps) + 1,
+            ).to_pydatetime()
         else:
-            time_grid = list(
-                pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
-            )
-        # enhance time_grid by start, end, and special_dates
+            grid = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
+
+        time_grid = list(grid)
         if start not in time_grid:
             time_grid.insert(0, start)
-            # insert start date if not in list
         if end not in time_grid:
             time_grid.append(end)
-            # insert end date if not in list
+
         if self.special_dates:
-            # add all special dates
             time_grid.extend(self.special_dates)
-            # delete duplicates and sort
             time_grid = sorted(set(time_grid))
-        self.time_grid = np.array(time_grid)
+
+        return np.array(time_grid)
+
+    def _ensure_time_grid(self) -> None:
+        if self.time_grid is None:
+            self.generate_time_grid()
+
+    def _time_deltas(self) -> np.ndarray:
+        self._ensure_time_grid()
+        deltas = []
+        for t in range(1, len(self.time_grid)):
+            deltas.append(
+                calculate_year_fraction(
+                    self.time_grid[t - 1],
+                    self.time_grid[t],
+                    day_count_convention=self.day_count_convention,
+                )
+            )
+        return np.array(deltas, dtype=float)
+
+    def _standard_normals(self, random_seed: int | None, steps: int, paths: int) -> np.ndarray:
+        if self.correlation_context is None:
+            return sn_random_numbers((1, steps, paths), random_seed=random_seed)
+
+        corr = self.correlation_context
+        base = corr.random_numbers[:, :steps, :]
+        correlated = np.einsum("ij,jtk->itk", corr.cholesky_matrix, base)
+        return correlated[self.rn_set]
 
     @property
     def pricing_date(self) -> dt.datetime:
@@ -356,7 +395,6 @@ class PathSimulation(ABC):
 
         # Detach mutable containers to avoid shared state across clones.
         cloned.special_dates = set(self.special_dates)
-        cloned.discrete_dividends = list(self.discrete_dividends)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
 
         # Always reset cached paths unless explicitly overridden.
@@ -401,7 +439,7 @@ class PathSimulation(ABC):
             cloned.special_dates = set(kwargs["special_dates"] or [])
 
         if "discrete_dividends" in kwargs:
-            cloned.discrete_dividends = list(kwargs["discrete_dividends"] or [])
+            cloned.discrete_dividends = tuple(kwargs["discrete_dividends"] or [])
 
         if "time_grid" in kwargs:
             cloned.time_grid = (
@@ -497,29 +535,16 @@ class GeometricBrownianMotion(PathSimulation):
         The drift term (mu) is derived from the risk-free rate
         to ensure the model is calibrated to the discount curve.
         """
-        if self.time_grid is None:
-            # method from generic simulation class
-            self.generate_time_grid()
-        # number of dates (timesteps) for time grid
-        M = len(self.time_grid)
-        # number of paths
-        num_paths = self.paths
-        # ndarray initialization for path simulation
-        paths = np.zeros((M, num_paths), dtype=float)
-        # initialize first date with initial_value
-        paths[0] = self.initial_value
-        if self.correlation_context is None:
-            # if not correlated, generate random numbers
-            rand = sn_random_numbers(
-                (1, M, num_paths), random_seed=random_seed
-            )  # shape (M,num_paths)
-        else:
-            # if correlated, use random number object as provided
-            # in market environment
-            rand = self.random_numbers
+        self._ensure_time_grid()
 
-        # get short rate for drift of process
-        short_rate = self.discount_curve.short_rate
+        steps = len(self.time_grid)
+        num_paths = self.paths
+        paths = np.zeros((steps, num_paths), dtype=float)
+        paths[0] = self.initial_value
+
+        z = self._standard_normals(random_seed, steps, num_paths)
+        time_deltas = self._time_deltas()
+        short_rate = float(self.discount_curve.short_rate)
 
         dividend_by_date: dict[dt.datetime, float] = {}
         if self.discrete_dividends:
@@ -528,27 +553,12 @@ class GeometricBrownianMotion(PathSimulation):
                 if ex_date in time_set:
                     dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
-        for t in range(1, M):
-            # select the right time slice from the relevant
-            # random number set
-            if self.correlation_context is None:
-                ran = rand[t]  # shape (num_paths,)
-            else:
-                ran = np.dot(self.cholesky_matrix, rand[:, t, :])
-                ran = ran[self.rn_set]  # shape (num_paths,)
-
-            # difference between two dates as year fraction
-            delta_t = calculate_year_fraction(
-                self.time_grid[t - 1],
-                self.time_grid[t],
-                day_count_convention=self.day_count_convention,
-            )
-
-            drift = (short_rate - self.dividend_yield - 0.5 * self.volatility**2) * delta_t
-
-            diffusion = self.volatility * np.sqrt(delta_t) * ran
-            # generate simulated values for the respective date
-            paths[t] = paths[t - 1] * np.exp(drift + diffusion)
+        for t in range(1, steps):
+            dt_step = time_deltas[t - 1]
+            increment = (
+                short_rate - self.dividend_yield - 0.5 * self.volatility**2
+            ) * dt_step + self.volatility * np.sqrt(dt_step) * z[t]
+            paths[t] = paths[t - 1] * np.exp(increment)
 
             div_amt = dividend_by_date.get(self.time_grid[t])
             if div_amt is not None:
@@ -593,29 +603,24 @@ class JumpDiffusion(PathSimulation):
         return self._process_params.delta
 
     def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
-        # TO DO: Check these calcs
-        if self.time_grid is None:
-            self.generate_time_grid()
+        self._ensure_time_grid()
 
-        M = len(self.time_grid)
+        steps = len(self.time_grid)
         num_paths = self.paths
-
-        # ndarray initialization for path simulation
-        paths = np.zeros((M, num_paths), dtype=float)
-        # initialize first date with initial_value
+        paths = np.zeros((steps, num_paths), dtype=float)
         paths[0] = self.initial_value
-        # risk-free rate (adjust if your curve API differs)
+
         r = float(self.discount_curve.short_rate)
+        lam = float(self.lambd)
+        mu_j = float(self.mu)
+        sig_j = float(self.delta)
+        vol = float(self.volatility)
 
-        lam = self.lambd
-        mu_j = self.mu
-        sig_j = self.delta
-        vol = self.volatility
-
-        # compensator k = E[e^Y - 1]
         k = np.exp(mu_j + 0.5 * sig_j**2) - 1.0
 
         rng = np.random.default_rng(random_seed)
+        z = self._standard_normals(random_seed, steps, num_paths)
+        time_deltas = self._time_deltas()
 
         dividend_by_date: dict[dt.datetime, float] = {}
         if self.discrete_dividends:
@@ -624,33 +629,16 @@ class JumpDiffusion(PathSimulation):
                 if ex_date in time_set:
                     dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
-        for t in range(1, M):
-            delta_t = calculate_year_fraction(
-                self.time_grid[t - 1],
-                self.time_grid[t],
-                day_count_convention=self.day_count_convention,
-            )
-
-            # Diffusion shock Z
-            if self.correlation_context is not None:
-                # random_numbers shape is (n_assets, M, num_paths)
-                z = self.correlation_context.random_numbers[:, t, :]  # (N,I)
-                ran_all = self.correlation_context.cholesky_matrix @ z  # (N,I)
-                Z = ran_all[self.rn_set]  # (I,)
-            else:
-                Z = rng.standard_normal(num_paths)  # (I,)
-
-            # Diffusion multiplier
-            drift = (r - self.dividend_yield - lam * k - 0.5 * vol**2) * delta_t
-            diffusion = vol * np.sqrt(delta_t) * Z
+        for t in range(1, steps):
+            dt_step = time_deltas[t - 1]
+            drift = (r - self.dividend_yield - lam * k - 0.5 * vol**2) * dt_step
+            diffusion = vol * np.sqrt(dt_step) * z[t]
             diffusion_multiplier = np.exp(drift + diffusion)
 
-            # Jump multiplier: exp(sum of jump sizes)
-            N = rng.poisson(lam * delta_t, size=num_paths)  # number of jumps in (t-1, t]
-            # sum of N normals: Normal(N*mu, N*delta^2)
+            jump_counts = rng.poisson(lam * dt_step, size=num_paths)
             jump_sum = np.where(
-                N > 0,
-                N * mu_j + np.sqrt(N) * sig_j * rng.standard_normal(num_paths),
+                jump_counts > 0,
+                jump_counts * mu_j + np.sqrt(jump_counts) * sig_j * rng.standard_normal(num_paths),
                 0.0,
             )
             jump_multiplier = np.exp(jump_sum)
@@ -693,38 +681,24 @@ class SquareRootDiffusion(PathSimulation):
 
     def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
-        if self.time_grid is None:
-            self.generate_time_grid()
+        self._ensure_time_grid()
 
-        M = len(self.time_grid)
+        steps = len(self.time_grid)
         num_paths = self.paths
 
-        paths = np.zeros((M, num_paths), dtype=float)
+        paths = np.zeros((steps, num_paths), dtype=float)
         paths_hat = np.zeros_like(paths)
 
         paths[0] = self.initial_value
         paths_hat[0] = self.initial_value
 
-        if self.correlation_context is None:
-            rand = sn_random_numbers((1, M, num_paths), random_seed=random_seed)
-        else:
-            rand = self.random_numbers
+        z = self._standard_normals(random_seed, steps, num_paths)
+        time_deltas = self._time_deltas()
 
-        for t in range(1, M):
-            delta_t = calculate_year_fraction(
-                self.time_grid[t - 1],
-                self.time_grid[t],
-                day_count_convention=self.day_count_convention,
-            )
-            if self.correlation_context is None:
-                ran = rand[t]
-            else:
-                ran = np.dot(self.cholesky_matrix, rand[:, t, :])
-                ran = ran[self.rn_set]
-
-            # full truncation Euler discretization
-            mean_reversion = self.kappa * (self.theta - paths[t - 1, :]) * delta_t
-            diffusion = np.sqrt(paths[t - 1, :]) * self.volatility * np.sqrt(delta_t) * ran
+        for t in range(1, steps):
+            dt_step = time_deltas[t - 1]
+            mean_reversion = self.kappa * (self.theta - paths[t - 1, :]) * dt_step
+            diffusion = np.sqrt(paths[t - 1, :]) * self.volatility * np.sqrt(dt_step) * z[t]
             paths_hat[t] = paths_hat[t - 1] + mean_reversion + diffusion
             paths[t] = np.maximum(0, paths_hat[t])
 
