@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from .market_environment import MarketData, CorrelationContext
 from .enums import DayCountConvention
-from .utils import calculate_year_fraction, sn_random_numbers
+from .utils import calculate_year_fraction
 
 
 @dataclass(frozen=True)
@@ -341,7 +341,20 @@ class PathSimulation(ABC):
 
     def _standard_normals(self, random_seed: int | None, steps: int, paths: int) -> np.ndarray:
         if self.correlation_context is None:
-            return sn_random_numbers((1, steps, paths), random_seed=random_seed)
+            rng = np.random.default_rng(random_seed)
+            # Use antithetic variates for variance reduction
+            # Generate (steps, paths/2) and concatenate with negative
+            half_paths = paths // 2
+            if paths % 2 == 0:
+                ran = rng.standard_normal((steps, half_paths))
+                ran = np.concatenate((ran, -ran), axis=1)
+            else:
+                # Fallback for odd paths
+                ran = rng.standard_normal((steps, paths))
+
+            # Simple moment matching (center and scale)
+            ran = (ran - np.mean(ran)) / np.std(ran)
+            return ran
 
         corr = self.correlation_context
         base = corr.random_numbers[:, :steps, :]
@@ -539,19 +552,39 @@ class GeometricBrownianMotion(PathSimulation):
 
         steps = len(self.time_grid)
         num_paths = self.paths
+
+        # Pre-calculate time deltas and random numbers
+        time_deltas = self._time_deltas()
+        z = self._standard_normals(random_seed, steps, num_paths)
+        short_rate = float(self.discount_curve.short_rate)
+
+        # If no discrete dividends, use fully vectorized implementation (faster)
+        if not self.discrete_dividends:
+            dt_matrix = time_deltas.reshape(-1, 1)  # (steps-1, 1)
+            z_slice = z[1:]  # (steps-1, paths)
+
+            # log S_t = log S_{t-1} + (r - q - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z
+            drift = (short_rate - self.dividend_yield - 0.5 * self.volatility**2) * dt_matrix
+            diffusion = self.volatility * np.sqrt(dt_matrix) * z_slice
+
+            log_increments = drift + diffusion
+
+            # Cumulative sum of log-increments
+            # Prepend 0 for the start (log S_0 shift)
+            log_path_increments = np.vstack([np.zeros(num_paths), log_increments])
+            log_paths = np.cumsum(log_path_increments, axis=0)
+
+            return self.initial_value * np.exp(log_paths)
+
+        # Fallback to loop for discrete dividends case
         paths = np.zeros((steps, num_paths), dtype=float)
         paths[0] = self.initial_value
 
-        z = self._standard_normals(random_seed, steps, num_paths)
-        time_deltas = self._time_deltas()
-        short_rate = float(self.discount_curve.short_rate)
-
         dividend_by_date: dict[dt.datetime, float] = {}
-        if self.discrete_dividends:
-            time_set = set(self.time_grid)
-            for ex_date, amount in self.discrete_dividends:
-                if ex_date in time_set:
-                    dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+        time_set = set(self.time_grid)
+        for ex_date, amount in self.discrete_dividends:
+            if ex_date in time_set:
+                dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
         for t in range(1, steps):
             dt_step = time_deltas[t - 1]
@@ -607,27 +640,58 @@ class JumpDiffusion(PathSimulation):
 
         steps = len(self.time_grid)
         num_paths = self.paths
-        paths = np.zeros((steps, num_paths), dtype=float)
-        paths[0] = self.initial_value
 
         r = float(self.discount_curve.short_rate)
         lam = float(self.lambd)
         mu_j = float(self.mu)
         sig_j = float(self.delta)
         vol = float(self.volatility)
-
         k = np.exp(mu_j + 0.5 * sig_j**2) - 1.0
 
-        rng = np.random.default_rng(random_seed)
         z = self._standard_normals(random_seed, steps, num_paths)
         time_deltas = self._time_deltas()
 
+        if not self.discrete_dividends:
+            dt_matrix = time_deltas.reshape(-1, 1)  # (steps-1, 1)
+            z_slice = z[1:]  # (steps-1, paths)
+
+            # 1. Diffusion component
+            drift_diffusion = (r - self.dividend_yield - lam * k - 0.5 * vol**2) * dt_matrix
+            diffusion_term = vol * np.sqrt(dt_matrix) * z_slice
+
+            # 2. Jump component
+            rng = np.random.default_rng(random_seed)
+            # Poisson arrivals per step
+            poi_counts = rng.poisson(lam * dt_matrix, size=(len(dt_matrix), num_paths))
+
+            # We need sum of N(mu, delta) for each jump.
+            # Easiest way: generate normal for each potential jump is hard if count varies.
+            # Instead approximation: if poi is small, it's sum of normals = N(n*mu, n*delta^2)
+            # This is mathematically exact: sum of n i.i.d normals is Normal(n*mu, n*sigma^2).
+            # So we generate one normal per step per path scaled by sqrt(n).
+
+            jump_normals = rng.standard_normal(size=(len(dt_matrix), num_paths))
+            jump_magnitude = np.where(
+                poi_counts > 0, poi_counts * mu_j + np.sqrt(poi_counts) * sig_j * jump_normals, 0.0
+            )
+
+            log_increments = drift_diffusion + diffusion_term + jump_magnitude
+
+            log_path_increments = np.vstack([np.zeros(num_paths), log_increments])
+            log_paths = np.cumsum(log_path_increments, axis=0)
+
+            return self.initial_value * np.exp(log_paths)
+
+        # Fallback loop
+        paths = np.zeros((steps, num_paths), dtype=float)
+        paths[0] = self.initial_value
+        rng = np.random.default_rng(random_seed)
+
         dividend_by_date: dict[dt.datetime, float] = {}
-        if self.discrete_dividends:
-            time_set = set(self.time_grid)
-            for ex_date, amount in self.discrete_dividends:
-                if ex_date in time_set:
-                    dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+        time_set = set(self.time_grid)
+        for ex_date, amount in self.discrete_dividends:
+            if ex_date in time_set:
+                dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
         for t in range(1, steps):
             dt_step = time_deltas[t - 1]

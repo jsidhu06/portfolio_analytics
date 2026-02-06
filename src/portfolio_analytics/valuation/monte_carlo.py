@@ -126,8 +126,8 @@ class _MCAmerianValuation:
             if np.any(itm):
                 S_itm = instrument_values[t][itm]
                 V_itm = df_step * values[t + 1][itm]
-                coefficients = np.polyfit(S_itm, V_itm, deg=params.deg)
-                continuation[itm] = np.polyval(coefficients, instrument_values[t][itm])
+                poly = np.polynomial.Polynomial.fit(S_itm, V_itm, deg=params.deg)
+                continuation[itm] = poly(instrument_values[t][itm])
 
             values[t] = np.where(
                 intrinsic_values[t] > continuation,
