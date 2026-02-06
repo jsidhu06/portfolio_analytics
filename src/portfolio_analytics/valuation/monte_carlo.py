@@ -66,7 +66,7 @@ class _MCEuropeanValuation:
         return discount_factor * payoff_vector
 
 
-class _MCAmerianValuation:
+class _MCAmericanValuation:
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""
 
     def __init__(self, parent: "OptionValuation"):

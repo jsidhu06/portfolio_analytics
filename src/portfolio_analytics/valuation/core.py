@@ -10,7 +10,7 @@ from ..enums import (
     PricingMethod,
     GreekCalculationMethod,
 )
-from .monte_carlo import _MCEuropeanValuation, _MCAmerianValuation, _MCAsianValuation
+from .monte_carlo import _MCEuropeanValuation, _MCAmericanValuation, _MCAsianValuation
 from .binomial import (
     _BinomialEuropeanValuation,
     _BinomialAmericanValuation,
@@ -399,7 +399,7 @@ class OptionValuation:
             if spec.exercise_type == ExerciseType.EUROPEAN:
                 self._impl = _MCEuropeanValuation(self)
             elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _MCAmerianValuation(self)
+                self._impl = _MCAmericanValuation(self)
             else:
                 raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
         elif pricing_method == PricingMethod.BINOMIAL:
