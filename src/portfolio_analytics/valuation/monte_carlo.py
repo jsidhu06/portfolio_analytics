@@ -10,6 +10,19 @@ if TYPE_CHECKING:
     from .core import OptionValuation
 
 
+def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
+    idx = np.where(time_grid == target)[0]
+    if idx.size == 0:
+        raise ValueError(f"{label} not in underlying time_grid.")
+    return int(idx[0])
+
+
+def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) -> np.ndarray:
+    if option_type is OptionType.CALL:
+        return np.maximum(spot - strike, 0.0)
+    return np.maximum(strike - spot, 0.0)
+
+
 class _MCEuropeanValuation:
     """Implementation of European option valuation using Monte Carlo."""
 
@@ -21,21 +34,14 @@ class _MCEuropeanValuation:
         paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
 
-        # locate indices
-        idx_end = np.where(time_grid == self.parent.maturity)[0]
-        if idx_end.size == 0:
-            raise ValueError("maturity not in underlying time_grid.")
-        time_index_end = int(idx_end[0])
-
+        time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
         maturity_value = paths[time_index_end]
 
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
             if K is None:
                 raise ValueError("strike is required for vanilla European call/put payoff.")
-            if self.parent.option_type is OptionType.CALL:
-                return np.maximum(maturity_value - K, 0.0)
-            return np.maximum(K - maturity_value, 0.0)
+            return _vanilla_payoff(self.parent.option_type, K, maturity_value)
 
         payoff_fn = getattr(self.parent.spec, "payoff", None)
         if payoff_fn is None:
@@ -80,16 +86,8 @@ class _MCAmerianValuation:
         """
         paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
-        # locate indices
-        idx_start = np.where(time_grid == self.parent.pricing_date)[0]
-        idx_end = np.where(time_grid == self.parent.maturity)[0]
-        if idx_start.size == 0:
-            raise ValueError("Pricing date not in underlying time_grid.")
-        if idx_end.size == 0:
-            raise ValueError("maturity not in underlying time_grid.")
-
-        time_index_start = int(idx_start[0])
-        time_index_end = int(idx_end[0])
+        time_index_start = _find_time_index(time_grid, self.parent.pricing_date, "Pricing date")
+        time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
 
         instrument_values = paths[time_index_start : time_index_end + 1]
 
@@ -97,10 +95,7 @@ class _MCAmerianValuation:
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
             if K is None:
                 raise ValueError("strike is required for vanilla American call/put payoff.")
-            if self.parent.option_type is OptionType.CALL:
-                payoff = np.maximum(instrument_values - K, 0)
-            else:
-                payoff = np.maximum(K - instrument_values, 0)
+            payoff = _vanilla_payoff(self.parent.option_type, K, instrument_values)
         else:
             payoff_fn = self.parent.spec.payoff
             payoff = payoff_fn(instrument_values)
@@ -120,27 +115,28 @@ class _MCAmerianValuation:
         discount_factors = self.parent.discount_curve.get_discount_factors(
             time_list, dtobjects=True
         )
-        V = np.zeros_like(intrinsic_values)
-        V[-1] = intrinsic_values[-1]
+        values = np.zeros_like(intrinsic_values)
+        values[-1] = intrinsic_values[-1]
+
         for t in range(len(time_list) - 2, 0, -1):
-            discount_factor = discount_factors[t + 1, 1] / discount_factors[t, 1]
+            df_step = discount_factors[t + 1, 1] / discount_factors[t, 1]
             itm = intrinsic_values[t] > 0
-            S_itm = instrument_values[t][itm]
-            V_itm = discount_factor * V[t + 1][itm]
-            if len(S_itm) > 0:
+
+            continuation = np.zeros_like(instrument_values[t])
+            if np.any(itm):
+                S_itm = instrument_values[t][itm]
+                V_itm = df_step * values[t + 1][itm]
                 coefficients = np.polyfit(S_itm, V_itm, deg=params.deg)
-            else:
-                coefficients = np.zeros(params.deg + 1)
-            predicted_cv = np.zeros_like(instrument_values[t])
-            predicted_cv[itm] = np.polyval(coefficients, instrument_values[t][itm])
-            V[t] = np.where(
-                intrinsic_values[t] > predicted_cv,
+                continuation[itm] = np.polyval(coefficients, instrument_values[t][itm])
+
+            values[t] = np.where(
+                intrinsic_values[t] > continuation,
                 intrinsic_values[t],
-                discount_factor * V[t + 1],
+                df_step * values[t + 1],
             )
 
-        discount_factor_0 = discount_factors[1, 1] / discount_factors[0, 1]
-        return discount_factor_0 * V[1]
+        df0 = discount_factors[1, 1] / discount_factors[0, 1]
+        return df0 * values[1]
 
 
 class _MCAsianValuation:
