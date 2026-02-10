@@ -374,9 +374,10 @@ def _vanilla_fd_core(
                 b *= 0.5
                 c *= 0.5
 
-            L_lower = _as_array(a, spot_steps - 1)
-            L_diag = _as_array(1.0 + b, spot_steps - 1)
-            L_upper = _as_array(c, spot_steps - 1)
+            # A = -dt * L (L being the tridiagonal matrix of gamma/beta/alpha).
+            A_lower = _as_array(a, spot_steps - 1)
+            A_diag = _as_array(1.0 + b, spot_steps - 1)
+            A_upper = _as_array(c, spot_steps - 1)
 
             if method is PDEMethod.IMPLICIT:
                 rhs = V_old[j].copy()
@@ -387,10 +388,10 @@ def _vanilla_fd_core(
             V[-1] = right
 
             rhs_adj = rhs.copy()
-            rhs_adj[0] -= L_lower[0] * V[0]
-            rhs_adj[-1] -= L_upper[-1] * V[-1]
+            rhs_adj[0] -= A_lower[0] * V[0]
+            rhs_adj[-1] -= A_upper[-1] * V[-1]
 
-            x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs_adj)
+            x = _solve_tridiagonal_thomas(A_lower[1:], A_diag, A_upper[:-1], rhs_adj)
             if not early_exercise:
                 V[j] = x
             else:
@@ -404,7 +405,7 @@ def _vanilla_fd_core(
                         for k in range(x.size):
                             left_val = x[k - 1] if k > 0 else V[0]
                             right_val = x[k + 1] if k < x.size - 1 else V[-1]
-                            gs = (rhs[k] - L_lower[k] * left_val - L_upper[k] * right_val) / L_diag[
+                            gs = (rhs[k] - A_lower[k] * left_val - A_upper[k] * right_val) / A_diag[
                                 k
                             ]
                             sor = x[k] + float(omega) * (gs - x[k])
