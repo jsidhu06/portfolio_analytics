@@ -103,72 +103,32 @@ def _dividend_tau_schedule(
 
 def _apply_dividend_jump(
     values: np.ndarray,
-    spot_grid: np.ndarray,
+    grid: np.ndarray,
     amount: float,
-) -> None:
-    """Apply the cash dividend jump condition V(S,t^-)=V(S-D,t^+).
-    values ndarray is amended in place
-    """
-    if amount == 0.0:
-        return
-    shifted = np.interp(
-        spot_grid - amount,
-        spot_grid,
-        values,
-        left=values[0],
-        right=values[-1],
-    )
-    values[:] = shifted
-
-
-def _apply_dividend_jump_log(
-    values: np.ndarray,
-    log_spot_grid: np.ndarray,
-    amount: float,
-) -> None:
-    """Apply cash dividend jump using log-spot grid.
-
-    The option payoff is linear in spot, so interpolate on S=exp(Z).
-    """
-    if amount == 0.0:
-        return
-    spot_grid = np.exp(log_spot_grid)
-    shifted = np.interp(
-        spot_grid - amount,
-        spot_grid,
-        values,
-        left=values[0],
-        right=values[-1],
-    )
-    values[:] = shifted
-
-
-def _boundary_values_spot(
     *,
-    option_type: OptionType,
-    strike: float,
-    smax: float,
-    tau: float,
-    r: float,
-    q: float,
-    early_exercise: bool,
-) -> tuple[float, float]:
-    if option_type is OptionType.PUT:
-        left = strike if early_exercise else strike * np.exp(-r * tau)
-        right = 0.0
+    space_grid: PDESpaceGrid,
+) -> None:
+    """Apply the cash dividend jump condition V(S,t^-)=V(S-D,t^+)."""
+    if amount == 0.0:
+        return
+    if space_grid is PDESpaceGrid.LOG_SPOT:
+        spot_grid = np.exp(grid)
     else:
-        left = 0.0
-        continuation = smax * np.exp(-q * tau) - strike * np.exp(-r * tau)
-        intrinsic = smax - strike
-        right = max(continuation, intrinsic) if early_exercise else max(continuation, 0.0)
-    return float(left), float(right)
+        spot_grid = grid
+    shifted = np.interp(
+        spot_grid - amount,
+        spot_grid,
+        values,
+        left=values[0],
+        right=values[-1],
+    )
+    values[:] = shifted
 
 
-def _boundary_values_log(
+def _boundary_values(
     *,
     option_type: OptionType,
     strike: float,
-    smin: float,
     smax: float,
     tau: float,
     r: float,
@@ -227,6 +187,38 @@ def _build_log_grid(
     Z = np.linspace(zmin, zmax, spot_steps + 1)
     S = np.exp(Z)
     return Z, S, dz
+
+
+def _spot_operator_coeffs(
+    *,
+    spot_values: np.ndarray,
+    dS: float,
+    risk_free_rate: float,
+    dividend_yield: float,
+    volatility: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    diffusion = (volatility**2) * (spot_values**2) / (dS**2)
+    drift = (risk_free_rate - dividend_yield) * spot_values / dS
+    a0 = 0.5 * (diffusion - drift)
+    b0 = -(diffusion + risk_free_rate)
+    c0 = 0.5 * (diffusion + drift)
+    return a0, b0, c0
+
+
+def _log_operator_coeffs(
+    *,
+    dz: float,
+    risk_free_rate: float,
+    dividend_yield: float,
+    volatility: float,
+) -> tuple[float, float, float]:
+    mu = risk_free_rate - dividend_yield - 0.5 * volatility**2
+    diffusion = (volatility**2) / (dz**2)
+    drift = mu / dz
+    a0 = 0.5 * (diffusion - drift)
+    b0 = -(diffusion + risk_free_rate)
+    c0 = 0.5 * (diffusion + drift)
+    return a0, b0, c0
 
 
 def _vanilla_fd_spot_core(
@@ -304,12 +296,20 @@ def _vanilla_fd_spot_core(
                     f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
                 )
 
+    a0, b0, c0 = _spot_operator_coeffs(
+        spot_values=Sj,
+        dS=dS,
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+        volatility=volatility,
+    )
+
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
     for n in range(1, tau_grid.size):
         dt = tau_grid[n] - tau_grid[n - 1]
         tau = float(tau_grid[n])
 
-        left, right = _boundary_values_spot(
+        left, right = _boundary_values(
             option_type=option_type,
             strike=strike,
             smax=smax,
@@ -321,150 +321,61 @@ def _vanilla_fd_spot_core(
 
         V_old = V.copy()
 
-        if method is PDEMethod.CRANK_NICOLSON:
-            a = (
-                0.25
-                * dt
-                * (
-                    (risk_free_rate - dividend_yield) * Sj / dS
-                    - (volatility**2) * (Sj**2) / (dS**2)
-                )
-            )
-            b = 0.5 * dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
-            c = (
-                -0.25
-                * dt
-                * (
-                    (risk_free_rate - dividend_yield) * Sj / dS
-                    + (volatility**2) * (Sj**2) / (dS**2)
-                )
-            )
-
-            L_lower = a
-            L_diag = 1.0 + b
-            L_upper = c
-
-            R_lower = -a
-            R_diag = 1.0 - b
-            R_upper = -c
-
-            V[0] = left
-            V[-1] = right
-
-            rhs = R_lower * V_old[j - 1] + R_diag * V_old[j] + R_upper * V_old[j + 1]
-            rhs_adj = rhs.copy()
-            rhs_adj[0] -= L_lower[0] * V[0]
-            rhs_adj[-1] -= L_upper[-1] * V[-1]
-
-            if not early_exercise:
-                x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs_adj)
-                V[j] = x
-            else:
-                exercise_j = intrinsic[j]
-                x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs_adj)
-                if american_solver is PDEEarlyExercise.INTRINSIC:
-                    V[j] = np.maximum(x, exercise_j)
-                else:
-                    x = np.maximum(x, exercise_j)
-                    for _ in range(int(max_iter)):
-                        x_prev = x.copy()
-                        for k in range(x.size):
-                            left_val = x[k - 1] if k > 0 else V[0]
-                            right_val = x[k + 1] if k < x.size - 1 else V[-1]
-                            gs = (rhs[k] - L_lower[k] * left_val - L_upper[k] * right_val) / L_diag[
-                                k
-                            ]
-                            sor = x[k] + float(omega) * (gs - x[k])
-                            x[k] = max(sor, exercise_j[k])
-                        if np.max(np.abs(x - x_prev)) < float(tol):
-                            break
-                    V[j] = x
-
-        elif method is PDEMethod.IMPLICIT:
-            a = (
-                0.5
-                * dt
-                * (
-                    (risk_free_rate - dividend_yield) * Sj / dS
-                    - (volatility**2) * (Sj**2) / (dS**2)
-                )
-            )
-            b = 1.0 + dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
-            c = (
-                -0.5
-                * dt
-                * (
-                    (risk_free_rate - dividend_yield) * Sj / dS
-                    + (volatility**2) * (Sj**2) / (dS**2)
-                )
-            )
-
-            L_lower = a
-            L_diag = b
-            L_upper = c
-
-            V[0] = left
-            V[-1] = right
-
-            rhs = V_old[j].copy()
-            rhs[0] -= L_lower[0] * V[0]
-            rhs[-1] -= L_upper[-1] * V[-1]
-
-            x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs)
-            if not early_exercise:
-                V[j] = x
-            else:
-                exercise_j = intrinsic[j]
-                if american_solver is PDEEarlyExercise.INTRINSIC:
-                    V[j] = np.maximum(x, exercise_j)
-                else:
-                    x = np.maximum(x, exercise_j)
-                    for _ in range(int(max_iter)):
-                        x_prev = x.copy()
-                        for k in range(x.size):
-                            left_val = x[k - 1] if k > 0 else V[0]
-                            right_val = x[k + 1] if k < x.size - 1 else V[-1]
-                            gs = (rhs[k] - L_lower[k] * left_val - L_upper[k] * right_val) / L_diag[
-                                k
-                            ]
-                            sor = x[k] + float(omega) * (gs - x[k])
-                            x[k] = max(sor, exercise_j[k])
-                        if np.max(np.abs(x - x_prev)) < float(tol):
-                            break
-                    V[j] = x
-
-        else:
-            lower = (
-                0.5
-                * dt
-                * (
-                    (risk_free_rate - dividend_yield) * Sj / dS
-                    - (volatility**2) * (Sj**2) / (dS**2)
-                )
-            )
-            diag = 1.0 - dt * ((volatility**2) * (Sj**2) / (dS**2) + risk_free_rate)
-            upper = (
-                0.5
-                * dt
-                * (
-                    (risk_free_rate - dividend_yield) * Sj / dS
-                    + (volatility**2) * (Sj**2) / (dS**2)
-                )
-            )
-
+        if method is PDEMethod.EXPLICIT:
             V_new = V_old.copy()
-            V_new[j] = lower * V_old[j - 1] + diag * V_old[j] + upper * V_old[j + 1]
+            V_new[j] = dt * a0 * V_old[j - 1] + (1.0 + dt * b0) * V_old[j] + dt * c0 * V_old[j + 1]
             V_new[0] = left
             V_new[-1] = right
             if early_exercise:
                 V_new[:] = np.maximum(V_new, intrinsic)
             V = V_new
+        else:
+            theta = 1.0 if method is PDEMethod.IMPLICIT else 0.5
+            L_lower = -theta * dt * a0
+            L_diag = 1.0 - theta * dt * b0
+            L_upper = -theta * dt * c0
+
+            rhs = (
+                (1.0 - theta) * dt * a0 * V_old[j - 1]
+                + (1.0 + (1.0 - theta) * dt * b0) * V_old[j]
+                + (1.0 - theta) * dt * c0 * V_old[j + 1]
+            )
+
+            V[0] = left
+            V[-1] = right
+
+            rhs_adj = rhs.copy()
+            rhs_adj[0] -= L_lower[0] * V[0]
+            rhs_adj[-1] -= L_upper[-1] * V[-1]
+
+            x = _solve_tridiagonal_thomas(L_lower[1:], L_diag, L_upper[:-1], rhs_adj)
+            if not early_exercise:
+                V[j] = x
+            else:
+                exercise_j = intrinsic[j]
+                if american_solver is PDEEarlyExercise.INTRINSIC:
+                    V[j] = np.maximum(x, exercise_j)
+                else:
+                    x = np.maximum(x, exercise_j)
+                    for _ in range(int(max_iter)):
+                        x_prev = x.copy()
+                        for k in range(x.size):
+                            left_val = x[k - 1] if k > 0 else V[0]
+                            right_val = x[k + 1] if k < x.size - 1 else V[-1]
+                            gs = (rhs[k] - L_lower[k] * left_val - L_upper[k] * right_val) / L_diag[
+                                k
+                            ]
+                            sor = x[k] + float(omega) * (gs - x[k])
+                            x[k] = max(sor, exercise_j[k])
+                        if np.max(np.abs(x - x_prev)) < float(tol):
+                            break
+                    V[j] = x
 
         # Apply discrete dividend jump at tau if needed
         if dividend_map:
             amount = dividend_map.get(round(tau, 12))
             if amount is not None:
-                _apply_dividend_jump(V, S, amount)
+                _apply_dividend_jump(V, S, amount, space_grid=PDESpaceGrid.SPOT)
                 if early_exercise:
                     V[:] = np.maximum(V, intrinsic)
 
@@ -533,16 +444,20 @@ def _vanilla_fd_log_core(
     tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
-    mu = risk_free_rate - dividend_yield - 0.5 * volatility**2
+    a0, b0, c0 = _log_operator_coeffs(
+        dz=dz,
+        risk_free_rate=risk_free_rate,
+        dividend_yield=dividend_yield,
+        volatility=volatility,
+    )
 
     for n in range(1, tau_grid.size):
         dt = tau_grid[n] - tau_grid[n - 1]
         tau = float(tau_grid[n])
 
-        left, right = _boundary_values_log(
+        left, right = _boundary_values(
             option_type=option_type,
             strike=strike,
-            smin=float(S[0]),
             smax=float(S[-1]),
             tau=tau,
             r=risk_free_rate,
@@ -552,22 +467,29 @@ def _vanilla_fd_log_core(
 
         V_old = V.copy()
 
-        if method is PDEMethod.CRANK_NICOLSON:
-            alpha = 0.25 * dt * volatility**2 / (dz**2)
-            beta = 0.25 * dt * mu / dz
+        if method is PDEMethod.EXPLICIT:
+            V_new = V_old.copy()
+            V_new[j] = dt * a0 * V_old[j - 1] + (1.0 + dt * b0) * V_old[j] + dt * c0 * V_old[j + 1]
+            V_new[0] = left
+            V_new[-1] = right
+            if early_exercise:
+                V_new[:] = np.maximum(V_new, intrinsic)
+            V = V_new
+        else:
+            theta = 1.0 if method is PDEMethod.IMPLICIT else 0.5
+            L_lower = -theta * dt * a0
+            L_diag = 1.0 - theta * dt * b0
+            L_upper = -theta * dt * c0
 
-            L_lower = -alpha + beta
-            L_diag = 1.0 + 2.0 * alpha + 0.5 * risk_free_rate * dt
-            L_upper = -alpha - beta
-
-            R_lower = alpha - beta
-            R_diag = 1.0 - 2.0 * alpha - 0.5 * risk_free_rate * dt
-            R_upper = alpha + beta
+            rhs = (
+                (1.0 - theta) * dt * a0 * V_old[j - 1]
+                + (1.0 + (1.0 - theta) * dt * b0) * V_old[j]
+                + (1.0 - theta) * dt * c0 * V_old[j + 1]
+            )
 
             V[0] = left
             V[-1] = right
 
-            rhs = R_lower * V_old[j - 1] + R_diag * V_old[j] + R_upper * V_old[j + 1]
             rhs_adj = rhs.copy()
             rhs_adj[0] -= L_lower * V[0]
             rhs_adj[-1] -= L_upper * V[-1]
@@ -599,68 +521,10 @@ def _vanilla_fd_log_core(
                             break
                     V[j] = x
 
-        elif method is PDEMethod.IMPLICIT:
-            alpha = 0.5 * dt * volatility**2 / (dz**2)
-            beta = 0.5 * dt * mu / dz
-
-            L_lower = -alpha + beta
-            L_diag = 1.0 + 2.0 * alpha + risk_free_rate * dt
-            L_upper = -alpha - beta
-
-            V[0] = left
-            V[-1] = right
-
-            rhs = V_old[j].copy()
-            rhs[0] -= L_lower * V[0]
-            rhs[-1] -= L_upper * V[-1]
-
-            x = _solve_tridiagonal_thomas(
-                np.full(spot_steps - 2, L_lower, dtype=float),
-                np.full(spot_steps - 1, L_diag, dtype=float),
-                np.full(spot_steps - 2, L_upper, dtype=float),
-                rhs,
-            )
-
-            if not early_exercise:
-                V[j] = x
-            else:
-                exercise_j = intrinsic[j]
-                if american_solver is PDEEarlyExercise.INTRINSIC:
-                    V[j] = np.maximum(x, exercise_j)
-                else:
-                    x = np.maximum(x, exercise_j)
-                    for _ in range(int(max_iter)):
-                        x_prev = x.copy()
-                        for k in range(x.size):
-                            left_val = x[k - 1] if k > 0 else V[0]
-                            right_val = x[k + 1] if k < x.size - 1 else V[-1]
-                            gs = (rhs[k] - L_lower * left_val - L_upper * right_val) / L_diag
-                            sor = x[k] + float(omega) * (gs - x[k])
-                            x[k] = max(sor, exercise_j[k])
-                        if np.max(np.abs(x - x_prev)) < float(tol):
-                            break
-                    V[j] = x
-
-        else:
-            alpha = 0.5 * dt * volatility**2 / (dz**2)
-            beta = 0.5 * dt * mu / dz
-
-            lower = alpha - beta
-            diag = 1.0 - 2.0 * alpha - risk_free_rate * dt
-            upper = alpha + beta
-
-            V_new = V_old.copy()
-            V_new[j] = lower * V_old[j - 1] + diag * V_old[j] + upper * V_old[j + 1]
-            V_new[0] = left
-            V_new[-1] = right
-            if early_exercise:
-                V_new[:] = np.maximum(V_new, intrinsic)
-            V = V_new
-
         if dividend_map:
             amount = dividend_map.get(round(tau, 12))
             if amount is not None:
-                _apply_dividend_jump_log(V, Z, amount)
+                _apply_dividend_jump(V, Z, amount, space_grid=PDESpaceGrid.LOG_SPOT)
                 if early_exercise:
                     V[:] = np.maximum(V, intrinsic)
 
