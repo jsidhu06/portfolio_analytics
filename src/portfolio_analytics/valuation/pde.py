@@ -199,10 +199,10 @@ def _spot_operator_coeffs(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     diffusion = (volatility**2) * (spot_values**2) / (dS**2)
     drift = (risk_free_rate - dividend_yield) * spot_values / dS
-    a0 = 0.5 * (diffusion - drift)
-    b0 = -(diffusion + risk_free_rate)
-    c0 = 0.5 * (diffusion + drift)
-    return a0, b0, c0
+    gamma = 0.5 * (diffusion - drift)
+    beta = -(diffusion + risk_free_rate)
+    alpha = 0.5 * (diffusion + drift)
+    return gamma, beta, alpha
 
 
 def _log_operator_coeffs(
@@ -215,10 +215,23 @@ def _log_operator_coeffs(
     mu = risk_free_rate - dividend_yield - 0.5 * volatility**2
     diffusion = (volatility**2) / (dz**2)
     drift = mu / dz
-    a0 = 0.5 * (diffusion - drift)
-    b0 = -(diffusion + risk_free_rate)
-    c0 = 0.5 * (diffusion + drift)
-    return a0, b0, c0
+    gamma = 0.5 * (diffusion - drift)
+    beta = -(diffusion + risk_free_rate)
+    alpha = 0.5 * (diffusion + drift)
+    return gamma, beta, alpha
+
+
+def _scaled_operator_coeffs(
+    *,
+    gamma: np.ndarray | float,
+    beta: np.ndarray | float,
+    alpha: np.ndarray | float,
+    dt: float,
+) -> tuple[np.ndarray | float, np.ndarray | float, np.ndarray | float]:
+    a = -dt * gamma
+    b = -dt * beta
+    c = -dt * alpha
+    return a, b, c
 
 
 def _vanilla_fd_spot_core(
@@ -296,7 +309,7 @@ def _vanilla_fd_spot_core(
                     f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
                 )
 
-    a0, b0, c0 = _spot_operator_coeffs(
+    gamma, beta, alpha = _spot_operator_coeffs(
         spot_values=Sj,
         dS=dS,
         risk_free_rate=risk_free_rate,
@@ -321,25 +334,30 @@ def _vanilla_fd_spot_core(
 
         V_old = V.copy()
 
+        a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, dt=dt)
+
         if method is PDEMethod.EXPLICIT:
             V_new = V_old.copy()
-            V_new[j] = dt * a0 * V_old[j - 1] + (1.0 + dt * b0) * V_old[j] + dt * c0 * V_old[j + 1]
+            V_new[j] = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
             V_new[0] = left
             V_new[-1] = right
             if early_exercise:
                 V_new[:] = np.maximum(V_new, intrinsic)
             V = V_new
         else:
-            theta = 1.0 if method is PDEMethod.IMPLICIT else 0.5
-            L_lower = -theta * dt * a0
-            L_diag = 1.0 - theta * dt * b0
-            L_upper = -theta * dt * c0
+            if method is PDEMethod.CRANK_NICOLSON:
+                a *= 0.5
+                b *= 0.5
+                c *= 0.5
 
-            rhs = (
-                (1.0 - theta) * dt * a0 * V_old[j - 1]
-                + (1.0 + (1.0 - theta) * dt * b0) * V_old[j]
-                + (1.0 - theta) * dt * c0 * V_old[j + 1]
-            )
+            L_lower = a
+            L_diag = 1.0 + b
+            L_upper = c
+
+            if method is PDEMethod.IMPLICIT:
+                rhs = V_old[j].copy()
+            else:
+                rhs = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
 
             V[0] = left
             V[-1] = right
@@ -444,7 +462,7 @@ def _vanilla_fd_log_core(
     tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
-    a0, b0, c0 = _log_operator_coeffs(
+    gamma, beta, alpha = _log_operator_coeffs(
         dz=dz,
         risk_free_rate=risk_free_rate,
         dividend_yield=dividend_yield,
@@ -467,25 +485,30 @@ def _vanilla_fd_log_core(
 
         V_old = V.copy()
 
+        a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, dt=dt)
+
         if method is PDEMethod.EXPLICIT:
             V_new = V_old.copy()
-            V_new[j] = dt * a0 * V_old[j - 1] + (1.0 + dt * b0) * V_old[j] + dt * c0 * V_old[j + 1]
+            V_new[j] = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
             V_new[0] = left
             V_new[-1] = right
             if early_exercise:
                 V_new[:] = np.maximum(V_new, intrinsic)
             V = V_new
         else:
-            theta = 1.0 if method is PDEMethod.IMPLICIT else 0.5
-            L_lower = -theta * dt * a0
-            L_diag = 1.0 - theta * dt * b0
-            L_upper = -theta * dt * c0
+            if method is PDEMethod.CRANK_NICOLSON:
+                a *= 0.5
+                b *= 0.5
+                c *= 0.5
 
-            rhs = (
-                (1.0 - theta) * dt * a0 * V_old[j - 1]
-                + (1.0 + (1.0 - theta) * dt * b0) * V_old[j]
-                + (1.0 - theta) * dt * c0 * V_old[j + 1]
-            )
+            L_lower = a
+            L_diag = 1.0 + b
+            L_upper = c
+
+            if method is PDEMethod.IMPLICIT:
+                rhs = V_old[j].copy()
+            else:
+                rhs = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
 
             V[0] = left
             V[-1] = right
