@@ -234,7 +234,13 @@ def _scaled_operator_coeffs(
     return a, b, c
 
 
-def _vanilla_fd_spot_core(
+def _as_array(coeff: np.ndarray | float, size: int) -> np.ndarray:
+    if isinstance(coeff, np.ndarray):
+        return coeff
+    return np.full(size, float(coeff))
+
+
+def _vanilla_fd_core(
     *,
     spot: float,
     strike: float,
@@ -249,6 +255,7 @@ def _vanilla_fd_spot_core(
     time_steps: int,
     early_exercise: bool,
     method: PDEMethod,
+    space_grid: PDESpaceGrid,
     american_solver: PDEEarlyExercise,
     omega: float | None = None,
     tol: float | None = None,
@@ -271,10 +278,35 @@ def _vanilla_fd_spot_core(
         raise ValueError("GAUSS_SEIDEL is not supported with explicit time stepping")
 
     smax = float(smax_mult * max(spot, strike))
-    dS = smax / spot_steps
-    S = np.linspace(0.0, smax, spot_steps + 1)
+    if space_grid is PDESpaceGrid.SPOT:
+        grid = np.linspace(0.0, smax, spot_steps + 1)
+        S = grid
+        dS = smax / spot_steps
+        gamma, beta, alpha = _spot_operator_coeffs(
+            spot_values=S[1:-1],
+            dS=dS,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            volatility=volatility,
+        )
+    else:
+        grid, S, dz = _build_log_grid(
+            spot=spot,
+            strike=strike,
+            time_to_maturity=time_to_maturity,
+            volatility=volatility,
+            smax_mult=smax_mult,
+            spot_steps=spot_steps,
+            time_steps=time_steps,
+        )
+        gamma, beta, alpha = _log_operator_coeffs(
+            dz=dz,
+            risk_free_rate=risk_free_rate,
+            dividend_yield=dividend_yield,
+            volatility=volatility,
+        )
+
     j = np.arange(1, spot_steps)  # interior indices 1..M-1
-    Sj = S[j]
 
     if option_type is OptionType.PUT:
         payoff = np.maximum(strike - S, 0.0)
@@ -289,7 +321,7 @@ def _vanilla_fd_spot_core(
     tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
-    if method is PDEMethod.EXPLICIT:
+    if method is PDEMethod.EXPLICIT and space_grid is PDESpaceGrid.SPOT:
         drift = abs(risk_free_rate - dividend_yield)
         if drift > volatility**2:
             raise ValueError(
@@ -309,14 +341,6 @@ def _vanilla_fd_spot_core(
                     f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
                 )
 
-    gamma, beta, alpha = _spot_operator_coeffs(
-        spot_values=Sj,
-        dS=dS,
-        risk_free_rate=risk_free_rate,
-        dividend_yield=dividend_yield,
-        volatility=volatility,
-    )
-
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
     for n in range(1, tau_grid.size):
         dt = tau_grid[n] - tau_grid[n - 1]
@@ -325,7 +349,7 @@ def _vanilla_fd_spot_core(
         left, right = _boundary_values(
             option_type=option_type,
             strike=strike,
-            smax=smax,
+            smax=float(S[-1]),
             tau=tau,
             r=risk_free_rate,
             q=dividend_yield,
@@ -350,9 +374,9 @@ def _vanilla_fd_spot_core(
                 b *= 0.5
                 c *= 0.5
 
-            L_lower = a
-            L_diag = 1.0 + b
-            L_upper = c
+            L_lower = _as_array(a, spot_steps - 1)
+            L_diag = _as_array(1.0 + b, spot_steps - 1)
+            L_upper = _as_array(c, spot_steps - 1)
 
             if method is PDEMethod.IMPLICIT:
                 rhs = V_old[j].copy()
@@ -393,161 +417,7 @@ def _vanilla_fd_spot_core(
         if dividend_map:
             amount = dividend_map.get(round(tau, 12))
             if amount is not None:
-                _apply_dividend_jump(V, S, amount, space_grid=PDESpaceGrid.SPOT)
-                if early_exercise:
-                    V[:] = np.maximum(V, intrinsic)
-
-    price = np.interp(spot, S, V)
-    return price, S, V
-
-
-def _vanilla_fd_log_core(
-    *,
-    spot: float,
-    strike: float,
-    time_to_maturity: float,
-    risk_free_rate: float,
-    volatility: float,
-    dividend_yield: float,
-    dividend_schedule: list[tuple[float, float]] | None,
-    option_type: OptionType,
-    smax_mult: float,
-    spot_steps: int,
-    time_steps: int,
-    early_exercise: bool,
-    method: PDEMethod,
-    american_solver: PDEEarlyExercise,
-    omega: float | None = None,
-    tol: float | None = None,
-    max_iter: int | None = None,
-) -> tuple[float, np.ndarray, np.ndarray]:
-    if option_type not in (OptionType.CALL, OptionType.PUT):
-        raise NotImplementedError("FD PDE valuation supports only vanilla CALL/PUT.")
-    if time_to_maturity <= 0:
-        raise ValueError("time_to_maturity must be positive")
-    if spot_steps < 3:
-        raise ValueError("spot_steps must be >= 3")
-    if time_steps < 1:
-        raise ValueError("time_steps must be >= 1")
-    if volatility <= 0:
-        raise ValueError("volatility must be positive")
-    if early_exercise and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
-        if omega is None or tol is None or max_iter is None:
-            raise ValueError("PSOR params (omega/tol/max_iter) are required for early exercise")
-    if method is PDEMethod.EXPLICIT and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
-        raise ValueError("GAUSS_SEIDEL is not supported with explicit time stepping")
-
-    Z, S, dz = _build_log_grid(
-        spot=spot,
-        strike=strike,
-        time_to_maturity=time_to_maturity,
-        volatility=volatility,
-        smax_mult=smax_mult,
-        spot_steps=spot_steps,
-        time_steps=time_steps,
-    )
-
-    j = np.arange(1, spot_steps)
-
-    if option_type is OptionType.PUT:
-        payoff = np.maximum(strike - S, 0.0)
-    else:
-        payoff = np.maximum(S - strike, 0.0)
-
-    V = payoff.copy()
-    intrinsic = payoff if early_exercise else None
-
-    schedule = dividend_schedule or []
-    dividend_taus = [tau for tau, _ in schedule]
-    tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
-    dividend_map = {round(tau, 12): amount for tau, amount in schedule}
-
-    gamma, beta, alpha = _log_operator_coeffs(
-        dz=dz,
-        risk_free_rate=risk_free_rate,
-        dividend_yield=dividend_yield,
-        volatility=volatility,
-    )
-
-    for n in range(1, tau_grid.size):
-        dt = tau_grid[n] - tau_grid[n - 1]
-        tau = float(tau_grid[n])
-
-        left, right = _boundary_values(
-            option_type=option_type,
-            strike=strike,
-            smax=float(S[-1]),
-            tau=tau,
-            r=risk_free_rate,
-            q=dividend_yield,
-            early_exercise=early_exercise,
-        )
-
-        V_old = V.copy()
-
-        a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, dt=dt)
-
-        if method is PDEMethod.EXPLICIT:
-            V_new = V_old.copy()
-            V_new[j] = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
-            V_new[0] = left
-            V_new[-1] = right
-            if early_exercise:
-                V_new[:] = np.maximum(V_new, intrinsic)
-            V = V_new
-        else:
-            if method is PDEMethod.CRANK_NICOLSON:
-                a *= 0.5
-                b *= 0.5
-                c *= 0.5
-
-            L_lower = a
-            L_diag = 1.0 + b
-            L_upper = c
-
-            if method is PDEMethod.IMPLICIT:
-                rhs = V_old[j].copy()
-            else:
-                rhs = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
-
-            V[0] = left
-            V[-1] = right
-
-            rhs_adj = rhs.copy()
-            rhs_adj[0] -= L_lower * V[0]
-            rhs_adj[-1] -= L_upper * V[-1]
-
-            x = _solve_tridiagonal_thomas(
-                np.full(spot_steps - 2, L_lower, dtype=float),
-                np.full(spot_steps - 1, L_diag, dtype=float),
-                np.full(spot_steps - 2, L_upper, dtype=float),
-                rhs_adj,
-            )
-
-            if not early_exercise:
-                V[j] = x
-            else:
-                exercise_j = intrinsic[j]
-                if american_solver is PDEEarlyExercise.INTRINSIC:
-                    V[j] = np.maximum(x, exercise_j)
-                else:
-                    x = np.maximum(x, exercise_j)
-                    for _ in range(int(max_iter)):
-                        x_prev = x.copy()
-                        for k in range(x.size):
-                            left_val = x[k - 1] if k > 0 else V[0]
-                            right_val = x[k + 1] if k < x.size - 1 else V[-1]
-                            gs = (rhs[k] - L_lower * left_val - L_upper * right_val) / L_diag
-                            sor = x[k] + float(omega) * (gs - x[k])
-                            x[k] = max(sor, exercise_j[k])
-                        if np.max(np.abs(x - x_prev)) < float(tol):
-                            break
-                    V[j] = x
-
-        if dividend_map:
-            amount = dividend_map.get(round(tau, 12))
-            if amount is not None:
-                _apply_dividend_jump(V, Z, amount, space_grid=PDESpaceGrid.LOG_SPOT)
+                _apply_dividend_jump(V, grid, amount, space_grid=space_grid)
                 if early_exercise:
                     V[:] = np.maximum(V, intrinsic)
 
@@ -571,24 +441,7 @@ def _european_vanilla_fd(
     method: PDEMethod,
     space_grid: PDESpaceGrid,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    if space_grid is PDESpaceGrid.SPOT:
-        return _vanilla_fd_spot_core(
-            spot=spot,
-            strike=strike,
-            time_to_maturity=time_to_maturity,
-            risk_free_rate=risk_free_rate,
-            volatility=volatility,
-            dividend_yield=dividend_yield,
-            dividend_schedule=dividend_schedule,
-            option_type=option_type,
-            smax_mult=smax_mult,
-            spot_steps=spot_steps,
-            time_steps=time_steps,
-            early_exercise=False,
-            method=method,
-            american_solver=PDEEarlyExercise.INTRINSIC,
-        )
-    return _vanilla_fd_log_core(
+    return _vanilla_fd_core(
         spot=spot,
         strike=strike,
         time_to_maturity=time_to_maturity,
@@ -602,6 +455,7 @@ def _european_vanilla_fd(
         time_steps=time_steps,
         early_exercise=False,
         method=method,
+        space_grid=space_grid,
         american_solver=PDEEarlyExercise.INTRINSIC,
     )
 
@@ -626,27 +480,7 @@ def _american_vanilla_fd(
     tol: float,
     max_iter: int,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    if space_grid is PDESpaceGrid.SPOT:
-        return _vanilla_fd_spot_core(
-            spot=spot,
-            strike=strike,
-            time_to_maturity=time_to_maturity,
-            risk_free_rate=risk_free_rate,
-            volatility=volatility,
-            dividend_yield=dividend_yield,
-            dividend_schedule=dividend_schedule,
-            option_type=option_type,
-            smax_mult=smax_mult,
-            spot_steps=spot_steps,
-            time_steps=time_steps,
-            early_exercise=True,
-            method=method,
-            american_solver=american_solver,
-            omega=omega,
-            tol=tol,
-            max_iter=max_iter,
-        )
-    return _vanilla_fd_log_core(
+    return _vanilla_fd_core(
         spot=spot,
         strike=strike,
         time_to_maturity=time_to_maturity,
@@ -660,6 +494,7 @@ def _american_vanilla_fd(
         time_steps=time_steps,
         early_exercise=True,
         method=method,
+        space_grid=space_grid,
         american_solver=american_solver,
         omega=omega,
         tol=tol,
