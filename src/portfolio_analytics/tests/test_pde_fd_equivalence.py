@@ -5,7 +5,15 @@ import datetime as dt
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import DayCountConvention, ExerciseType, OptionType, PricingMethod
+from portfolio_analytics.enums import (
+    DayCountConvention,
+    ExerciseType,
+    OptionType,
+    PDEEarlyExercise,
+    PDEMethod,
+    PDESpaceGrid,
+    PricingMethod,
+)
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.stochastic_processes import (
@@ -195,3 +203,82 @@ def test_discrete_dividend_american_matches_mc(spot, strike):
     )
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
+
+
+def test_pde_fd_grid_method_equivalence_european():
+    """PDE FD variants should be in the same neighborhood for European options."""
+    spot = 100.0
+    strike = 100.0
+    ud = _underlying(spot=spot, dividend_yield=0.01)
+    spec = _spec(strike=strike, option_type=OptionType.CALL, exercise_type=ExerciseType.EUROPEAN)
+
+    base_params = PDEParams(spot_steps=160, time_steps=240)
+    baseline = OptionValuation("pde_base", ud, spec, PricingMethod.PDE_FD).present_value(
+        params=base_params
+    )
+
+    for method in (PDEMethod.IMPLICIT, PDEMethod.EXPLICIT, PDEMethod.CRANK_NICOLSON):
+        for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
+            params = PDEParams(
+                spot_steps=160,
+                time_steps=240,
+                method=method,
+                space_grid=grid,
+                american_solver=PDEEarlyExercise.INTRINSIC,
+            )
+
+            if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
+                with pytest.raises(ValueError, match="Explicit spot-grid scheme unstable"):
+                    OptionValuation("pde_var", ud, spec, PricingMethod.PDE_FD).present_value(
+                        params=params
+                    )
+                continue
+
+            pv = OptionValuation("pde_var", ud, spec, PricingMethod.PDE_FD).present_value(
+                params=params
+            )
+            assert np.isclose(pv, baseline, rtol=0.005)
+
+
+def test_pde_fd_grid_method_equivalence_american():
+    """PDE FD American variants should be in the same neighborhood."""
+    spot = 95.0
+    strike = 100.0
+    ud = _underlying(spot=spot, dividend_yield=0.0)
+    spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
+
+    base_params = PDEParams(spot_steps=160, time_steps=240)
+    baseline = OptionValuation("pde_base_am", ud, spec, PricingMethod.PDE_FD).present_value(
+        params=base_params
+    )
+
+    for method in (PDEMethod.IMPLICIT, PDEMethod.EXPLICIT, PDEMethod.CRANK_NICOLSON):
+        for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
+            for solver in (PDEEarlyExercise.INTRINSIC, PDEEarlyExercise.GAUSS_SEIDEL):
+                params = PDEParams(
+                    spot_steps=160,
+                    time_steps=240,
+                    method=method,
+                    space_grid=grid,
+                    american_solver=solver,
+                    max_iter=20_000,
+                )
+
+                if method is PDEMethod.EXPLICIT and solver is PDEEarlyExercise.GAUSS_SEIDEL:
+                    with pytest.raises(ValueError, match="GAUSS_SEIDEL is not supported"):
+                        OptionValuation("pde_var_am", ud, spec, PricingMethod.PDE_FD).present_value(
+                            params=params
+                        )
+                    continue
+
+                if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
+                    with pytest.raises(ValueError, match="Explicit spot-grid scheme unstable"):
+                        OptionValuation("pde_var_am", ud, spec, PricingMethod.PDE_FD).present_value(
+                            params=params
+                        )
+                    continue
+
+                pv = OptionValuation("pde_var_am", ud, spec, PricingMethod.PDE_FD).present_value(
+                    params=params
+                )
+                assert np.isclose(pv, baseline, rtol=0.005)

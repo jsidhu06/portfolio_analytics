@@ -6,6 +6,8 @@ that explicitly documents the configuration options available for that method.
 
 from dataclasses import dataclass
 
+from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid
+
 
 @dataclass(frozen=True, slots=True)
 class MonteCarloParams:
@@ -76,6 +78,9 @@ class PDEParams:
                Default: 1e-6
         max_iter: Maximum PSOR iterations per time step (American only).
                    Default: 20000
+        method: Time-stepping scheme for the FD solver.
+        space_grid: Spatial discretization grid in spot or log-spot space.
+        american_solver: Early exercise handling for American options.
     """
 
     smax_mult: float = 4.0
@@ -84,8 +89,17 @@ class PDEParams:
     omega: float = 1.5
     tol: float = 1e-6
     max_iter: int = 20_000
+    method: PDEMethod | str = PDEMethod.CRANK_NICOLSON
+    space_grid: PDESpaceGrid | str = PDESpaceGrid.SPOT
+    american_solver: PDEEarlyExercise | str = PDEEarlyExercise.GAUSS_SEIDEL
 
     def __post_init__(self):
+        if isinstance(self.method, str):
+            object.__setattr__(self, "method", PDEMethod(self.method))
+        if isinstance(self.space_grid, str):
+            object.__setattr__(self, "space_grid", PDESpaceGrid(self.space_grid))
+        if isinstance(self.american_solver, str):
+            object.__setattr__(self, "american_solver", PDEEarlyExercise(self.american_solver))
         if self.smax_mult <= 0:
             raise ValueError(f"smax_mult must be positive, got {self.smax_mult}")
         if self.spot_steps < 3:
@@ -98,6 +112,14 @@ class PDEParams:
             raise ValueError(f"tol must be positive, got {self.tol}")
         if self.max_iter < 1:
             raise ValueError(f"max_iter must be >= 1, got {self.max_iter}")
+        if not isinstance(self.method, PDEMethod):
+            raise ValueError(f"method must be a PDEMethod, got {self.method}")
+        if not isinstance(self.space_grid, PDESpaceGrid):
+            raise ValueError(f"space_grid must be a PDESpaceGrid, got {self.space_grid}")
+        if not isinstance(self.american_solver, PDEEarlyExercise):
+            raise ValueError(
+                f"american_solver must be a PDEEarlyExercise, got {self.american_solver}"
+            )
 
 
 # Type alias for any valuation parameters
