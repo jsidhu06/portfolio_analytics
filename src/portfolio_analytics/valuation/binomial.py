@@ -5,7 +5,7 @@ Cox-Ross-Rubinstein
 from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
-from ..enums import OptionType
+from ..enums import OptionType, AsianAveraging, ExerciseType
 from ..utils import calculate_year_fraction, pv_discrete_dividends
 from .params import BinomialParams
 
@@ -223,3 +223,101 @@ class _BinomialMCAsianValuation(_BinomialValuationBase):
     def present_value(self, params: BinomialParams) -> float:
         pv_pathwise = self.solve(params)
         return float(np.mean(pv_pathwise))
+
+
+class _BinomialHullAsianValuation(_BinomialValuationBase):
+    """Asian option valuation using Hull's binomial tree with representative averages."""
+
+    def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
+        K = self.parent.strike
+        if K is None:
+            raise ValueError("strike is required for Asian option payoff.")
+        if self.parent.spec.call_put is OptionType.CALL:
+            return np.maximum(avg_price - K, 0.0)
+        return np.maximum(K - avg_price, 0.0)
+
+    @staticmethod
+    def _interp_value(x: float, grid: np.ndarray, values: np.ndarray) -> float:
+        if grid[0] == grid[-1]:
+            return float(values[0])
+        return float(np.interp(x, grid, values))
+
+    @staticmethod
+    def _compute_average_bounds(
+        spot_lattice: np.ndarray, num_steps: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        avg_min = np.zeros_like(spot_lattice)
+        avg_max = np.zeros_like(spot_lattice)
+
+        for t in range(num_steps + 1):
+            time_idx = np.arange(t + 1)
+            for row in range(t + 1):
+                downs_first_rows = np.minimum(time_idx, row)
+                prices_min = spot_lattice[downs_first_rows, time_idx]
+                avg_min[row, t] = float(np.mean(prices_min))
+
+                ups_first = t - row
+                ups_first_rows = np.maximum(0, time_idx - ups_first)
+                prices_max = spot_lattice[ups_first_rows, time_idx]
+                avg_max[row, t] = float(np.mean(prices_max))
+
+        return avg_min, avg_max
+
+    def solve(self, params: BinomialParams) -> tuple[np.ndarray, np.ndarray]:
+        num_steps = int(params.num_steps)
+        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+
+        if self.parent.spec.averaging is not AsianAveraging.ARITHMETIC:
+            raise ValueError("Hull binomial Asian valuation only supports arithmetic averaging.")
+
+        averaging_start = self.parent.spec.averaging_start
+        if averaging_start is not None and averaging_start != self.parent.pricing_date:
+            raise ValueError("Hull binomial Asian valuation requires averaging_start=pricing_date.")
+
+        k = int(params.asian_tree_averages)
+        avg_min, avg_max = self._compute_average_bounds(spot_lattice, num_steps)
+
+        avg_grid = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
+        for t in range(num_steps + 1):
+            for row in range(t + 1):
+                avg_grid[:, row, t] = np.linspace(avg_min[row, t], avg_max[row, t], k)
+
+        values = np.zeros_like(avg_grid)
+
+        for row in range(num_steps + 1):
+            values[:, row, num_steps] = self._average_payoff(avg_grid[:, row, num_steps])
+
+        # values[0,:,:] is option values corresponding to S_avg,min.
+        # values[-1,:,:] is option values corresponding to S_avg,max.
+        is_american = self.parent.spec.exercise_type is ExerciseType.AMERICAN
+
+        for t in range(num_steps - 1, -1, -1):
+            for row in range(t + 1):
+                s_up = spot_lattice[row, t + 1]
+                s_down = spot_lattice[row + 1, t + 1]
+                grid_here = avg_grid[:, row, t]
+                for m, avg_price in enumerate(grid_here):
+                    avg_up = ((t + 1) * avg_price + s_up) / (t + 2)
+                    avg_down = ((t + 1) * avg_price + s_down) / (t + 2)
+
+                    v_up = self._interp_value(
+                        avg_up, avg_grid[:, row, t + 1], values[:, row, t + 1]
+                    )
+                    v_down = self._interp_value(
+                        avg_down, avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]
+                    )
+                    continuation = discount_factor * (p * v_up + (1.0 - p) * v_down)
+
+                    if is_american:
+                        exercise = float(self._average_payoff(avg_price))
+                        values[m, row, t] = max(continuation, exercise)
+                    else:
+                        values[m, row, t] = continuation
+
+        return values, avg_grid
+
+    def present_value(self, params: BinomialParams) -> float:
+        values, avg_grid = self.solve(params)
+        root_avg = float(self.parent.underlying.initial_value)
+        root_value = self._interp_value(root_avg, avg_grid[:, 0, 0], values[:, 0, 0])
+        return float(root_value)

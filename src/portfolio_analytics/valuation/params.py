@@ -44,12 +44,16 @@ class BinomialParams:
         Number of Monte Carlo paths when sampling the binomial tree
         (used for path-dependent payoffs like Asian options). If None,
         Monte Carlo sampling is disabled.
+    asian_tree_averages:
+        Number of representative averages per node for Hull-style Asian
+        binomial tree valuation. Used when mc_paths is None.
     random_seed:
         Random seed for binomial-tree Monte Carlo sampling.
     """
 
     num_steps: int = 500
     mc_paths: int | None = None
+    asian_tree_averages: int = 50
     random_seed: int | None = None
 
     def __post_init__(self):
@@ -57,6 +61,8 @@ class BinomialParams:
             raise ValueError(f"num_steps must be >= 1, got {self.num_steps}")
         if self.mc_paths is not None and self.mc_paths < 1:
             raise ValueError(f"mc_paths must be >= 1, got {self.mc_paths}")
+        if self.asian_tree_averages < 1:
+            raise ValueError(f"asian_tree_averages must be >= 1, got {self.asian_tree_averages}")
 
 
 @dataclass(frozen=True, slots=True)

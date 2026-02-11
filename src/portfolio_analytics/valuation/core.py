@@ -15,6 +15,7 @@ from .binomial import (
     _BinomialEuropeanValuation,
     _BinomialAmericanValuation,
     _BinomialMCAsianValuation,
+    _BinomialHullAsianValuation,
 )
 from .bsm import _BSMEuropeanValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
@@ -119,6 +120,8 @@ class AsianOptionSpec:
         Currency denomination
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
+    exercise_type : ExerciseType
+        Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
         Contract multiplier (default 100)
 
@@ -128,7 +131,7 @@ class AsianOptionSpec:
     - Geometric average: S_avg = (Π S_i)^(1/N)
     - Payoff for call: max(S_avg - K, 0)
     - Payoff for put: max(K - S_avg, 0)
-    - Only European exercise is supported
+    - European and American exercise are supported depending on pricing method
     """
 
     averaging: AsianAveraging
@@ -152,8 +155,6 @@ class AsianOptionSpec:
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
-        if self.exercise_type != ExerciseType.EUROPEAN:
-            raise ValueError("AsianOptionSpec only supports European exercise")
 
         if not isinstance(self.call_put, OptionType):
             raise TypeError(f"call_put must be OptionType enum, got {type(self.call_put).__name__}")
@@ -387,13 +388,23 @@ class OptionValuation:
 
         # Dispatch to appropriate pricing method implementation
         if isinstance(spec, AsianOptionSpec):
+            if (
+                spec.exercise_type is ExerciseType.AMERICAN
+                and pricing_method != PricingMethod.BINOMIAL
+            ):
+                raise ValueError(
+                    "American Asian options are only supported with BINOMIAL (Hull tree)."
+                )
             if pricing_method == PricingMethod.MONTE_CARLO:
                 self._impl = _MCAsianValuation(self)
             elif pricing_method == PricingMethod.BINOMIAL:
-                self._impl = _BinomialMCAsianValuation(self)
+                if isinstance(self.params, BinomialParams) and self.params.mc_paths:
+                    self._impl = _BinomialMCAsianValuation(self)
+                else:
+                    self._impl = _BinomialHullAsianValuation(self)
             else:
                 raise ValueError(
-                    "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL (MC sampling)"
+                    "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL pricing."
                 )
         elif pricing_method == PricingMethod.MONTE_CARLO:
             if spec.exercise_type == ExerciseType.EUROPEAN:
