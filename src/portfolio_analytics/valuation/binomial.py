@@ -112,7 +112,7 @@ class _BinomialValuationBase:
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
             if K is None:
-                raise ValueError("strike is required for vanilla American call/put payoff.")
+                raise ValueError("strike is required for vanilla call/put payoff.")
             if self.parent.option_type is OptionType.CALL:
                 return np.maximum(instrument_values - K, 0)
             return np.maximum(K - instrument_values, 0)
@@ -178,10 +178,10 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         return float(pv)
 
 
-class _BinomialMCAsianValuation(_BinomialValuationBase):
-    """Asian option valuation by Monte Carlo sampling on a binomial tree."""
+class _BinomialAsianValuation(_BinomialValuationBase):
+    """Asian option valuation using binomial MC sampling or Hull's representative averages."""
 
-    def solve(self, params: BinomialParams) -> np.ndarray:
+    def _solve_mc(self, params: BinomialParams) -> np.ndarray:
         num_steps = int(params.num_steps)
         discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -220,14 +220,6 @@ class _BinomialMCAsianValuation(_BinomialValuationBase):
 
         return payoffs * (discount_factor**num_steps)
 
-    def present_value(self, params: BinomialParams) -> float:
-        pv_pathwise = self.solve(params)
-        return float(np.mean(pv_pathwise))
-
-
-class _BinomialHullAsianValuation(_BinomialValuationBase):
-    """Asian option valuation using Hull's binomial tree with representative averages."""
-
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
         K = self.parent.strike
         if K is None:
@@ -263,12 +255,17 @@ class _BinomialHullAsianValuation(_BinomialValuationBase):
 
         return avg_min, avg_max
 
-    def solve(self, params: BinomialParams) -> tuple[np.ndarray, np.ndarray]:
+    def _solve_hull(self, params: BinomialParams) -> tuple[np.ndarray, np.ndarray]:
         num_steps = int(params.num_steps)
         discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         if self.parent.spec.averaging is not AsianAveraging.ARITHMETIC:
             raise ValueError("Hull binomial Asian valuation only supports arithmetic averaging.")
+
+        if params.asian_tree_averages is None:
+            raise ValueError(
+                "BinomialParams.asian_tree_averages must be set for Hull binomial Asian valuation"
+            )
 
         averaging_start = self.parent.spec.averaging_start
         if averaging_start is not None and averaging_start != self.parent.pricing_date:
@@ -317,7 +314,16 @@ class _BinomialHullAsianValuation(_BinomialValuationBase):
         return values, avg_grid
 
     def present_value(self, params: BinomialParams) -> float:
-        values, avg_grid = self.solve(params)
+        if params.mc_paths is not None:
+            pv_pathwise = self._solve_mc(params)
+            return float(np.mean(pv_pathwise))
+
+        values, avg_grid = self._solve_hull(params)
         root_avg = float(self.parent.underlying.initial_value)
         root_value = self._interp_value(root_avg, avg_grid[:, 0, 0], values[:, 0, 0])
         return float(root_value)
+
+    def solve(self, params: BinomialParams) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        if params.mc_paths is not None:
+            return self._solve_mc(params)
+        return self._solve_hull(params)

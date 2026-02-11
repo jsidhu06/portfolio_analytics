@@ -14,8 +14,7 @@ from .monte_carlo import _MCEuropeanValuation, _MCAmericanValuation, _MCAsianVal
 from .binomial import (
     _BinomialEuropeanValuation,
     _BinomialAmericanValuation,
-    _BinomialMCAsianValuation,
-    _BinomialHullAsianValuation,
+    _BinomialAsianValuation,
 )
 from .bsm import _BSMEuropeanValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
@@ -398,10 +397,7 @@ class OptionValuation:
             if pricing_method == PricingMethod.MONTE_CARLO:
                 self._impl = _MCAsianValuation(self)
             elif pricing_method == PricingMethod.BINOMIAL:
-                if isinstance(self.params, BinomialParams) and self.params.mc_paths:
-                    self._impl = _BinomialMCAsianValuation(self)
-                else:
-                    self._impl = _BinomialHullAsianValuation(self)
+                self._impl = _BinomialAsianValuation(self)
             else:
                 raise ValueError(
                     "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL pricing."
