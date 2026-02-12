@@ -1,4 +1,4 @@
-"""Implied volatility solvers for Black-Scholes-Merton European options."""
+"""Implied volatility solvers for European and American options."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from ..enums import (
 )
 from ..utils import calculate_year_fraction, pv_discrete_dividends
 from .core import OptionValuation, UnderlyingPricingData
+from .params import BinomialParams
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,8 +55,19 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
     if time_to_maturity <= 0:
         raise ValueError("Option maturity must be after pricing date.")
 
-    spot, dividend_yield = _adjusted_spot_and_dividend_yield(valuation)
     strike = float(valuation.strike)
+
+    if valuation.exercise_type is ExerciseType.AMERICAN:
+        spot = float(valuation.underlying.initial_value)
+        if valuation.option_type is OptionType.CALL:
+            lower = max(0.0, spot - strike)
+            upper = spot
+        else:  # PUT
+            lower = max(0.0, strike - spot)
+            upper = strike
+        return lower, upper
+
+    spot, dividend_yield = _adjusted_spot_and_dividend_yield(valuation)
     risk_free_rate = float(valuation.discount_curve.short_rate)
 
     discount_factor = np.exp(-risk_free_rate * time_to_maturity)
@@ -83,6 +95,59 @@ def _valuation_with_vol(valuation: OptionValuation, vol: float) -> OptionValuati
         pricing_method=valuation.pricing_method,
         params=valuation.params,
     )
+
+
+def _non_bsm_initial_guess(
+    valuation: OptionValuation,
+    target_price: float,
+    low: float,
+    high: float,
+) -> float:
+    spot = float(valuation.underlying.initial_value)
+    strike = float(valuation.strike)
+    time_to_maturity = calculate_year_fraction(
+        valuation.pricing_date,
+        valuation.maturity,
+        day_count_convention=DayCountConvention.ACT_365F,
+    )
+    time_sqrt = np.sqrt(max(time_to_maturity, 1.0e-8))
+
+    if valuation.option_type is OptionType.CALL:
+        intrinsic = max(spot - strike, 0.0)
+    else:
+        intrinsic = max(strike - spot, 0.0)
+
+    extrinsic = max(target_price - intrinsic, 0.0)
+    scale = max(spot, strike, 1.0)
+    rough = 0.2 + 0.8 * (extrinsic / scale) / time_sqrt
+    return float(np.clip(rough, low, high))
+
+
+def _bracket_volatility(
+    *,
+    f: Callable[[float], float],
+    low: float,
+    high: float,
+    max_expansions: int = 6,
+) -> tuple[float, float, float, float]:
+    f_low = f(low)
+    f_high = f(high)
+
+    if f_low > 0:
+        for _ in range(max_expansions):
+            low = max(low / 2.0, 1.0e-12)
+            f_low = f(low)
+            if f_low <= 0:
+                break
+
+    if f_high < 0:
+        for _ in range(max_expansions):
+            high *= 2.0
+            f_high = f(high)
+            if f_high >= 0:
+                break
+
+    return low, high, f_low, f_high
 
 
 def _newton_raphson(
@@ -165,14 +230,14 @@ def implied_volatility(
     tol: float = 1.0e-8,
     max_iter: int = 100,
 ) -> ImpliedVolResult:
-    """Solve for implied volatility using BSM European pricing.
+    """Solve for implied volatility using BSM, binomial, or PDE pricing.
 
     Parameters
     ==========
     target_price:
         Observed option price (per unit, not multiplied by contract size).
     valuation:
-        OptionValuation instance configured for BSM European pricing.
+        OptionValuation configured for BSM (European) or BINOMIAL/PDE_FD (European/American).
     method:
         Root-finding method to use for the solver.
     initial_vol:
@@ -195,10 +260,15 @@ def implied_volatility(
 
     if not isinstance(valuation, OptionValuation):
         raise TypeError("valuation must be an OptionValuation instance")
-    if valuation.pricing_method != PricingMethod.BSM:
-        raise NotImplementedError("Implied volatility is implemented for BSM only.")
-    if valuation.exercise_type != ExerciseType.EUROPEAN:
-        raise NotImplementedError("Implied volatility is implemented for European options only.")
+    if valuation.option_type not in (OptionType.CALL, OptionType.PUT):
+        raise NotImplementedError("Implied volatility is only supported for vanilla CALL/PUT.")
+    if valuation.pricing_method == PricingMethod.BSM:
+        if valuation.exercise_type != ExerciseType.EUROPEAN:
+            raise NotImplementedError("BSM implied volatility supports European options only.")
+    elif valuation.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        raise NotImplementedError(
+            "Implied volatility supports BSM, BINOMIAL, or PDE_FD pricing methods only."
+        )
 
     if not np.isfinite(target_price):
         raise ValueError("target_price must be finite")
@@ -208,6 +278,21 @@ def implied_volatility(
     low, high = vol_bounds
     if low <= 0 or high <= 0 or low >= high:
         raise ValueError("vol_bounds must be positive and satisfy low < high")
+
+    if valuation.pricing_method == PricingMethod.BINOMIAL and isinstance(
+        valuation.params, BinomialParams
+    ):
+        time_to_maturity = calculate_year_fraction(
+            valuation.pricing_date,
+            valuation.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
+        )
+        dt = time_to_maturity / max(int(valuation.params.num_steps), 1)
+        drift = float(valuation.discount_curve.short_rate) - float(
+            valuation.underlying.dividend_yield
+        )
+        sigma_min = abs(drift) * np.sqrt(max(dt, 1.0e-12))
+        low = max(low, sigma_min * 1.01)
 
     min_price, max_price = _price_bounds(valuation)
     if target_price < min_price - tol or target_price > max_price + tol:
@@ -221,19 +306,26 @@ def implied_volatility(
 
     def vega_at(vol: float) -> float:
         val = _valuation_with_vol(valuation, vol)
-        vega = val.vega(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        greek_method = (
+            GreekCalculationMethod.ANALYTICAL
+            if valuation.pricing_method == PricingMethod.BSM
+            else GreekCalculationMethod.NUMERICAL
+        )
+        vega = val.vega(greek_calc_method=greek_method)
         return float(vega) * 100.0  # convert from per-1% to per-1.0 volatility
 
-    f_low = f(low)
-    f_high = f(high)
+    if initial_vol is not None:
+        initial = float(initial_vol)
+    elif valuation.pricing_method == PricingMethod.BSM:
+        initial = float(valuation.underlying.volatility or 0.2)
+    else:
+        initial = _non_bsm_initial_guess(valuation, target_price, low, high)
+
+    initial = max(low, min(high, initial))
+
+    low, high, f_low, f_high = _bracket_volatility(f=f, low=low, high=high)
     if f_low > 0 or f_high < 0:
         raise ValueError("Price not bracketed by vol_bounds; adjust bounds.")
-
-    initial = (
-        float(initial_vol)
-        if initial_vol is not None
-        else max(low, min(high, float(valuation.underlying.volatility or 0.2)))
-    )
 
     if method == ImpliedVolMethod.NEWTON_RAPHSON:
         result = _newton_raphson(

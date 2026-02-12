@@ -43,8 +43,12 @@ class _BinomialValuationBase:
         dividend_yield = self.parent.underlying.dividend_yield
         u = np.exp(sigma * np.sqrt(delta_t))
         d = 1 / u
-        if not (d < np.exp((r - dividend_yield) * delta_t) < u):
-            raise ValueError("Arbitrage condition violated: d < exp((r-q)*dt) < u")
+        drift = np.exp((r - dividend_yield) * delta_t)
+        if not (d < drift < u):
+            raise ValueError(
+                "Arbitrage condition violated: d < exp((r-q)*dt) < u "
+                f"(d={d:.6g}, exp((r-q)*dt)={drift:.6g}, u={u:.6g})"
+            )
         p = (np.exp((r - dividend_yield) * delta_t) - d) / (u - d)
 
         spot_lattice = self._build_spot_lattice(

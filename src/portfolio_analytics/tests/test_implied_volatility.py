@@ -5,9 +5,20 @@ import datetime as dt
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import ExerciseType, ImpliedVolMethod, OptionType, PricingMethod
+from portfolio_analytics.enums import (
+    DayCountConvention,
+    ExerciseType,
+    ImpliedVolMethod,
+    OptionType,
+    PricingMethod,
+)
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.stochastic_processes import (
+    GBMParams,
+    GeometricBrownianMotion,
+    SimulationConfig,
+)
 from portfolio_analytics.valuation import (
     ImpliedVolResult,
     OptionSpec,
@@ -15,6 +26,7 @@ from portfolio_analytics.valuation import (
     UnderlyingPricingData,
     implied_volatility,
 )
+from portfolio_analytics.valuation.params import BinomialParams
 
 
 def _build_valuation(
@@ -86,6 +98,42 @@ def _build_discrete_dividend_valuation(
     )
 
 
+def _build_binomial_valuation(
+    *,
+    option_type: OptionType,
+    exercise_type: ExerciseType,
+    spot: float = 100.0,
+    strike: float = 100.0,
+    vol: float = 0.2,
+    rate: float = 0.05,
+    dividend_yield: float = 0.0,
+    num_steps: int = 400,
+) -> OptionValuation:
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = dt.datetime(2026, 1, 1)
+    market_data = MarketData(pricing_date, ConstantShortRate("csr", rate), currency="USD")
+    underlying = UnderlyingPricingData(
+        initial_value=spot,
+        volatility=vol,
+        market_data=market_data,
+        dividend_yield=dividend_yield,
+    )
+    spec = OptionSpec(
+        option_type=option_type,
+        exercise_type=exercise_type,
+        strike=strike,
+        maturity=maturity,
+        currency="USD",
+    )
+    return OptionValuation(
+        name="test_binom",
+        underlying=underlying,
+        spec=spec,
+        pricing_method=PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=num_steps),
+    )
+
+
 @pytest.mark.parametrize("method", [ImpliedVolMethod.NEWTON_RAPHSON, ImpliedVolMethod.BISECTION])
 def test_implied_volatility_recovers_call_vol(method: ImpliedVolMethod):
     true_vol = 0.25
@@ -122,19 +170,22 @@ def test_implied_volatility_rejects_out_of_bounds_price():
         implied_volatility(target_price, valuation)
 
 
-@pytest.mark.parametrize("pricing_method", [PricingMethod.BINOMIAL, PricingMethod.PDE_FD])
-def test_implied_volatility_requires_bsm(pricing_method: PricingMethod):
-    valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
-    target_price = valuation.present_value()
-
-    pricing_date = valuation.pricing_date
-    maturity = valuation.maturity
+def test_implied_volatility_rejects_monte_carlo():
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = dt.datetime(2026, 1, 1)
     market_data = MarketData(pricing_date, ConstantShortRate("csr", 0.05), currency="USD")
-    underlying = UnderlyingPricingData(
+    sim_config = SimulationConfig(
+        paths=5_000,
+        day_count_convention=DayCountConvention.ACT_365F,
+        num_steps=50,
+        end_date=maturity,
+    )
+    gbm_params = GBMParams(
         initial_value=100.0,
         volatility=0.2,
-        market_data=market_data,
+        dividend_yield=0.0,
     )
+    underlying = GeometricBrownianMotion("gbm", market_data, gbm_params, sim_config)
     spec = OptionSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
@@ -142,17 +193,19 @@ def test_implied_volatility_requires_bsm(pricing_method: PricingMethod):
         maturity=maturity,
         currency="USD",
     )
-    valuation_object = OptionValuation(
-        name="test",
+    valuation = OptionValuation(
+        name="test_mc",
         underlying=underlying,
         spec=spec,
-        pricing_method=pricing_method,
+        pricing_method=PricingMethod.MONTE_CARLO,
     )
-    with pytest.raises(NotImplementedError, match="BSM"):
-        implied_volatility(target_price, valuation_object)
+    target_price = valuation.present_value()
+
+    with pytest.raises(NotImplementedError, match="pricing methods"):
+        implied_volatility(target_price, valuation)
 
 
-def test_implied_volatility_requires_european():
+def test_implied_volatility_rejects_american_bsm():
     valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
     target_price = valuation.present_value()
 
@@ -191,3 +244,34 @@ def test_implied_volatility_with_discrete_dividends():
 
     assert result.converged
     assert np.isclose(result.implied_vol, true_vol, atol=1.0e-6)
+
+
+@pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+def test_implied_volatility_recovers_american_binomial(option_type: OptionType):
+    true_vol = 0.3
+    initial_vol = 0.12
+    dividend_yield = 0.02 if option_type is OptionType.CALL else 0.0
+
+    pricing_valuation = _build_binomial_valuation(
+        option_type=option_type,
+        exercise_type=ExerciseType.AMERICAN,
+        vol=true_vol,
+        dividend_yield=dividend_yield,
+    )
+    target_price = pricing_valuation.present_value()
+
+    solver_valuation = _build_binomial_valuation(
+        option_type=option_type,
+        exercise_type=ExerciseType.AMERICAN,
+        vol=initial_vol,
+        dividend_yield=dividend_yield,
+    )
+    result = implied_volatility(
+        target_price,
+        solver_valuation,
+        method=ImpliedVolMethod.BISECTION,
+        tol=1.0e-6,
+    )
+
+    assert result.converged
+    assert np.isclose(result.implied_vol, true_vol, atol=5.0e-3)
