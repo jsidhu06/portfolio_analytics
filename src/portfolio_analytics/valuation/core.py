@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 from collections.abc import Callable
 import datetime as dt
 import numpy as np
@@ -490,7 +490,60 @@ class OptionValuation:
 
     def present_value(self, params: ValuationParams | None = None) -> float:
         """Calculate present value of the derivative."""
-        return float(self._impl.present_value(self._effective_params(params)))
+        effective_params = self._effective_params(params)
+        base_pv = float(self._impl.present_value(effective_params))
+        if effective_params is None or not getattr(
+            effective_params, "control_variate_european", False
+        ):
+            return base_pv
+
+        return float(self._apply_control_variate(base_pv, effective_params))
+
+    def _apply_control_variate(self, base_pv: float, params: ValuationParams | None) -> float:
+        if self.exercise_type is not ExerciseType.AMERICAN:
+            raise ValueError("control_variate_european is only valid for American options.")
+        if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+            raise NotImplementedError(
+                "control_variate_european is only supported for BINOMIAL and PDE_FD pricing."
+            )
+        if not isinstance(self.spec, OptionSpec):
+            raise NotImplementedError(
+                "control_variate_european is only supported for vanilla option specs."
+            )
+        if self.option_type not in (OptionType.CALL, OptionType.PUT):
+            raise NotImplementedError(
+                "control_variate_european is only supported for vanilla CALL/PUT."
+            )
+
+        euro_spec = OptionSpec(
+            option_type=self.option_type,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+            contract_size=self.contract_size,
+        )
+
+        cv_params = (
+            dc_replace(params, control_variate_european=False)
+            if hasattr(params, "control_variate_european")
+            else params
+        )
+        euro_num = OptionValuation(
+            name=f"{self.name}_cv_euro_num",
+            underlying=self.underlying,
+            spec=euro_spec,
+            pricing_method=self.pricing_method,
+            params=cv_params,
+        ).present_value()
+        euro_bsm = OptionValuation(
+            name=f"{self.name}_cv_euro_bsm",
+            underlying=self.underlying,
+            spec=euro_spec,
+            pricing_method=PricingMethod.BSM,
+        ).present_value()
+
+        return base_pv + (euro_bsm - euro_num)
 
     def present_value_pathwise(self, params: ValuationParams | None = None) -> np.ndarray:
         """Return discounted pathwise present values.

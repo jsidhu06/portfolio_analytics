@@ -55,12 +55,17 @@ class BinomialParams:
         num_steps (roughly 0.5x to 1.0x) to reduce interpolation bias.
         Larger values improve stability but increase memory usage as
         O(asian_tree_averages * num_steps^2).
+    control_variate_european:
+        Apply Hull-style control variate adjustment for American options using
+        BSM European price and the numerical European price from the same method.
+        Only applicable to vanilla call/put American pricing.
     """
 
     num_steps: int = 500
     mc_paths: int | None = None
     random_seed: int | None = None
     asian_tree_averages: int | None = None
+    control_variate_european: bool = False
 
     def __post_init__(self):
         if self.num_steps < 1:
@@ -118,6 +123,10 @@ class PDEParams:
         method: Time-stepping scheme for the FD solver.
         space_grid: Spatial discretization grid in spot or log-spot space.
         american_solver: Early exercise handling for American options.
+        control_variate_european:
+            Apply Hull-style control variate adjustment for American options using
+            BSM European price and the numerical European price from the same method.
+            Only applicable to vanilla call/put American pricing.
     """
 
     smax_mult: float = 4.0
@@ -129,6 +138,7 @@ class PDEParams:
     method: PDEMethod | str = PDEMethod.CRANK_NICOLSON
     space_grid: PDESpaceGrid | str = PDESpaceGrid.SPOT
     american_solver: PDEEarlyExercise | str = PDEEarlyExercise.GAUSS_SEIDEL
+    control_variate_european: bool = False
 
     def __post_init__(self):
         if isinstance(self.method, str):
