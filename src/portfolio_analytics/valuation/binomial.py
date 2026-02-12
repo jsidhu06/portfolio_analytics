@@ -243,15 +243,17 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         for t in range(num_steps + 1):
             time_idx = np.arange(t + 1)
-            for row in range(t + 1):
-                downs_first_rows = np.minimum(time_idx, row)
-                prices_min = spot_lattice[downs_first_rows, time_idx]
-                avg_min[row, t] = float(np.mean(prices_min))
+            row = np.arange(t + 1)[:, None]
+            time = time_idx[None, :]
 
-                ups_first = t - row
-                ups_first_rows = np.maximum(0, time_idx - ups_first)
-                prices_max = spot_lattice[ups_first_rows, time_idx]
-                avg_max[row, t] = float(np.mean(prices_max))
+            downs_first_rows = np.minimum(time, row)
+            prices_min = spot_lattice[downs_first_rows, time]
+            avg_min[: t + 1, t] = prices_min.mean(axis=1)
+
+            ups_first = t - row
+            ups_first_rows = np.maximum(0, time - ups_first)
+            prices_max = spot_lattice[ups_first_rows, time]
+            avg_max[: t + 1, t] = prices_max.mean(axis=1)
 
         return avg_min, avg_max
 
@@ -276,8 +278,11 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         avg_grid = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):
-            for row in range(t + 1):
-                avg_grid[:, row, t] = np.linspace(avg_min[row, t], avg_max[row, t], k)
+            rows = np.arange(t + 1)
+            alpha = np.linspace(0.0, 1.0, k)[:, None]
+            avg_grid[:, rows, t] = (
+                avg_min[rows, t][None, :] + (avg_max[rows, t] - avg_min[rows, t])[None, :] * alpha
+            )
 
         values = np.zeros_like(avg_grid)
 
@@ -289,27 +294,29 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         is_american = self.parent.spec.exercise_type is ExerciseType.AMERICAN
 
         for t in range(num_steps - 1, -1, -1):
-            for row in range(t + 1):
-                s_up = spot_lattice[row, t + 1]
-                s_down = spot_lattice[row + 1, t + 1]
-                grid_here = avg_grid[:, row, t]
-                for m, avg_price in enumerate(grid_here):
-                    avg_up = ((t + 1) * avg_price + s_up) / (t + 2)
-                    avg_down = ((t + 1) * avg_price + s_down) / (t + 2)
+            rows = np.arange(t + 1)
+            s_up = spot_lattice[rows, t + 1]
+            s_down = spot_lattice[rows + 1, t + 1]
+            grid_here = avg_grid[:, rows, t]
 
-                    v_up = self._interp_value(
-                        avg_up, avg_grid[:, row, t + 1], values[:, row, t + 1]
-                    )
-                    v_down = self._interp_value(
-                        avg_down, avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]
-                    )
-                    continuation = discount_factor * (p * v_up + (1.0 - p) * v_down)
+            avg_up = ((t + 1) * grid_here + s_up) / (t + 2)
+            avg_down = ((t + 1) * grid_here + s_down) / (t + 2)
 
-                    if is_american:
-                        exercise = float(self._average_payoff(avg_price))
-                        values[m, row, t] = max(continuation, exercise)
-                    else:
-                        values[m, row, t] = continuation
+            v_up = np.empty_like(avg_up)
+            v_down = np.empty_like(avg_down)
+            for j, row in enumerate(rows):
+                v_up[:, j] = np.interp(avg_up[:, j], avg_grid[:, row, t + 1], values[:, row, t + 1])
+                v_down[:, j] = np.interp(
+                    avg_down[:, j], avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]
+                )
+
+            continuation = discount_factor * (p * v_up + (1.0 - p) * v_down)
+
+            if is_american:
+                exercise = self._average_payoff(grid_here)
+                values[:, rows, t] = np.maximum(continuation, exercise)
+            else:
+                values[:, rows, t] = continuation
 
         return values, avg_grid
 

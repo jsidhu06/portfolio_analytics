@@ -5,6 +5,7 @@ that explicitly documents the configuration options available for that method.
 """
 
 from dataclasses import dataclass
+import warnings
 
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid
 
@@ -50,6 +51,10 @@ class BinomialParams:
     asian_tree_averages:
         Number of representative averages per node for Hull-style Asian
         binomial tree valuation. Used when mc_paths is None.
+        Practical guidance: keep asian_tree_averages on the same order as
+        num_steps (roughly 0.5x to 1.0x) to reduce interpolation bias.
+        Larger values improve stability but increase memory usage as
+        O(asian_tree_averages * num_steps^2).
     """
 
     num_steps: int = 500
@@ -66,6 +71,29 @@ class BinomialParams:
             raise ValueError(f"mc_paths must be >= 1, got {self.mc_paths}")
         if self.asian_tree_averages is not None and self.asian_tree_averages < 1:
             raise ValueError(f"asian_tree_averages must be >= 1, got {self.asian_tree_averages}")
+        if self.asian_tree_averages is not None:
+            ratio = self.asian_tree_averages / self.num_steps
+            if ratio < 0.5:
+                warnings.warn(
+                    "asian_tree_averages is small relative to num_steps; "
+                    "Hull-style Asian valuation may be biased upward. "
+                    "Consider asian_tree_averages >= 0.5 * num_steps.",
+                    RuntimeWarning,
+                )
+            if ratio > 2.0:
+                warnings.warn(
+                    "asian_tree_averages is large relative to num_steps; "
+                    "memory usage may be high with limited accuracy gains.",
+                    RuntimeWarning,
+                )
+            est_bytes = self.asian_tree_averages * (self.num_steps + 1) ** 2 * 8
+            if est_bytes > 1_000_000_000:
+                est_gib = est_bytes / (1024**3)
+                warnings.warn(
+                    f"Estimated memory for Hull Asian grid is ~{est_gib:.2f} GiB; "
+                    "consider reducing num_steps or asian_tree_averages.",
+                    RuntimeWarning,
+                )
 
 
 @dataclass(frozen=True, slots=True)
