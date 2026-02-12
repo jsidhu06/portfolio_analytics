@@ -6,7 +6,13 @@ import logging
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import AsianAveraging, DayCountConvention, OptionType, PricingMethod
+from portfolio_analytics.enums import (
+    AsianAveraging,
+    DayCountConvention,
+    ExerciseType,
+    OptionType,
+    PricingMethod,
+)
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.stochastic_processes import (
@@ -78,13 +84,20 @@ def _binomial_underlying(
     )
 
 
-def _asian_spec(*, strike: float, maturity: dt.datetime, call_put: OptionType) -> AsianOptionSpec:
+def _asian_spec(
+    *,
+    strike: float,
+    maturity: dt.datetime,
+    call_put: OptionType,
+    exercise_type: ExerciseType = ExerciseType.EUROPEAN,
+) -> AsianOptionSpec:
     return AsianOptionSpec(
         averaging=AsianAveraging.ARITHMETIC,
         call_put=call_put,
         strike=strike,
         maturity=maturity,
         currency=CURRENCY,
+        exercise_type=exercise_type,
     )
 
 
@@ -255,3 +268,46 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
 
     assert np.isclose(binom_mc_pv, hull_pv, rtol=0.02)
     assert np.isclose(mc_pv, adjusted_hull_pv, rtol=rtol_mc_adj)
+
+
+@pytest.mark.parametrize(
+    "spot,strike,vol,short_rate,days,call_put",
+    [
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
+        (110.0, 100.0, 0.25, 0.01, 270, OptionType.CALL),
+        (110.0, 100.0, 0.25, 0.01, 270, OptionType.PUT),
+    ],
+)
+def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, days, call_put):
+    maturity = PRICING_DATE + dt.timedelta(days=days)
+    euro_spec = _asian_spec(
+        strike=strike, maturity=maturity, call_put=call_put, exercise_type=ExerciseType.EUROPEAN
+    )
+    amer_spec = _asian_spec(
+        strike=strike, maturity=maturity, call_put=call_put, exercise_type=ExerciseType.AMERICAN
+    )
+
+    binom_underlying = _binomial_underlying(
+        spot=spot, vol=vol, short_rate=short_rate, dividend_yield=0.0
+    )
+
+    euro_pv = OptionValuation(
+        "asian_hull_euro", binom_underlying, euro_spec, PricingMethod.BINOMIAL
+    ).present_value(
+        params=BinomialParams(
+            num_steps=NUM_STEPS,
+            asian_tree_averages=ASIAN_TREE_AVERAGES,
+        )
+    )
+
+    amer_pv = OptionValuation(
+        "asian_hull_amer", binom_underlying, amer_spec, PricingMethod.BINOMIAL
+    ).present_value(
+        params=BinomialParams(
+            num_steps=NUM_STEPS,
+            asian_tree_averages=ASIAN_TREE_AVERAGES,
+        )
+    )
+
+    assert amer_pv >= euro_pv - 1e-8
