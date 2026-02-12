@@ -14,6 +14,7 @@ from portfolio_analytics.stochastic_processes import (
     GeometricBrownianMotion,
     SimulationConfig,
 )
+from portfolio_analytics.utils import pv_discrete_dividends
 from portfolio_analytics.valuation import OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.core import AsianOptionSpec
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
@@ -39,7 +40,8 @@ def _gbm_underlying(
     spot: float,
     vol: float,
     short_rate: float,
-    dividend_yield: float,
+    dividend_yield: float = 0.0,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
     maturity: dt.datetime,
     paths: int,
     num_steps: int,
@@ -50,18 +52,29 @@ def _gbm_underlying(
         num_steps=num_steps,
         end_date=maturity,
     )
-    gbm_params = GBMParams(initial_value=spot, volatility=vol, dividend_yield=dividend_yield)
+    gbm_params = GBMParams(
+        initial_value=spot,
+        volatility=vol,
+        dividend_yield=dividend_yield,
+        discrete_dividends=discrete_dividends,
+    )
     return GeometricBrownianMotion("gbm", _market_data(short_rate), gbm_params, sim_config)
 
 
 def _binomial_underlying(
-    *, spot: float, vol: float, short_rate: float, dividend_yield: float
+    *,
+    spot: float,
+    vol: float,
+    short_rate: float,
+    dividend_yield: float = 0.0,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingPricingData:
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
         market_data=_market_data(short_rate),
         dividend_yield=dividend_yield,
+        discrete_dividends=discrete_dividends,
     )
 
 
@@ -146,3 +159,99 @@ def test_asian_binomial_hull_close_to_mc(
 
     assert np.isclose(mc_pv, hull_pv, rtol=0.02)
     assert np.isclose(binom_mc_pv, hull_pv, rtol=0.02)
+
+
+@pytest.mark.parametrize(
+    "div_days,div_amt,rtol_mc_adj,mc_paths",
+    [
+        ([90, 270], 0.5, 0.03, 100_000),
+        ([30, 330], 0.5, 0.05, 50_000),
+        ([60, 300], 1.0, 0.06, 50_000),
+        ([30, 120, 210, 330], 0.25, 0.05, 50_000),
+    ],
+)
+def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc_adj, mc_paths):
+    spot = 52.0
+    strike = 50.0
+    vol = 0.4
+    short_rate = 0.1
+    days = 365
+    maturity = PRICING_DATE + dt.timedelta(days=days)
+    divs = [(PRICING_DATE + dt.timedelta(days=day), div_amt) for day in div_days]
+
+    spec = _asian_spec(strike=strike, maturity=maturity, call_put=OptionType.CALL)
+
+    mc_underlying = _gbm_underlying(
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        discrete_dividends=divs,
+        maturity=maturity,
+        paths=mc_paths,
+        num_steps=NUM_STEPS,
+    )
+    mc_pv = OptionValuation(
+        "asian_mc_div", mc_underlying, spec, PricingMethod.MONTE_CARLO
+    ).present_value(params=MonteCarloParams(random_seed=MC_SEED))
+
+    binom_underlying = _binomial_underlying(
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        discrete_dividends=divs,
+    )
+
+    binom_mc_pv = OptionValuation(
+        "asian_binom_mc_div", binom_underlying, spec, PricingMethod.BINOMIAL
+    ).present_value(
+        params=BinomialParams(
+            num_steps=NUM_STEPS * 2,
+            mc_paths=MC_PATHS,
+            random_seed=MC_SEED,
+        )
+    )
+
+    hull_pv = OptionValuation(
+        "asian_hull_div", binom_underlying, spec, PricingMethod.BINOMIAL
+    ).present_value(
+        params=BinomialParams(
+            num_steps=NUM_STEPS,
+            asian_tree_averages=ASIAN_TREE_AVERAGES,
+        )
+    )
+
+    pv_divs = pv_discrete_dividends(
+        dividends=divs,
+        pricing_date=PRICING_DATE,
+        maturity=maturity,
+        short_rate=short_rate,
+    )
+    vol_multiplier = spot / (spot - pv_divs)
+    adjusted_underlying = binom_underlying.replace(
+        volatility=binom_underlying.volatility * vol_multiplier
+    )
+    adjusted_hull_pv = OptionValuation(
+        "asian_hull_div_adj", adjusted_underlying, spec, PricingMethod.BINOMIAL
+    ).present_value(
+        params=BinomialParams(
+            num_steps=NUM_STEPS,
+            asian_tree_averages=ASIAN_TREE_AVERAGES,
+        )
+    )
+
+    logger.info(
+        "Asian disc-div S=%.2f K=%.2f vol=%.2f r=%.2f divs=%d\n"
+        "MC=%.6f Hull=%.6f BinomMC=%.6f HullAdj=%.6f",
+        spot,
+        strike,
+        vol,
+        short_rate,
+        len(divs),
+        mc_pv,
+        hull_pv,
+        binom_mc_pv,
+        adjusted_hull_pv,
+    )
+
+    assert np.isclose(binom_mc_pv, hull_pv, rtol=0.02)
+    assert np.isclose(mc_pv, adjusted_hull_pv, rtol=rtol_mc_adj)

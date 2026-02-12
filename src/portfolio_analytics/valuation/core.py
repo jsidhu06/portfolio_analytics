@@ -140,8 +140,6 @@ class AsianOptionSpec:
     currency: str
     averaging_start: dt.datetime | None = None
     contract_size: int | float = 100
-
-    # Kept for compatibility
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
 
     def __post_init__(self):
