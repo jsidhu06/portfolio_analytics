@@ -39,6 +39,7 @@ def _gbm_underlying(
     spot: float,
     vol: float,
     short_rate: float,
+    dividend_yield: float,
     maturity: dt.datetime,
     paths: int,
     num_steps: int,
@@ -49,15 +50,18 @@ def _gbm_underlying(
         num_steps=num_steps,
         end_date=maturity,
     )
-    gbm_params = GBMParams(initial_value=spot, volatility=vol)
+    gbm_params = GBMParams(initial_value=spot, volatility=vol, dividend_yield=dividend_yield)
     return GeometricBrownianMotion("gbm", _market_data(short_rate), gbm_params, sim_config)
 
 
-def _binomial_underlying(*, spot: float, vol: float, short_rate: float) -> UnderlyingPricingData:
+def _binomial_underlying(
+    *, spot: float, vol: float, short_rate: float, dividend_yield: float
+) -> UnderlyingPricingData:
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
         market_data=_market_data(short_rate),
+        dividend_yield=dividend_yield,
     )
 
 
@@ -72,15 +76,21 @@ def _asian_spec(*, strike: float, maturity: dt.datetime, call_put: OptionType) -
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,days,call_put",
+    "spot,strike,vol,short_rate,dividend_yield,days,call_put",
     [
-        (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
-        (110.0, 100.0, 0.25, 0.01, 270, OptionType.PUT),
-        (95.0, 90.0, 0.3, 0.05, 540, OptionType.CALL),
-        (105.0, 110.0, 0.18, 0.02, 180, OptionType.PUT),
+        (100.0, 100.0, 0.2, 0.03, 0.0, 365, OptionType.CALL),
+        (100.0, 100.0, 0.2, 0.03, 0.02, 365, OptionType.CALL),
+        (110.0, 100.0, 0.25, 0.01, 0.0, 270, OptionType.PUT),
+        (110.0, 100.0, 0.25, 0.01, 0.015, 270, OptionType.PUT),
+        (95.0, 90.0, 0.3, 0.05, 0.0, 540, OptionType.CALL),
+        (95.0, 90.0, 0.3, 0.05, 0.025, 540, OptionType.CALL),
+        (105.0, 110.0, 0.18, 0.02, 0.0, 180, OptionType.PUT),
+        (105.0, 110.0, 0.18, 0.02, 0.01, 180, OptionType.PUT),
     ],
 )
-def test_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate, days, call_put):
+def test_asian_binomial_hull_close_to_mc(
+    spot, strike, vol, short_rate, dividend_yield, days, call_put
+):
     maturity = PRICING_DATE + dt.timedelta(days=days)
     spec = _asian_spec(strike=strike, maturity=maturity, call_put=call_put)
 
@@ -88,6 +98,7 @@ def test_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate, days, ca
         spot=spot,
         vol=vol,
         short_rate=short_rate,
+        dividend_yield=dividend_yield,
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
@@ -96,7 +107,9 @@ def test_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate, days, ca
         "asian_mc", mc_underlying, spec, PricingMethod.MONTE_CARLO
     ).present_value(params=MonteCarloParams(random_seed=MC_SEED))
 
-    binom_underlying = _binomial_underlying(spot=spot, vol=vol, short_rate=short_rate)
+    binom_underlying = _binomial_underlying(
+        spot=spot, vol=vol, short_rate=short_rate, dividend_yield=dividend_yield
+    )
 
     binom_mc_pv = OptionValuation(
         "asian_mc", binom_underlying, spec, PricingMethod.BINOMIAL
@@ -118,12 +131,13 @@ def test_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate, days, ca
     )
 
     logger.info(
-        "Asian %s S=%.2f K=%.2f vol=%.2f r=%.2f days=%d\nMC=%.6f Hull=%.6f BinomMC=%.6f",
+        "Asian %s S=%.2f K=%.2f vol=%.2f r=%.2f q=%.2f days=%d\nMC=%.6f Hull=%.6f BinomMC=%.6f",
         call_put.value,
         spot,
         strike,
         vol,
         short_rate,
+        dividend_yield,
         days,
         mc_pv,
         hull_pv,
