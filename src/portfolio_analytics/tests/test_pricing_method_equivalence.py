@@ -15,7 +15,8 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate, DiscountCurve
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -38,7 +39,9 @@ MC_CFG_AM = MonteCarloParams(random_seed=42, deg=3)
 
 
 def _market_data() -> MarketData:
-    return MarketData(PRICING_DATE, ConstantShortRate("r", RISK_FREE), currency=CURRENCY)
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
+    curve = DiscountCurve.flat("r", RISK_FREE, end_time=ttm)
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
 def _build_curve_from_forwards(
@@ -237,7 +240,7 @@ def test_discrete_dividend_equivalence_across_methods():
         dividends=divs,
         pricing_date=ud.pricing_date,
         maturity=spec_eu.maturity,
-        short_rate=ud.discount_curve.short_rate,
+        short_rate=float(ud.discount_curve.flat_rate),
     )
     vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)
     adjusted_ud = ud.replace(volatility=ud.volatility * vol_multiplier)

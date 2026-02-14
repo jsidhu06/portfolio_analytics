@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 from ..enums import OptionType, AsianAveraging, ExerciseType
-from ..rates import ConstantShortRate
 from ..utils import calculate_year_fraction, pv_discrete_dividends
 from .params import BinomialParams
 
@@ -66,19 +65,23 @@ class _BinomialValuationBase:
 
         p = (growth - d) / (u - d)
 
-        if self.parent.underlying.discrete_dividends and not isinstance(
-            discount_curve, ConstantShortRate
-        ):
+        if self.parent.underlying.discrete_dividends and discount_curve.flat_rate is None:
             raise NotImplementedError(
                 "Discrete dividends with time-varying discount curves are not supported."
             )
+
+        short_rate_for_divs = (
+            float(discount_curve.flat_rate)
+            if discount_curve.flat_rate is not None
+            else float(forward_rates[0])
+        )
 
         spot_lattice = self._build_spot_lattice(
             num_steps=num_steps,
             time_intervals=time_intervals,
             up=u,
             down=d,
-            short_rate=float(getattr(discount_curve, "short_rate", forward_rates[0])),
+            short_rate=short_rate_for_divs,
         )
 
         discount_factors = np.exp(-forward_rates * delta_t)

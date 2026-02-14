@@ -21,7 +21,8 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation import BinomialParams
 
@@ -31,7 +32,7 @@ def _make_ud(
     spot: float = 100.0,
     vol: float = 0.20,
     pricing_date: dt.datetime,
-    discount_curve: ConstantShortRate,
+    discount_curve: DiscountCurve,
     currency: str = "USD",
     dividend_yield: float = 0.0,
 ) -> UnderlyingPricingData:
@@ -71,7 +72,7 @@ def _snapshot_ud(ud: UnderlyingPricingData) -> dict:
         "dividend_yield": ud.dividend_yield,
         # identity + rate (curve object should remain same & rate unchanged)
         "discount_curve_id": id(ud.discount_curve),
-        "discount_curve_rate": float(ud.discount_curve.short_rate),
+        "discount_curve_rate": float(ud.discount_curve.flat_rate),
     }
 
 
@@ -80,8 +81,9 @@ def common_setup():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     rate = 0.05
-    csr = ConstantShortRate("csr", rate)
-    return pricing_date, maturity, csr
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    return pricing_date, maturity, curve
 
 
 class TestValuationPurityPresentValue:

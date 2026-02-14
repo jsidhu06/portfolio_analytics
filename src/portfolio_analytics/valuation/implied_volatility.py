@@ -36,12 +36,14 @@ def _adjusted_spot_and_dividend_yield(valuation: OptionValuation) -> tuple[float
     discrete_dividends = valuation.underlying.discrete_dividends
     if not discrete_dividends:
         return spot, dividend_yield
+    if valuation.discount_curve.flat_rate is None:
+        raise NotImplementedError("Discrete dividend adjustments require a flat curve.")
 
     pv_divs = pv_discrete_dividends(
         discrete_dividends,
         valuation.pricing_date,
         valuation.maturity,
-        float(valuation.discount_curve.short_rate),
+        float(valuation.discount_curve.flat_rate),
     )
     return max(spot - pv_divs, 0.0), dividend_yield
 
@@ -68,7 +70,7 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
         return lower, upper
 
     spot, dividend_yield = _adjusted_spot_and_dividend_yield(valuation)
-    risk_free_rate = float(valuation.discount_curve.short_rate)
+    risk_free_rate = float(valuation.discount_curve.flat_rate)
 
     discount_factor = np.exp(-risk_free_rate * time_to_maturity)
     forward_discount = np.exp(-dividend_yield * time_to_maturity)
@@ -288,7 +290,7 @@ def implied_volatility(
             day_count_convention=DayCountConvention.ACT_365F,
         )
         dt = time_to_maturity / max(int(valuation.params.num_steps), 1)
-        drift = float(valuation.discount_curve.short_rate) - float(
+        drift = float(valuation.discount_curve.flat_rate) - float(
             valuation.underlying.dividend_yield
         )
         sigma_min = abs(drift) * np.sqrt(max(dt, 1.0e-12))

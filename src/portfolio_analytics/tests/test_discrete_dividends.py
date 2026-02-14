@@ -7,7 +7,8 @@ import numpy as np
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.enums import DayCountConvention
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -26,8 +27,9 @@ def _build_case():
     strike = 50.0
     vol = 0.4
 
-    csr = ConstantShortRate("csr", r)
-    market_data = MarketData(pricing_date, csr, currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("csr", r, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
 
     divs = [
         (pricing_date + dt.timedelta(days=90), 0.5),
@@ -100,7 +102,7 @@ def test_discrete_dividend_engine_consistency():
         dividends=divs,
         pricing_date=market_data.pricing_date,
         maturity=spec.maturity,
-        short_rate=market_data.discount_curve.short_rate,
+        short_rate=float(market_data.discount_curve.flat_rate),
     )
     vol_multiplier = underlying.initial_value / (underlying.initial_value - pv_divs)
     adjusted_underlying = underlying.replace(volatility=underlying.volatility * vol_multiplier)

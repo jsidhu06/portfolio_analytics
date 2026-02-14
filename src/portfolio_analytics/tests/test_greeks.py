@@ -13,7 +13,8 @@ from portfolio_analytics.enums import (
     DayCountConvention,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     PathSimulation,
@@ -48,7 +49,8 @@ class TestGreeksSetup:
         self.currency = "USD"
 
         # Discount curve
-        self.csr = ConstantShortRate("csr", self.rate)
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        self.csr = DiscountCurve.flat("csr", self.rate, end_time=ttm)
 
         # Market data + sim config for Monte Carlo
         self.market_data = MarketData(self.pricing_date, self.csr, currency=self.currency)

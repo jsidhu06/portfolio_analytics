@@ -28,7 +28,7 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation.pde import _FDAmericanValuation
 from portfolio_analytics.valuation import BinomialParams, MonteCarloParams, PDEParams
 from portfolio_analytics.utils import calculate_year_fraction, expected_binomial_payoff
@@ -153,9 +153,11 @@ class TestUnderlyingPricingData:
 
     def setup_method(self):
         """Set up market environment for tests."""
-        self.csr = ConstantShortRate("csr", 0.05)
         self.pricing_date = dt.datetime(2025, 1, 1)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
+        self.maturity = dt.datetime(2026, 1, 1)
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        self.curve = DiscountCurve.flat("csr", 0.05, end_time=ttm)
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_underlying_data_creation(self):
         """Test successful creation of UnderlyingPricingData."""
@@ -188,8 +190,9 @@ class TestOptionValuation:
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
         self.strike = 100.0
-        self.csr = ConstantShortRate("csr", 0.05)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        self.curve = DiscountCurve.flat("csr", 0.05, end_time=ttm)
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         # Standard option spec
         self.call_spec = OptionSpec(
@@ -1064,8 +1067,9 @@ class TestBSMValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        self.curve = DiscountCurve.flat("csr", self.rate, end_time=ttm)
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         underlying_params = {
             "initial_value": self.spot,
@@ -1322,8 +1326,9 @@ class TestBinomialValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        self.curve = DiscountCurve.flat("csr", self.rate, end_time=ttm)
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         self.ud = UnderlyingPricingData(
             initial_value=self.spot,
@@ -1597,8 +1602,9 @@ class TestMCSValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        self.curve = DiscountCurve.flat("csr", self.rate, end_time=ttm)
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_mcs_european_call_atm(self):
         """Test MCS European call option pricing."""

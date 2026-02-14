@@ -5,7 +5,7 @@ import numpy as np
 
 from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation import OptionSpec, UnderlyingPricingData, OptionValuation
 from portfolio_analytics.utils import (
     calculate_year_fraction,
@@ -95,7 +95,9 @@ def test_put_call_parity_bsm_no_dividend():
     strike = 100.0
     r = 0.05
 
-    market_data = MarketData(pricing_date, ConstantShortRate("r", r), currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("r", r, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
 
     underlying_call = UnderlyingPricingData(
         initial_value=spot,
@@ -156,7 +158,9 @@ def test_put_call_parity_bsm_with_dividend_yield():
     r = 0.04
     q = 0.02
 
-    market_data = MarketData(pricing_date, ConstantShortRate("r", r), currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("r", r, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
     underlying_call = UnderlyingPricingData(
         initial_value=spot,
         volatility=0.25,

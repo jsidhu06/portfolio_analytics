@@ -13,7 +13,8 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -40,7 +41,9 @@ def _build_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    market_data = MarketData(pricing_date, ConstantShortRate("csr", rate), currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
@@ -72,7 +75,9 @@ def _build_discrete_dividend_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = pricing_date + dt.timedelta(days=365)
-    market_data = MarketData(pricing_date, ConstantShortRate("csr", rate), currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
     divs = [
         (pricing_date + dt.timedelta(days=90), 0.5),
         (pricing_date + dt.timedelta(days=270), 0.5),
@@ -111,7 +116,9 @@ def _build_binomial_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    market_data = MarketData(pricing_date, ConstantShortRate("csr", rate), currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
@@ -173,7 +180,9 @@ def test_implied_volatility_rejects_out_of_bounds_price():
 def test_implied_volatility_rejects_monte_carlo():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    market_data = MarketData(pricing_date, ConstantShortRate("csr", 0.05), currency="USD")
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    curve = DiscountCurve.flat("csr", 0.05, end_time=ttm)
+    market_data = MarketData(pricing_date, curve, currency="USD")
     sim_config = SimulationConfig(
         paths=5_000,
         day_count_convention=DayCountConvention.ACT_365F,

@@ -1,7 +1,6 @@
-"Constant short rate discounting"
+"Discount curve utilities"
 
 from dataclasses import dataclass
-import logging
 import numpy as np
 from .utils import get_year_deltas
 
@@ -17,6 +16,7 @@ class DiscountCurve:
     name: str
     times: np.ndarray
     dfs: np.ndarray
+    flat_rate: float | None = None
 
     def __post_init__(self) -> None:
         t = np.asarray(self.times, dtype=float)
@@ -27,8 +27,26 @@ class DiscountCurve:
             raise ValueError("times must be strictly increasing")
         if np.any(df <= 0.0) or np.any(df > 1.0 + 1e-12):
             raise ValueError("discount factors must be in (0, 1]")
+        if self.flat_rate is not None and not np.isfinite(float(self.flat_rate)):
+            raise ValueError("flat_rate must be finite when provided")
         object.__setattr__(self, "times", t)
         object.__setattr__(self, "dfs", df)
+
+    @classmethod
+    def flat(
+        cls,
+        name: str,
+        rate: float,
+        end_time: float,
+        steps: int = 1,
+    ) -> "DiscountCurve":
+        if end_time <= 0.0:
+            raise ValueError("end_time must be positive")
+        if steps < 1:
+            raise ValueError("steps must be >= 1")
+        times = np.linspace(0.0, float(end_time), int(steps) + 1)
+        dfs = np.exp(-float(rate) * times)
+        return cls(name=name, times=times, dfs=dfs, flat_rate=float(rate))
 
     def df(self, t: float | np.ndarray) -> np.ndarray:
         """Log-linear interpolation of discount factors."""
@@ -57,8 +75,7 @@ class DiscountCurve:
     def get_discount_factors(self, date_list, dtobjects: bool = True) -> np.ndarray:
         """Get discount factors for given date list or year fractions.
 
-        For dtobjects=True, this uses the earliest date as t=0, matching
-        the existing ConstantShortRate behavior.
+        For dtobjects=True, this uses the earliest date as t=0.
         """
         if dtobjects:
             dlist = get_year_deltas(date_list)
@@ -66,74 +83,3 @@ class DiscountCurve:
             dlist = np.array(date_list, dtype=float)
         discount_factors = self.df(dlist)
         return np.array((date_list, discount_factors)).T
-
-
-class ConstantShortRate:
-    """Class for constant short rate discounting.
-
-    Attributes
-    ==========
-    name: string
-        name of the object
-    short_rate: float (positive)
-        constant rate for discounting
-
-    Methods
-    =======
-    get_discount_factors:
-        get discount factors given a list/array of datetime objects
-        or year fractions
-    """
-
-    def __init__(self, name, short_rate):
-        self.name = name
-        self.short_rate = short_rate
-        if short_rate < 0:
-            logging.warning(
-                "Negative short rate supplied to ConstantShortRate class. "
-                "Discount factors will exceed 1 for future dates."
-            )
-
-    def get_discount_factors(self, date_list, dtobjects=True) -> np.ndarray:
-        """Get discount factors for given date list.
-
-        Applies the formula: DF(t) = exp(-r * t)
-
-        Parameters
-        ==========
-        date_list: list or tuple
-            collection of datetime objects or year fractions
-        dtobjects: bool, default True
-            if True, interpret date_list as datetime objects
-            if False, interpret as year fractions
-
-        Returns
-        =======
-        discount_factors: np.ndarray
-            array of shape (n, 2) with [date_or_time, discount_factor]
-            for each input date
-        """
-        if dtobjects is True:
-            dlist = get_year_deltas(date_list)
-        else:
-            dlist = np.array(date_list)
-        discount_factors = np.exp(-self.short_rate * dlist)
-        return np.array((date_list, discount_factors)).T
-
-    def df(self, t: float | np.ndarray) -> np.ndarray:
-        """Return discount factor(s) for year fractions t."""
-        t = np.asarray(t, dtype=float)
-        return np.exp(-self.short_rate * t)
-
-    def forward_rate(self, t0: float, t1: float) -> float:
-        """Continuously-compounded forward rate between t0 and t1."""
-        if t1 <= t0:
-            raise ValueError("Need t1 > t0")
-        return float(self.short_rate)
-
-    def step_forward_rates(self, grid: np.ndarray) -> np.ndarray:
-        """Forward rates on each interval of a time grid."""
-        grid = np.asarray(grid, dtype=float)
-        if np.any(np.diff(grid) <= 0.0):
-            raise ValueError("grid must be strictly increasing")
-        return np.full(len(grid) - 1, float(self.short_rate))

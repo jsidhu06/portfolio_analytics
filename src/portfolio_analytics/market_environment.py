@@ -4,7 +4,7 @@
 from dataclasses import dataclass
 import datetime as dt
 import numpy as np
-from .rates import ConstantShortRate, DiscountCurve
+from .rates import DiscountCurve
 
 
 @dataclass(frozen=True, slots=True)
@@ -12,7 +12,7 @@ class MarketData:
     """Market data required for valuation/simulation."""
 
     pricing_date: dt.datetime
-    discount_curve: ConstantShortRate | DiscountCurve
+    discount_curve: DiscountCurve
     currency: str
 
 

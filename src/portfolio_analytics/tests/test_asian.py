@@ -14,13 +14,13 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
     SimulationConfig,
 )
-from portfolio_analytics.utils import pv_discrete_dividends
+from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
 from portfolio_analytics.valuation import OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.core import AsianOptionSpec
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
@@ -37,8 +37,10 @@ NUM_STEPS = 60
 ASIAN_TREE_AVERAGES = 100
 
 
-def _market_data(short_rate: float) -> MarketData:
-    return MarketData(PRICING_DATE, ConstantShortRate("r", short_rate), currency=CURRENCY)
+def _market_data(short_rate: float, maturity: dt.datetime) -> MarketData:
+    ttm = calculate_year_fraction(PRICING_DATE, maturity)
+    curve = DiscountCurve.flat("r", short_rate, end_time=ttm)
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
 def _gbm_underlying(
@@ -64,7 +66,12 @@ def _gbm_underlying(
         dividend_yield=dividend_yield,
         discrete_dividends=discrete_dividends,
     )
-    return GeometricBrownianMotion("gbm", _market_data(short_rate), gbm_params, sim_config)
+    return GeometricBrownianMotion(
+        "gbm",
+        _market_data(short_rate, maturity),
+        gbm_params,
+        sim_config,
+    )
 
 
 def _binomial_underlying(
@@ -74,11 +81,12 @@ def _binomial_underlying(
     short_rate: float,
     dividend_yield: float = 0.0,
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    maturity: dt.datetime,
 ) -> UnderlyingPricingData:
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
-        market_data=_market_data(short_rate),
+        market_data=_market_data(short_rate, maturity=maturity),
         dividend_yield=dividend_yield,
         discrete_dividends=discrete_dividends,
     )
@@ -138,7 +146,11 @@ def test_asian_binomial_hull_close_to_mc(
     ).present_value()
 
     binom_underlying = _binomial_underlying(
-        spot=spot, vol=vol, short_rate=short_rate, dividend_yield=dividend_yield
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        dividend_yield=dividend_yield,
+        maturity=maturity,
     )
 
     binom_mc_pv = OptionValuation(
@@ -224,6 +236,7 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
         vol=vol,
         short_rate=short_rate,
         discrete_dividends=divs,
+        maturity=maturity,
     )
 
     binom_mc_pv = OptionValuation(
@@ -307,7 +320,11 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
     )
 
     binom_underlying = _binomial_underlying(
-        spot=spot, vol=vol, short_rate=short_rate, dividend_yield=0.0
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        dividend_yield=0.0,
+        maturity=maturity,
     )
 
     euro_pv = OptionValuation(

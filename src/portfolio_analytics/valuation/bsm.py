@@ -70,11 +70,13 @@ class _BSMValuationBase:
         discrete_dividends = self.parent.underlying.discrete_dividends
         if not discrete_dividends:
             return spot
+        if self.parent.discount_curve.flat_rate is None:
+            raise NotImplementedError("Discrete dividend adjustments require a flat curve.")
         pv_divs = pv_discrete_dividends(
             discrete_dividends,
             self.parent.pricing_date,
             self.parent.maturity,
-            float(self.parent.discount_curve.short_rate),
+            float(self.parent.discount_curve.flat_rate),
         )
         return max(spot - pv_divs, 0.0)
 
@@ -89,7 +91,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = self.parent.discount_curve.short_rate
+        risk_free_rate = float(self.parent.discount_curve.flat_rate)
         dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
@@ -141,7 +143,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = self.parent.discount_curve.short_rate
+        risk_free_rate = float(self.parent.discount_curve.flat_rate)
         dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
@@ -180,7 +182,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = self.parent.discount_curve.short_rate
+        risk_free_rate = float(self.parent.discount_curve.flat_rate)
         dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
@@ -227,7 +229,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = self.parent.discount_curve.short_rate
+        risk_free_rate = float(self.parent.discount_curve.flat_rate)
         dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
@@ -284,7 +286,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = self.parent.discount_curve.short_rate
+        risk_free_rate = float(self.parent.discount_curve.flat_rate)
         dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
@@ -354,7 +356,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = self.parent.discount_curve.short_rate
+        risk_free_rate = float(self.parent.discount_curve.flat_rate)
         dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years

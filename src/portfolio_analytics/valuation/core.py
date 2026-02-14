@@ -18,7 +18,8 @@ from .binomial import (
 )
 from .bsm import _BSMEuropeanValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
-from ..rates import ConstantShortRate, DiscountCurve
+from ..rates import DiscountCurve
+from ..utils import calculate_year_fraction
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
@@ -225,7 +226,7 @@ class UnderlyingPricingData:
         return self.market_data.pricing_date
 
     @property
-    def discount_curve(self) -> ConstantShortRate | DiscountCurve:
+    def discount_curve(self) -> DiscountCurve:
         return self.market_data.discount_curve
 
     @property
@@ -397,7 +398,7 @@ class OptionValuation:
             PricingMethod.PDE_FD,
             PricingMethod.MONTE_CARLO,
         ):
-            if not isinstance(self.discount_curve, ConstantShortRate):
+            if self.discount_curve.flat_rate is None:
                 raise NotImplementedError(
                     "Time-varying discount curves are only supported for BINOMIAL, PDE_FD, and MONTE_CARLO."
                 )
@@ -901,11 +902,23 @@ class OptionValuation:
             return self._impl.rho()
 
         # Numerical rho: bump risk-free rate up and down and reprice
-        rate_up = self.discount_curve.short_rate + rate_bump / 2
-        rate_down = self.discount_curve.short_rate - rate_bump / 2
+        if self.discount_curve.flat_rate is None:
+            raise NotImplementedError("Numerical rho requires a flat discount curve.")
 
-        curve_up = ConstantShortRate(f"{self.discount_curve.name}_up", rate_up)
-        curve_down = ConstantShortRate(f"{self.discount_curve.name}_down", rate_down)
+        rate_up = self.discount_curve.flat_rate + rate_bump / 2
+        rate_down = self.discount_curve.flat_rate - rate_bump / 2
+
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        curve_up = DiscountCurve.flat(
+            f"{self.discount_curve.name}_up",
+            rate_up,
+            end_time=ttm,
+        )
+        curve_down = DiscountCurve.flat(
+            f"{self.discount_curve.name}_down",
+            rate_down,
+            end_time=ttm,
+        )
 
         md_up = MarketData(self.pricing_date, curve_up, currency=self.currency)
         md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
