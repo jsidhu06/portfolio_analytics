@@ -65,23 +65,33 @@ def test_discrete_dividend_engine_consistency():
     market_data, spec, underlying, gbm, divs = _build_case()
 
     # MC vs PDE (jump model vs PDE jump condition)
-    mc_val = OptionValuation("put_mc", gbm, spec, PricingMethod.MONTE_CARLO)
-    mc_pv = mc_val.present_value(params=MonteCarloParams(random_seed=42))
+    mc_val = OptionValuation(
+        "put_mc", gbm, spec, PricingMethod.MONTE_CARLO, params=MonteCarloParams(random_seed=42)
+    )
+    mc_pv = mc_val.present_value()
 
     div_dates = [divs[0][0], divs[1][0]]
     assert all(div_date in gbm.time_grid for div_date in div_dates)
 
-    pde_val = OptionValuation("put_pde", underlying, spec, PricingMethod.PDE_FD)
-    pde_pv = pde_val.present_value(params=PDEParams(spot_steps=140, time_steps=140))
+    pde_val = OptionValuation(
+        "put_pde",
+        underlying,
+        spec,
+        PricingMethod.PDE_FD,
+        params=PDEParams(spot_steps=140, time_steps=140),
+    )
+    pde_pv = pde_val.present_value()
 
     assert np.isclose(mc_pv, pde_pv, rtol=0.01)
 
     # Binomial vs BSM (prepaid-forward adjustment)
     bsm_val = OptionValuation("put_bsm", underlying, spec, PricingMethod.BSM)
-    binom_val = OptionValuation("put_binom", underlying, spec, PricingMethod.BINOMIAL)
+    binom_val = OptionValuation(
+        "put_binom", underlying, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1500)
+    )
 
     bsm_pv = bsm_val.present_value()
-    binom_pv = binom_val.present_value(params=BinomialParams(num_steps=1500))
+    binom_pv = binom_val.present_value()
 
     assert np.isclose(bsm_pv, binom_pv, rtol=0.01)
 
@@ -99,8 +109,12 @@ def test_discrete_dividend_engine_consistency():
         "put_bsm_adj", adjusted_underlying, spec, PricingMethod.BSM
     ).present_value()
     binom_adj = OptionValuation(
-        "put_binom_adj", adjusted_underlying, spec, PricingMethod.BINOMIAL
-    ).present_value(params=BinomialParams(num_steps=1500))
+        "put_binom_adj",
+        adjusted_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
 
     assert np.isclose(mc_pv, bsm_adj, rtol=0.02)
     assert np.isclose(pde_pv, binom_adj, rtol=0.02)

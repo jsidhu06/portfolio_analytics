@@ -509,12 +509,15 @@ class _FDEuropeanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
+    def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V = self._solve(params)
+        pv, S, V = self._solve()
         return pv, S, V
 
-    def _solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
+    def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
+        params = self.parent.params
+        if not isinstance(params, PDEParams):
+            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
@@ -553,8 +556,8 @@ class _FDEuropeanValuation:
             space_grid=params.space_grid,
         )
 
-    def present_value(self, params: PDEParams) -> float:
-        pv, *_ = self._solve(params)
+    def present_value(self) -> float:
+        pv, *_ = self._solve()
         return float(pv)
 
 
@@ -564,12 +567,15 @@ class _FDAmericanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
+    def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V = self._solve(params)
+        pv, S, V = self._solve()
         return pv, S, V
 
-    def _solve(self, params: PDEParams) -> tuple[float, np.ndarray, np.ndarray]:
+    def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
+        params = self.parent.params
+        if not isinstance(params, PDEParams):
+            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
@@ -615,6 +621,6 @@ class _FDAmericanValuation:
             max_iter=max_iter,
         )
 
-    def present_value(self, params: PDEParams) -> float:
-        pv, *_ = self._solve(params)
+    def present_value(self) -> float:
+        pv, *_ = self._solve()
         return float(pv)

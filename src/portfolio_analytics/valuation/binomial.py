@@ -128,8 +128,11 @@ class _BinomialValuationBase:
 class _BinomialEuropeanValuation(_BinomialValuationBase):
     """Implementation of European option valuation using binomial tree."""
 
-    def solve(self, params: BinomialParams) -> np.ndarray:
+    def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree."""
+        params = self.parent.params
+        if not isinstance(params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
         discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -145,9 +148,9 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
         return option_lattice
 
-    def present_value(self, params: BinomialParams) -> float:
+    def present_value(self) -> float:
         """Return PV using binomial tree method."""
-        option_value_matrix = self.solve(params)
+        option_value_matrix = self.solve()
         pv = option_value_matrix[0, 0]
 
         return float(pv)
@@ -156,8 +159,11 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 class _BinomialAmericanValuation(_BinomialValuationBase):
     """Implementation of American option valuation using binomial tree."""
 
-    def solve(self, params: BinomialParams) -> np.ndarray:
+    def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree with early exercise."""
+        params = self.parent.params
+        if not isinstance(params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
         discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -174,9 +180,9 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
         return option_lattice
 
-    def present_value(self, params: BinomialParams) -> float:
+    def present_value(self) -> float:
         """Return PV using binomial tree method with American early exercise."""
-        option_value_matrix = self.solve(params)
+        option_value_matrix = self.solve()
         pv = option_value_matrix[0, 0]
 
         return float(pv)
@@ -185,7 +191,10 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 class _BinomialAsianValuation(_BinomialValuationBase):
     """Asian option valuation using binomial MC sampling or Hull's representative averages."""
 
-    def _solve_mc(self, params: BinomialParams) -> np.ndarray:
+    def _solve_mc(self) -> np.ndarray:
+        params = self.parent.params
+        if not isinstance(params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
         discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -261,7 +270,10 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         return avg_min, avg_max
 
-    def _solve_hull(self, params: BinomialParams) -> tuple[np.ndarray, np.ndarray]:
+    def _solve_hull(self) -> tuple[np.ndarray, np.ndarray]:
+        params = self.parent.params
+        if not isinstance(params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
         discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -324,17 +336,23 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         return values, avg_grid
 
-    def present_value(self, params: BinomialParams) -> float:
+    def present_value(self) -> float:
+        params = self.parent.params
+        if not isinstance(params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         if params.mc_paths is not None:
-            pv_pathwise = self._solve_mc(params)
+            pv_pathwise = self._solve_mc()
             return float(np.mean(pv_pathwise))
 
-        values, avg_grid = self._solve_hull(params)
+        values, avg_grid = self._solve_hull()
         root_avg = float(self.parent.underlying.initial_value)
         root_value = self._interp_value(root_avg, avg_grid[:, 0, 0], values[:, 0, 0])
         return float(root_value)
 
-    def solve(self, params: BinomialParams) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+    def solve(self) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        params = self.parent.params
+        if not isinstance(params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         if params.mc_paths is not None:
-            return self._solve_mc(params)
-        return self._solve_hull(params)
+            return self._solve_mc()
+        return self._solve_hull()

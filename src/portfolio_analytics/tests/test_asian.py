@@ -130,31 +130,39 @@ def test_asian_binomial_hull_close_to_mc(
         num_steps=NUM_STEPS,
     )
     mc_pv = OptionValuation(
-        "asian_mc", mc_underlying, spec, PricingMethod.MONTE_CARLO
-    ).present_value(params=MonteCarloParams(random_seed=MC_SEED))
+        "asian_mc",
+        mc_underlying,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=MC_SEED),
+    ).present_value()
 
     binom_underlying = _binomial_underlying(
         spot=spot, vol=vol, short_rate=short_rate, dividend_yield=dividend_yield
     )
 
     binom_mc_pv = OptionValuation(
-        "asian_mc", binom_underlying, spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_mc",
+        binom_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS * 2,
             mc_paths=MC_PATHS,
             random_seed=MC_SEED,
-        )
-    )
+        ),
+    ).present_value()
 
     hull_pv = OptionValuation(
-        "asian_hull", binom_underlying, spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_hull",
+        binom_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS,
             asian_tree_averages=ASIAN_TREE_AVERAGES,
-        )
-    )
+        ),
+    ).present_value()
 
     logger.info(
         "Asian %s S=%.2f K=%.2f vol=%.2f r=%.2f q=%.2f days=%d\nMC=%.6f Hull=%.6f BinomMC=%.6f",
@@ -204,8 +212,12 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
         num_steps=NUM_STEPS,
     )
     mc_pv = OptionValuation(
-        "asian_mc_div", mc_underlying, spec, PricingMethod.MONTE_CARLO
-    ).present_value(params=MonteCarloParams(random_seed=MC_SEED))
+        "asian_mc_div",
+        mc_underlying,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=MC_SEED),
+    ).present_value()
 
     binom_underlying = _binomial_underlying(
         spot=spot,
@@ -215,23 +227,27 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
     )
 
     binom_mc_pv = OptionValuation(
-        "asian_binom_mc_div", binom_underlying, spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_binom_mc_div",
+        binom_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS * 2,
             mc_paths=MC_PATHS,
             random_seed=MC_SEED,
-        )
-    )
+        ),
+    ).present_value()
 
     hull_pv = OptionValuation(
-        "asian_hull_div", binom_underlying, spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_hull_div",
+        binom_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS,
             asian_tree_averages=ASIAN_TREE_AVERAGES,
-        )
-    )
+        ),
+    ).present_value()
 
     pv_divs = pv_discrete_dividends(
         dividends=divs,
@@ -244,13 +260,15 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
         volatility=binom_underlying.volatility * vol_multiplier
     )
     adjusted_hull_pv = OptionValuation(
-        "asian_hull_div_adj", adjusted_underlying, spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_hull_div_adj",
+        adjusted_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS,
             asian_tree_averages=ASIAN_TREE_AVERAGES,
-        )
-    )
+        ),
+    ).present_value()
 
     logger.info(
         "Asian disc-div S=%.2f K=%.2f vol=%.2f r=%.2f divs=%d\n"
@@ -293,21 +311,25 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
     )
 
     euro_pv = OptionValuation(
-        "asian_hull_euro", binom_underlying, euro_spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_hull_euro",
+        binom_underlying,
+        euro_spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS,
             asian_tree_averages=ASIAN_TREE_AVERAGES,
-        )
-    )
+        ),
+    ).present_value()
 
     amer_pv = OptionValuation(
-        "asian_hull_amer", binom_underlying, amer_spec, PricingMethod.BINOMIAL
-    ).present_value(
+        "asian_hull_amer",
+        binom_underlying,
+        amer_spec,
+        PricingMethod.BINOMIAL,
         params=BinomialParams(
             num_steps=NUM_STEPS,
             asian_tree_averages=ASIAN_TREE_AVERAGES,
-        )
-    )
+        ),
+    ).present_value()
 
     assert amer_pv >= euro_pv - 1e-8

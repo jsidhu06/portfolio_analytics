@@ -29,8 +29,11 @@ class _MCEuropeanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, params: MonteCarloParams) -> np.ndarray:
+    def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
         paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
 
@@ -48,16 +51,16 @@ class _MCEuropeanValuation:
             raise ValueError("Unsupported option type for Monte Carlo valuation.")
         return payoff_fn(maturity_value)
 
-    def present_value(self, params: MonteCarloParams) -> float:
+    def present_value(self) -> float:
         """Return the scalar present value."""
-        pv_pathwise = self.present_value_pathwise(params)
+        pv_pathwise = self.present_value_pathwise()
         pv = np.mean(pv_pathwise)
 
         return float(pv)
 
-    def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
+    def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
-        payoff_vector = self.solve(params)
+        payoff_vector = self.solve()
         discount_factor = float(
             self.parent.discount_curve.get_discount_factors(
                 (self.parent.pricing_date, self.parent.maturity)
@@ -72,7 +75,7 @@ class _MCAmericanValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, params: MonteCarloParams) -> tuple[np.ndarray, np.ndarray, int, int]:
+    def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
 
         Parameters
@@ -84,6 +87,9 @@ class _MCAmericanValuation:
         =======
         tuple of (instrument_values, payoff, time_index_start, time_index_end)
         """
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
         paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
         time_index_start = _find_time_index(time_grid, self.parent.pricing_date, "Pricing date")
@@ -102,21 +108,25 @@ class _MCAmericanValuation:
 
         return instrument_values, payoff, time_index_start, time_index_end
 
-    def present_value(self, params: MonteCarloParams) -> float:
+    def present_value(self) -> float:
         """Calculate PV using Longstaff-Schwartz regression method."""
-        pv_pathwise = self.present_value_pathwise(params)
+        pv_pathwise = self.present_value_pathwise()
         pv = np.mean(pv_pathwise)
         return float(pv)
 
-    def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
+    def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path (LSM output at pricing date)."""
-        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve(params)
+        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve()
         time_list = self.parent.underlying.time_grid[time_index_start : time_index_end + 1]
         discount_factors = self.parent.discount_curve.get_discount_factors(
             time_list, dtobjects=True
         )
         values = np.zeros_like(intrinsic_values)
         values[-1] = intrinsic_values[-1]
+
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
 
         for t in range(len(time_list) - 2, 0, -1):
             df_step = discount_factors[t + 1, 1] / discount_factors[t, 1]
@@ -149,7 +159,7 @@ class _MCAsianValuation:
     def __init__(self, parent: "OptionValuation"):
         self.parent = parent
 
-    def solve(self, params: MonteCarloParams) -> np.ndarray:
+    def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
 
         Returns
@@ -157,6 +167,9 @@ class _MCAsianValuation:
         np.ndarray
             Payoff for each path based on the average spot price
         """
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
         paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
         time_grid = self.parent.underlying.time_grid
 
@@ -205,15 +218,15 @@ class _MCAsianValuation:
             return np.maximum(avg_prices - K, 0.0)
         return np.maximum(K - avg_prices, 0.0)
 
-    def present_value(self, params: MonteCarloParams) -> float:
+    def present_value(self) -> float:
         """Return the scalar present value."""
-        pv_pathwise = self.present_value_pathwise(params)
+        pv_pathwise = self.present_value_pathwise()
         pv = np.mean(pv_pathwise)
         return float(pv)
 
-    def present_value_pathwise(self, params: MonteCarloParams) -> np.ndarray:
+    def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
-        payoff_vector = self.solve(params)
+        payoff_vector = self.solve()
         discount_factor = float(
             self.parent.discount_curve.get_discount_factors(
                 (self.parent.pricing_date, self.parent.maturity)

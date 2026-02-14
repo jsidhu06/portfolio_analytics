@@ -470,12 +470,12 @@ class OptionValuation:
             )
         return None
 
-    def _effective_params(self, params: ValuationParams | None) -> ValuationParams | None:
+    def _effective_params(self) -> ValuationParams | None:
         return self._validate_and_default_params(
-            pricing_method=self.pricing_method, params=params if params is not None else self.params
+            pricing_method=self.pricing_method, params=self.params
         )
 
-    def solve(self, params: ValuationParams | None = None):
+    def solve(self):
         """Run the pricing method's core solver and return its raw output.
 
         This is intentionally method-specific:
@@ -486,20 +486,21 @@ class OptionValuation:
 
         Use present_value_pathwise() for discounted pathwise outputs where supported.
         """
-        return self._impl.solve(self._effective_params(params))
+        self._effective_params()
+        return self._impl.solve()
 
-    def present_value(self, params: ValuationParams | None = None) -> float:
+    def present_value(self) -> float:
         """Calculate present value of the derivative."""
-        effective_params = self._effective_params(params)
-        base_pv = float(self._impl.present_value(effective_params))
+        effective_params = self._effective_params()
+        base_pv = float(self._impl.present_value())
         if effective_params is None or not getattr(
             effective_params, "control_variate_european", False
         ):
             return base_pv
 
-        return float(self._apply_control_variate(base_pv, effective_params))
+        return float(self._apply_control_variate(base_pv))
 
-    def _apply_control_variate(self, base_pv: float, params: ValuationParams | None) -> float:
+    def _apply_control_variate(self, base_pv: float) -> float:
         if self.exercise_type is not ExerciseType.AMERICAN:
             raise ValueError("control_variate_european is only valid for American options.")
         if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
@@ -524,6 +525,7 @@ class OptionValuation:
             contract_size=self.contract_size,
         )
 
+        params = self._effective_params()
         cv_params = (
             dc_replace(params, control_variate_european=False)
             if hasattr(params, "control_variate_european")
@@ -545,7 +547,7 @@ class OptionValuation:
 
         return base_pv + (euro_bsm - euro_num)
 
-    def present_value_pathwise(self, params: ValuationParams | None = None) -> np.ndarray:
+    def present_value_pathwise(self) -> np.ndarray:
         """Return discounted pathwise present values.
 
         Implemented for Monte Carlo pricing methods. For other pricing methods, this
@@ -556,7 +558,8 @@ class OptionValuation:
             raise NotImplementedError(
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
-        return pv_pathwise(self._effective_params(params))
+        self._effective_params()
+        return pv_pathwise()
 
     def _resolve_greek_method(
         self,
@@ -595,7 +598,6 @@ class OptionValuation:
         self,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option delta.
 
@@ -647,8 +649,8 @@ class OptionValuation:
         val_up = self._build_valuation(name_suffix="delta_up", underlying=underlying_up)
 
         # Calculate central difference
-        value_left = val_down.present_value(params=params)
-        value_right = val_up.present_value(params=params)
+        value_left = val_down.present_value()
+        value_right = val_up.present_value()
 
         delta = (value_right - value_left) / (2 * epsilon)
 
@@ -658,7 +660,6 @@ class OptionValuation:
         self,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option gamma.
 
@@ -710,9 +711,9 @@ class OptionValuation:
         val_up = self._build_valuation(name_suffix="gamma_up", underlying=underlying_up)
 
         # Calculate central difference (center uses self.present_value)
-        value_left = val_down.present_value(params=params)
-        value_right = val_up.present_value(params=params)
-        value_center = self.present_value(params=params)
+        value_left = val_down.present_value()
+        value_right = val_up.present_value()
+        value_center = self.present_value()
 
         gamma = (value_right - 2 * value_center + value_left) / (epsilon**2)
         return gamma
@@ -721,7 +722,6 @@ class OptionValuation:
         self,
         epsilon: float = 0.01,
         greek_calc_method: GreekCalculationMethod | None = None,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option vega.
 
@@ -766,8 +766,8 @@ class OptionValuation:
         val_up = self._build_valuation(name_suffix="vega_up", underlying=underlying_up)
 
         # Calculate central difference
-        value_left = val_down.present_value(params=params)
-        value_right = val_up.present_value(params=params)
+        value_left = val_down.present_value()
+        value_right = val_up.present_value()
 
         vega = (value_right - value_left) / (2 * epsilon) / 100  # per 1% point change in vol
         return vega
@@ -776,7 +776,6 @@ class OptionValuation:
         self,
         greek_calc_method: GreekCalculationMethod | None = None,
         time_bump_days: float = 1.0,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate theta (time decay) of the option.
 
@@ -818,7 +817,7 @@ class OptionValuation:
         if bumped_date >= self.maturity:
             return 0.0
 
-        value_now = self.present_value(params=params)
+        value_now = self.present_value()
 
         # Build bumped underlying
         bumped_market = MarketData(
@@ -836,14 +835,13 @@ class OptionValuation:
             params=self.params,
         )
 
-        value_bumped = valuation_bumped.present_value(params=params)
+        value_bumped = valuation_bumped.present_value()
         return (value_bumped - value_now) / time_bump_days
 
     def rho(
         self,
         greek_calc_method: GreekCalculationMethod | None = None,
         rate_bump: float = 0.01,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate rho (interest rate sensitivity) of the option.
 
@@ -896,8 +894,8 @@ class OptionValuation:
         val_up = self._build_valuation(name_suffix="rho_up", underlying=underlying_up)
         val_down = self._build_valuation(name_suffix="rho_down", underlying=underlying_down)
 
-        value_up = val_up.present_value(params=params)
-        value_down = val_down.present_value(params=params)
+        value_up = val_up.present_value()
+        value_down = val_down.present_value()
 
         # Central difference, normalized to per 1% rate change
         # rate_up/down are bumped by ± rate_bump/2, so denominator is rate_bump.

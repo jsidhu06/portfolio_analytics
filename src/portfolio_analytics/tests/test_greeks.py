@@ -104,8 +104,9 @@ class TestGreeksSetup:
         underlying: PathSimulation | UnderlyingPricingData,
         spec: OptionSpec,
         method: PricingMethod,
+        params=None,
     ) -> OptionValuation:
-        return OptionValuation(name, underlying, spec, method)
+        return OptionValuation(name, underlying, spec, method, params=params)
 
     def _make_gbm(
         self,
@@ -313,9 +314,13 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         delta_bsm = bsm_val.delta()
 
         binomial_val = self._make_val(
-            "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
         )
-        delta_binomial = binomial_val.delta(params=BinomialParams(num_steps=2500))
+        delta_binomial = binomial_val.delta()
 
         assert np.isclose(delta_bsm, delta_binomial, atol=0.01)
 
@@ -326,8 +331,14 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         delta_bsm = bsm_val.delta()
 
         gbm = self._make_gbm(dividend_yield=0.0)
-        mcs_val = self._make_val("call_mcs", gbm, spec, PricingMethod.MONTE_CARLO)
-        delta_mcs = mcs_val.delta(params=MonteCarloParams(random_seed=42))
+        mcs_val = self._make_val(
+            "call_mcs",
+            gbm,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
+        )
+        delta_mcs = mcs_val.delta()
 
         assert np.isclose(delta_bsm, delta_mcs, atol=0.03)
 
@@ -338,9 +349,13 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         gamma_bsm = bsm_val.gamma()
 
         binomial_val = self._make_val(
-            "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
         )
-        gamma_binomial = binomial_val.gamma(params=BinomialParams(num_steps=2500))
+        gamma_binomial = binomial_val.gamma()
 
         assert np.isclose(gamma_bsm, gamma_binomial, atol=0.005)
 
@@ -351,9 +366,13 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         vega_bsm = bsm_val.vega()
 
         binomial_val = self._make_val(
-            "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
         )
-        vega_binomial = binomial_val.vega(params=BinomialParams(num_steps=2500))
+        vega_binomial = binomial_val.vega()
 
         assert np.isclose(vega_bsm, vega_binomial, atol=0.1)
 
@@ -438,13 +457,19 @@ class TestGreekImmutability(TestGreeksSetup):
         """Verify gamma calculation doesn't mutate UnderlyingPricingData.initial_value."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
-        valuation = self._make_val("call_binomial", ud, spec, PricingMethod.BINOMIAL)
+        valuation = self._make_val(
+            "call_binomial",
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=100),
+        )
 
         original_spot = ud.initial_value
         original_vol = ud.volatility
 
         # Calculate gamma
-        gamma = valuation.gamma(params=BinomialParams(num_steps=100))
+        gamma = valuation.gamma()
 
         # Verify underlying state is unchanged
         assert ud.initial_value == original_spot, "Gamma calculation mutated initial_value"
@@ -488,13 +513,14 @@ class TestGreekImmutability(TestGreeksSetup):
             underlying=process,
             spec=spec,
             pricing_method=PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
         )
 
         original_spot = process.initial_value
         original_vol = process.volatility
 
         # Calculate delta
-        delta = valuation.delta(params=MonteCarloParams(random_seed=42))
+        delta = valuation.delta()
 
         # Verify PathSimulation state is unchanged
         assert (

@@ -82,7 +82,7 @@ class _BSMValuationBase:
 class _BSMEuropeanValuation(_BSMValuationBase):
     """Black-Scholes-Merton European option valuation."""
 
-    def solve(self, params: None = None) -> float:
+    def solve(self) -> float:
         """Compute the BSM option value."""
 
         # Extract parameters from parent OptionValuation object
@@ -118,7 +118,7 @@ class _BSMEuropeanValuation(_BSMValuationBase):
 
         return option_value
 
-    def present_value(self, params: None = None) -> float:
+    def present_value(self) -> float:
         """Calculate present value using BSM formula."""
         pv = self.solve()
 

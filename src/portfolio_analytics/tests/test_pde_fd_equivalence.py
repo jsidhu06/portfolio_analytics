@@ -101,7 +101,9 @@ def test_pde_fd_european_close_to_bsm(spot, strike, option_type, dividend_yield)
     ud = _underlying(spot=spot, dividend_yield=dividend_yield)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
-    pde_pv = OptionValuation("pde_eu", ud, spec, PricingMethod.PDE_FD).present_value(params=PDE_CFG)
+    pde_pv = OptionValuation(
+        "pde_eu", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
+    ).present_value()
     bsm_pv = OptionValuation("bsm_eu", ud, spec, PricingMethod.BSM).present_value()
 
     assert np.isclose(pde_pv, bsm_pv, rtol=0.02)
@@ -121,10 +123,12 @@ def test_pde_fd_american_close_to_mc(spot, strike, option_type, dividend_yield):
     gbm = _gbm(spot=spot, dividend_yield=dividend_yield)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
-    pde_pv = OptionValuation("pde_am", ud, spec, PricingMethod.PDE_FD).present_value(params=PDE_CFG)
-    mc_pv = OptionValuation("mc_am", gbm, spec, PricingMethod.MONTE_CARLO).present_value(
-        params=MC_CFG_AM
-    )
+    pde_pv = OptionValuation(
+        "pde_am", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
+    ).present_value()
+    mc_pv = OptionValuation(
+        "mc_am", gbm, spec, PricingMethod.MONTE_CARLO, params=MC_CFG_AM
+    ).present_value()
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
 
@@ -143,19 +147,23 @@ def test_discrete_dividend_equivalence_across_methods():
 
     spec_eu = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.EUROPEAN)
 
-    pde_pv = OptionValuation("pde_div", ud, spec_eu, PricingMethod.PDE_FD).present_value(
-        params=PDE_CFG
-    )
-    mc_pv = OptionValuation("mc_div", gbm, spec_eu, PricingMethod.MONTE_CARLO).present_value(
-        params=MC_CFG_EU
-    )
+    pde_pv = OptionValuation(
+        "pde_div", ud, spec_eu, PricingMethod.PDE_FD, params=PDE_CFG
+    ).present_value()
+    mc_pv = OptionValuation(
+        "mc_div", gbm, spec_eu, PricingMethod.MONTE_CARLO, params=MC_CFG_EU
+    ).present_value()
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
 
     bsm_pv = OptionValuation("bsm_div", ud, spec_eu, PricingMethod.BSM).present_value()
-    binom_pv = OptionValuation("binom_div", ud, spec_eu, PricingMethod.BINOMIAL).present_value(
-        params=BinomialParams(num_steps=1500)
-    )
+    binom_pv = OptionValuation(
+        "binom_div",
+        ud,
+        spec_eu,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
 
     assert np.isclose(bsm_pv, binom_pv, rtol=0.02)
 
@@ -170,8 +178,12 @@ def test_discrete_dividend_equivalence_across_methods():
 
     bsm_adj = OptionValuation("bsm_adj", adjusted_ud, spec_eu, PricingMethod.BSM).present_value()
     binom_adj = OptionValuation(
-        "binom_adj", adjusted_ud, spec_eu, PricingMethod.BINOMIAL
-    ).present_value(params=BinomialParams(num_steps=1500))
+        "binom_adj",
+        adjusted_ud,
+        spec_eu,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
 
     assert np.isclose(bsm_adj, binom_adj, rtol=0.02)
     assert np.isclose(pde_pv, bsm_adj, rtol=0.02)
@@ -195,12 +207,12 @@ def test_discrete_dividend_american_matches_mc(spot, strike):
     gbm = _gbm(spot=spot, discrete_dividends=divs, paths=60_000)
     spec_am = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
-    pde_pv = OptionValuation("pde_am_div", ud, spec_am, PricingMethod.PDE_FD).present_value(
-        params=PDE_CFG
-    )
-    mc_pv = OptionValuation("mc_am_div", gbm, spec_am, PricingMethod.MONTE_CARLO).present_value(
-        params=MC_CFG_AM
-    )
+    pde_pv = OptionValuation(
+        "pde_am_div", ud, spec_am, PricingMethod.PDE_FD, params=PDE_CFG
+    ).present_value()
+    mc_pv = OptionValuation(
+        "mc_am_div", gbm, spec_am, PricingMethod.MONTE_CARLO, params=MC_CFG_AM
+    ).present_value()
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
 
@@ -213,9 +225,9 @@ def test_pde_fd_grid_method_equivalence_european():
     spec = _spec(strike=strike, option_type=OptionType.CALL, exercise_type=ExerciseType.EUROPEAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
-    baseline = OptionValuation("pde_base", ud, spec, PricingMethod.PDE_FD).present_value(
-        params=base_params
-    )
+    baseline = OptionValuation(
+        "pde_base", ud, spec, PricingMethod.PDE_FD, params=base_params
+    ).present_value()
 
     for method in (PDEMethod.IMPLICIT, PDEMethod.EXPLICIT, PDEMethod.CRANK_NICOLSON):
         for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
@@ -229,14 +241,14 @@ def test_pde_fd_grid_method_equivalence_european():
 
             if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
                 with pytest.raises(ValueError, match="Explicit spot-grid scheme unstable"):
-                    OptionValuation("pde_var", ud, spec, PricingMethod.PDE_FD).present_value(
-                        params=params
-                    )
+                    OptionValuation(
+                        "pde_var", ud, spec, PricingMethod.PDE_FD, params=params
+                    ).present_value()
                 continue
 
-            pv = OptionValuation("pde_var", ud, spec, PricingMethod.PDE_FD).present_value(
-                params=params
-            )
+            pv = OptionValuation(
+                "pde_var", ud, spec, PricingMethod.PDE_FD, params=params
+            ).present_value()
             assert np.isclose(pv, baseline, rtol=0.005)
 
 
@@ -248,9 +260,9 @@ def test_pde_fd_grid_method_equivalence_american():
     spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
-    baseline = OptionValuation("pde_base_am", ud, spec, PricingMethod.PDE_FD).present_value(
-        params=base_params
-    )
+    baseline = OptionValuation(
+        "pde_base_am", ud, spec, PricingMethod.PDE_FD, params=base_params
+    ).present_value()
 
     for method in (PDEMethod.IMPLICIT, PDEMethod.EXPLICIT, PDEMethod.CRANK_NICOLSON):
         for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
@@ -266,19 +278,19 @@ def test_pde_fd_grid_method_equivalence_american():
 
                 if method is PDEMethod.EXPLICIT and solver is PDEEarlyExercise.GAUSS_SEIDEL:
                     with pytest.raises(ValueError, match="GAUSS_SEIDEL is not supported"):
-                        OptionValuation("pde_var_am", ud, spec, PricingMethod.PDE_FD).present_value(
-                            params=params
-                        )
+                        OptionValuation(
+                            "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
+                        ).present_value()
                     continue
 
                 if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
                     with pytest.raises(ValueError, match="Explicit spot-grid scheme unstable"):
-                        OptionValuation("pde_var_am", ud, spec, PricingMethod.PDE_FD).present_value(
-                            params=params
-                        )
+                        OptionValuation(
+                            "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
+                        ).present_value()
                     continue
 
-                pv = OptionValuation("pde_var_am", ud, spec, PricingMethod.PDE_FD).present_value(
-                    params=params
-                )
+                pv = OptionValuation(
+                    "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
+                ).present_value()
                 assert np.isclose(pv, baseline, rtol=0.005)

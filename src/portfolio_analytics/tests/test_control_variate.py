@@ -55,7 +55,7 @@ def test_control_variate_binomial_matches_adjustment():
         amer_spec,
         PricingMethod.BINOMIAL,
         params=base_params,
-    ).present_value(params=base_params)
+    ).present_value()
 
     european_num = OptionValuation(
         "euro_binom_num",
@@ -63,7 +63,7 @@ def test_control_variate_binomial_matches_adjustment():
         euro_spec,
         PricingMethod.BINOMIAL,
         params=base_params,
-    ).present_value(params=base_params)
+    ).present_value()
 
     european_bsm = OptionValuation(
         "euro_bsm",
@@ -78,7 +78,7 @@ def test_control_variate_binomial_matches_adjustment():
         amer_spec,
         PricingMethod.BINOMIAL,
         params=cv_params,
-    ).present_value(params=cv_params)
+    ).present_value()
 
     expected = american_raw + (european_bsm - european_num)
     assert np.isclose(american_cv, expected, atol=1.0e-8)
@@ -103,7 +103,7 @@ def test_control_variate_pde_matches_adjustment():
         amer_spec,
         PricingMethod.PDE_FD,
         params=base_params,
-    ).present_value(params=base_params)
+    ).present_value()
 
     european_num = OptionValuation(
         "euro_pde_num",
@@ -111,7 +111,7 @@ def test_control_variate_pde_matches_adjustment():
         euro_spec,
         PricingMethod.PDE_FD,
         params=base_params,
-    ).present_value(params=base_params)
+    ).present_value()
 
     european_bsm = OptionValuation(
         "euro_bsm",
@@ -126,7 +126,7 @@ def test_control_variate_pde_matches_adjustment():
         amer_spec,
         PricingMethod.PDE_FD,
         params=cv_params,
-    ).present_value(params=cv_params)
+    ).present_value()
 
     expected = american_raw + (european_bsm - european_num)
     assert np.isclose(american_cv, expected, atol=1.0e-6)

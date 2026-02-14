@@ -108,7 +108,7 @@ class CondorSpec:
         pricing_method:
             PricingMethod used for each leg.
         params:
-            Forwarded to per-leg `present_value(...)` calls.
+            Params applied to each per-leg valuation.
         """
         total = 0.0
         for opt_type, strike, weight in self.leg_definitions():
@@ -125,8 +125,9 @@ class CondorSpec:
                 underlying=underlying,
                 spec=leg_spec,
                 pricing_method=pricing_method,
+                params=params,
             )
-            total += weight * leg_val.present_value(params=params)
+            total += weight * leg_val.present_value()
 
         return float(total)
 
