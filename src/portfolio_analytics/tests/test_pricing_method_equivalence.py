@@ -16,7 +16,7 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -39,8 +39,7 @@ MC_CFG_AM = MonteCarloParams(random_seed=42, deg=3)
 
 
 def _market_data() -> MarketData:
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    curve = DiscountCurve.flat("r", RISK_FREE, end_time=ttm)
+    curve = flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 

@@ -31,6 +31,7 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation.pde import _FDAmericanValuation
 from portfolio_analytics.valuation import BinomialParams, MonteCarloParams, PDEParams
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.utils import calculate_year_fraction, expected_binomial_payoff
 
 
@@ -155,8 +156,7 @@ class TestUnderlyingPricingData:
         """Set up market environment for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
-        self.curve = DiscountCurve.flat("csr", 0.05, end_time=ttm)
+        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_underlying_data_creation(self):
@@ -190,8 +190,7 @@ class TestOptionValuation:
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
         self.strike = 100.0
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
-        self.curve = DiscountCurve.flat("csr", 0.05, end_time=ttm)
+        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         # Standard option spec
@@ -244,6 +243,31 @@ class TestOptionValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
         assert isinstance(valuation._impl, _BinomialEuropeanValuation)
+
+    def test_bsm_rejects_nonflat_discount_curve(self):
+        """BSM should reject time-varying discount curves."""
+        nonflat_curve = DiscountCurve(
+            name="nonflat",
+            times=np.array([0.0, 0.5, 1.0]),
+            dfs=np.array([1.0, np.exp(-0.03 * 0.5), np.exp(-0.06 * 1.0)]),
+        )
+        market_data = MarketData(self.pricing_date, nonflat_curve, currency="USD")
+        ud = UnderlyingPricingData(
+            initial_value=100.0,
+            volatility=0.2,
+            market_data=market_data,
+        )
+
+        with pytest.raises(
+            NotImplementedError,
+            match="Time-varying discount curves are only supported",
+        ):
+            OptionValuation(
+                name="CALL_BSM_NONFLAT",
+                underlying=ud,
+                spec=self.call_spec,
+                pricing_method=PricingMethod.BSM,
+            )
 
     def test_option_valuation_with_path_simulation_mcs(self):
         """Test OptionValuation creation with PathSimulation and MC pricing."""
@@ -1067,8 +1091,7 @@ class TestBSMValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
-        self.curve = DiscountCurve.flat("csr", self.rate, end_time=ttm)
+        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         underlying_params = {
@@ -1326,8 +1349,7 @@ class TestBinomialValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
-        self.curve = DiscountCurve.flat("csr", self.rate, end_time=ttm)
+        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         self.ud = UnderlyingPricingData(
@@ -1602,8 +1624,7 @@ class TestMCSValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
-        self.curve = DiscountCurve.flat("csr", self.rate, end_time=ttm)
+        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_mcs_european_call_atm(self):

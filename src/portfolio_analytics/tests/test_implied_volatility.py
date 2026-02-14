@@ -13,8 +13,7 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -41,8 +40,7 @@ def _build_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    curve = flat_curve(pricing_date, maturity, rate, name="csr")
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
         initial_value=spot,
@@ -75,8 +73,7 @@ def _build_discrete_dividend_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = pricing_date + dt.timedelta(days=365)
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    curve = flat_curve(pricing_date, maturity, rate, name="csr")
     market_data = MarketData(pricing_date, curve, currency="USD")
     divs = [
         (pricing_date + dt.timedelta(days=90), 0.5),
@@ -116,8 +113,7 @@ def _build_binomial_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    curve = flat_curve(pricing_date, maturity, rate, name="csr")
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
         initial_value=spot,
@@ -180,8 +176,7 @@ def test_implied_volatility_rejects_out_of_bounds_price():
 def test_implied_volatility_rejects_monte_carlo():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    curve = DiscountCurve.flat("csr", 0.05, end_time=ttm)
+    curve = flat_curve(pricing_date, maturity, 0.05, name="csr")
     market_data = MarketData(pricing_date, curve, currency="USD")
     sim_config = SimulationConfig(
         paths=5_000,

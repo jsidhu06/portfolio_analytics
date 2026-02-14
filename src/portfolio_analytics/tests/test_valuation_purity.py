@@ -22,7 +22,7 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation import BinomialParams
 
@@ -81,8 +81,7 @@ def common_setup():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     rate = 0.05
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    curve = flat_curve(pricing_date, maturity, rate, name="csr")
     return pricing_date, maturity, curve
 
 

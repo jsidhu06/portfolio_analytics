@@ -6,8 +6,7 @@ import numpy as np
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.params import BinomialParams, PDEParams
 
@@ -18,8 +17,7 @@ CURRENCY = "USD"
 
 
 def _build_underlying(spot: float, vol: float, rate: float, dividend_yield: float = 0.0):
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    curve = DiscountCurve.flat("csr", rate, end_time=ttm)
+    curve = flat_curve(PRICING_DATE, MATURITY, rate, name="csr")
     market_data = MarketData(PRICING_DATE, curve, currency=CURRENCY)
     return UnderlyingPricingData(
         initial_value=spot,

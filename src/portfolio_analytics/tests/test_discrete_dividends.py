@@ -3,12 +3,13 @@
 import datetime as dt
 
 import numpy as np
+import pytest
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.enums import DayCountConvention
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -27,8 +28,7 @@ def _build_case():
     strike = 50.0
     vol = 0.4
 
-    ttm = calculate_year_fraction(pricing_date, maturity)
-    curve = DiscountCurve.flat("csr", r, end_time=ttm)
+    curve = flat_curve(pricing_date, maturity, r, name="csr")
     market_data = MarketData(pricing_date, curve, currency="USD")
 
     divs = [
@@ -120,3 +120,43 @@ def test_discrete_dividend_engine_consistency():
 
     assert np.isclose(mc_pv, bsm_adj, rtol=0.02)
     assert np.isclose(pde_pv, binom_adj, rtol=0.02)
+
+
+def test_binomial_rejects_discrete_dividends_with_nonflat_curve():
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = pricing_date + dt.timedelta(days=365)
+    nonflat_curve = DiscountCurve(
+        name="nonflat",
+        times=np.array([0.0, 0.5, 1.0]),
+        dfs=np.array([1.0, np.exp(-0.03 * 0.5), np.exp(-0.06 * 1.0)]),
+    )
+    market_data = MarketData(pricing_date, nonflat_curve, currency="USD")
+    divs = [
+        (pricing_date + dt.timedelta(days=90), 0.5),
+        (pricing_date + dt.timedelta(days=270), 0.5),
+    ]
+    underlying = UnderlyingPricingData(
+        initial_value=52.0,
+        volatility=0.4,
+        market_data=market_data,
+        discrete_dividends=divs,
+    )
+    spec = OptionSpec(
+        option_type=OptionType.PUT,
+        exercise_type=ExerciseType.EUROPEAN,
+        strike=50.0,
+        maturity=maturity,
+        currency="USD",
+    )
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Discrete dividends with time-varying discount curves",
+    ):
+        OptionValuation(
+            "put_binom_nonflat",
+            underlying,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=400),
+        ).present_value()

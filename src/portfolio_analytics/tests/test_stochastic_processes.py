@@ -12,14 +12,8 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.enums import DayCountConvention
-from portfolio_analytics.utils import calculate_year_fraction
-
-
-def _flat_curve(pricing_date: dt.datetime, end_date: dt.datetime, rate: float) -> DiscountCurve:
-    ttm = calculate_year_fraction(pricing_date, end_date)
-    return DiscountCurve.flat("csr", rate, end_time=ttm)
+from portfolio_analytics.tests.helpers import flat_curve
 
 
 class TestPathSimulation:
@@ -29,7 +23,7 @@ class TestPathSimulation:
         """Test that PathSimulation cannot be instantiated directly due to abstract method"""
         pricing_date = dt.datetime(2025, 1, 1)
         end_date = dt.datetime(2026, 1, 1)
-        curve = _flat_curve(pricing_date, end_date, 0.05)
+        curve = flat_curve(pricing_date, end_date, 0.05, name="csr")
         market_data = MarketData(pricing_date, curve, currency="EUR")
         process_params = GBMParams(initial_value=100.0, volatility=0.2)
         sim = SimulationConfig(
@@ -52,7 +46,7 @@ class TestGeometricBrownianMotion:
         """Set up market environment for GBM tests"""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = _flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=36.0, volatility=0.2)
         self.sim = SimulationConfig(
@@ -163,7 +157,7 @@ class TestGeometricBrownianMotion:
         volatility = 0.2
         pricing_date = dt.datetime(2025, 1, 1)
         end_date = dt.datetime(2026, 1, 1)
-        curve = _flat_curve(pricing_date, end_date, short_rate)
+        curve = flat_curve(pricing_date, end_date, short_rate, name="csr")
         market_data = MarketData(pricing_date, curve, currency="USD")
         process_params = GBMParams(initial_value=100.0, volatility=volatility)
         sim_config = SimulationConfig(
@@ -195,7 +189,7 @@ class TestSquareRootDiffusion:
         """Set up market environment for SRD tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = _flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = SRDParams(
             initial_value=0.03,
@@ -288,7 +282,7 @@ class TestJumpDiffusion:
         """Set up market environment for Jump Diffusion tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = _flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = JDParams(
             initial_value=100.0,

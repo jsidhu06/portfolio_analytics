@@ -10,7 +10,7 @@ import pytest
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.params import PDEParams
 
@@ -35,8 +35,7 @@ PDE_CFG = PDEParams(spot_steps=200, time_steps=200, max_iter=20_000)
 
 
 def _market_data() -> MarketData:
-    ttm = calculate_year_fraction(PRICING_DATE, MATURITY)
-    curve = DiscountCurve.flat("r", RISK_FREE, end_time=ttm)
+    curve = flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 

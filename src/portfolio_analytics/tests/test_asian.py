@@ -14,13 +14,13 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
     SimulationConfig,
 )
-from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
+from portfolio_analytics.utils import pv_discrete_dividends
 from portfolio_analytics.valuation import OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.core import AsianOptionSpec
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
@@ -38,8 +38,7 @@ ASIAN_TREE_AVERAGES = 100
 
 
 def _market_data(short_rate: float, maturity: dt.datetime) -> MarketData:
-    ttm = calculate_year_fraction(PRICING_DATE, maturity)
-    curve = DiscountCurve.flat("r", short_rate, end_time=ttm)
+    curve = flat_curve(PRICING_DATE, maturity, short_rate)
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
@@ -86,7 +85,7 @@ def _binomial_underlying(
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
-        market_data=_market_data(short_rate, maturity=maturity),
+        market_data=_market_data(short_rate, maturity),
         dividend_yield=dividend_yield,
         discrete_dividends=discrete_dividends,
     )
