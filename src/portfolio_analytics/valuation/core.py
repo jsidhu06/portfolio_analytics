@@ -392,17 +392,19 @@ class OptionValuation:
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
                 "Pass an UnderlyingPricingData instance instead of PathSimulation."
             )
-
-        if pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        if pricing_method not in (
+            PricingMethod.BINOMIAL,
+            PricingMethod.PDE_FD,
+            PricingMethod.MONTE_CARLO,
+        ):
             if not isinstance(self.discount_curve, ConstantShortRate):
                 raise NotImplementedError(
-                    "Time-varying discount curves are only supported for BINOMIAL and PDE_FD."
+                    "Time-varying discount curves are only supported for BINOMIAL, PDE_FD, and MONTE_CARLO."
                 )
             if getattr(self.underlying, "dividend_curve", None) is not None:
                 raise NotImplementedError(
-                    "Time-varying dividend curves are only supported for BINOMIAL and PDE_FD."
+                    "Time-varying dividend curves are only supported for BINOMIAL, PDE_FD, and MONTE_CARLO."
                 )
-
         # Dispatch to appropriate pricing method implementation
         if isinstance(spec, AsianOptionSpec):
             if (

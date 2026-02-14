@@ -103,6 +103,30 @@ def _gbm(
     return GeometricBrownianMotion("gbm", _market_data(), gbm_params, sim_config)
 
 
+def _gbm_curves(
+    *,
+    spot: float,
+    r_curve: DiscountCurve,
+    q_curve: DiscountCurve | None,
+    paths: int = 200_000,
+) -> GeometricBrownianMotion:
+    sim_config = SimulationConfig(
+        paths=paths,
+        day_count_convention=DayCountConvention.ACT_365F,
+        frequency="W",
+        end_date=MATURITY,
+    )
+    gbm_params = GBMParams(
+        initial_value=spot,
+        volatility=VOL,
+        dividend_yield=0.0,
+        dividend_curve=q_curve,
+        discrete_dividends=None,
+    )
+    md = MarketData(PRICING_DATE, r_curve, currency=CURRENCY)
+    return GeometricBrownianMotion("gbm_curve", md, gbm_params, sim_config)
+
+
 def _spec(*, strike: float, option_type: OptionType, exercise_type: ExerciseType) -> OptionSpec:
     return OptionSpec(
         option_type=option_type,
@@ -398,3 +422,74 @@ def test_pde_fd_vs_binomial_with_forward_curves(
     ).present_value()
 
     assert np.isclose(pde_pv, binom_pv, rtol=0.01)
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type,r_times,r_forwards,q_times,q_forwards",
+    [
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 1.0]),
+            np.array([0.0]),
+        ),
+        (
+            60.0,
+            55.0,
+            OptionType.CALL,
+            np.array([0.0, 1.0]),
+            np.array([0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.00, 0.02, 0.04]),
+        ),
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.01, 0.02, 0.00]),
+        ),
+    ],
+)
+def test_mc_vs_pde_binomial_with_forward_curves(
+    spot,
+    strike,
+    option_type,
+    r_times,
+    r_forwards,
+    q_times,
+    q_forwards,
+):
+    """MC, PDE FD, and binomial should agree under time-varying forward curves."""
+    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+
+    ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
+    gbm = _gbm_curves(spot=spot, r_curve=r_curve, q_curve=q_curve, paths=150_000)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+
+    pde_pv = OptionValuation(
+        "pde_curve_am", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
+    ).present_value()
+    binom_pv = OptionValuation(
+        "binom_curve_am",
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+    mc_pv = OptionValuation(
+        "mc_curve_am",
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MC_CFG_AM,
+    ).present_value()
+
+    assert np.isclose(mc_pv, pde_pv, rtol=0.01)
+    assert np.isclose(mc_pv, binom_pv, rtol=0.01)

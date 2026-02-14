@@ -3,6 +3,8 @@
 from typing import TYPE_CHECKING
 import numpy as np
 
+from ..utils import calculate_year_fraction
+
 from ..enums import OptionType, AsianAveraging
 from .params import MonteCarloParams
 
@@ -21,6 +23,13 @@ def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) ->
     if option_type is OptionType.CALL:
         return np.maximum(spot - strike, 0.0)
     return np.maximum(strike - spot, 0.0)
+
+
+def _year_fractions(pricing_date, dates: np.ndarray) -> np.ndarray:
+    return np.array(
+        [calculate_year_fraction(pricing_date, d) for d in dates],
+        dtype=float,
+    )
 
 
 class _MCEuropeanValuation:
@@ -61,11 +70,8 @@ class _MCEuropeanValuation:
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        discount_factor = float(
-            self.parent.discount_curve.get_discount_factors(
-                (self.parent.pricing_date, self.parent.maturity)
-            )[-1, 1]
-        )
+        ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
+        discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
 
@@ -118,9 +124,8 @@ class _MCAmericanValuation:
         """Return discounted present values for each path (LSM output at pricing date)."""
         instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve()
         time_list = self.parent.underlying.time_grid[time_index_start : time_index_end + 1]
-        discount_factors = self.parent.discount_curve.get_discount_factors(
-            time_list, dtobjects=True
-        )
+        t_grid = _year_fractions(self.parent.pricing_date, time_list)
+        discount_factors = self.parent.discount_curve.df(t_grid)
         values = np.zeros_like(intrinsic_values)
         values[-1] = intrinsic_values[-1]
 
@@ -129,7 +134,7 @@ class _MCAmericanValuation:
             raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
 
         for t in range(len(time_list) - 2, 0, -1):
-            df_step = discount_factors[t + 1, 1] / discount_factors[t, 1]
+            df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic_values[t] > 0
 
             continuation = np.zeros_like(instrument_values[t])
@@ -145,7 +150,7 @@ class _MCAmericanValuation:
                 df_step * values[t + 1],
             )
 
-        df0 = discount_factors[1, 1] / discount_factors[0, 1]
+        df0 = discount_factors[1] / discount_factors[0]
         return df0 * values[1]
 
 
@@ -227,9 +232,6 @@ class _MCAsianValuation:
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        discount_factor = float(
-            self.parent.discount_curve.get_discount_factors(
-                (self.parent.pricing_date, self.parent.maturity)
-            )[-1, 1]
-        )
+        ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
+        discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
