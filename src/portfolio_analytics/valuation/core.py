@@ -558,6 +558,39 @@ class OptionValuation:
             )
         return pv_pathwise(self._effective_params(params))
 
+    def _resolve_greek_method(
+        self,
+        greek_calc_method: GreekCalculationMethod | None,
+        *,
+        error_message: str,
+    ) -> bool:
+        """Return True for analytical greeks, validating method compatibility."""
+        if greek_calc_method is None:
+            return self.pricing_method == PricingMethod.BSM
+
+        if not isinstance(greek_calc_method, GreekCalculationMethod):
+            raise TypeError(
+                f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+            )
+
+        if (
+            greek_calc_method == GreekCalculationMethod.ANALYTICAL
+            and self.pricing_method != PricingMethod.BSM
+        ):
+            raise ValueError(error_message)
+
+        return greek_calc_method == GreekCalculationMethod.ANALYTICAL
+
+    def _build_valuation(self, *, name_suffix: str, underlying) -> "OptionValuation":
+        """Create a sibling valuation with a modified underlying for bump-and-revalue."""
+        return OptionValuation(
+            name=f"{self.name}_{name_suffix}",
+            underlying=underlying,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
+
     def delta(
         self,
         epsilon: float | None = None,
@@ -587,28 +620,13 @@ class OptionValuation:
         float
             option delta
         """
-        # Determine which method to use
-        if greek_calc_method is None:
-            # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            # Validate that analytical is only used with BSM
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError(
-                    "Analytical greeks are only available for BSM pricing method. "
-                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-                )
+        use_analytical = self._resolve_greek_method(
+            greek_calc_method,
+            error_message=(
+                "Analytical greeks are only available for BSM pricing method. "
+                "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
+            ),
+        )
 
         # Use analytical formula for BSM if specified
         if use_analytical:
@@ -625,32 +643,15 @@ class OptionValuation:
         underlying_up = self.underlying.replace(
             initial_value=self.underlying.initial_value + epsilon
         )
-        # Create temporary valuation objects with bumped underlyings
-        val_down = OptionValuation(
-            name=f"{self.name}_delta_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_up = OptionValuation(
-            name=f"{self.name}_delta_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_down = self._build_valuation(name_suffix="delta_down", underlying=underlying_down)
+        val_up = self._build_valuation(name_suffix="delta_up", underlying=underlying_up)
 
         # Calculate central difference
         value_left = val_down.present_value(params=params)
         value_right = val_up.present_value(params=params)
 
         delta = (value_right - value_left) / (2 * epsilon)
-        # correct for potential numerical errors
-        if delta < -1.0:
-            return -1.0
-        if delta > 1.0:
-            return 1.0
+
         return delta
 
     def gamma(
@@ -681,28 +682,13 @@ class OptionValuation:
         float
             option gamma
         """
-        # Determine which method to use
-        if greek_calc_method is None:
-            # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            # Validate that analytical is only used with BSM
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError(
-                    "Analytical greeks are only available for BSM pricing method. "
-                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-                )
+        use_analytical = self._resolve_greek_method(
+            greek_calc_method,
+            error_message=(
+                "Analytical greeks are only available for BSM pricing method. "
+                "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
+            ),
+        )
 
         # Use analytical formula for BSM if specified
         if use_analytical:
@@ -720,21 +706,8 @@ class OptionValuation:
             initial_value=self.underlying.initial_value + epsilon
         )
 
-        # Create temporary valuation objects with bumped underlyings
-        val_down = OptionValuation(
-            name=f"{self.name}_gamma_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_up = OptionValuation(
-            name=f"{self.name}_gamma_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_down = self._build_valuation(name_suffix="gamma_down", underlying=underlying_down)
+        val_up = self._build_valuation(name_suffix="gamma_up", underlying=underlying_up)
 
         # Calculate central difference (center uses self.present_value)
         value_left = val_down.present_value(params=params)
@@ -772,28 +745,13 @@ class OptionValuation:
         float
             option vega
         """
-        # Determine which method to use
-        if greek_calc_method is None:
-            # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            # Validate that analytical is only used with BSM
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError(
-                    "Analytical greeks are only available for BSM pricing method. "
-                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-                )
+        use_analytical = self._resolve_greek_method(
+            greek_calc_method,
+            error_message=(
+                "Analytical greeks are only available for BSM pricing method. "
+                "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
+            ),
+        )
 
         # Use analytical formula for BSM if specified
         if use_analytical:
@@ -804,21 +762,8 @@ class OptionValuation:
         underlying_down = self.underlying.replace(volatility=self.underlying.volatility - epsilon)
         underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
 
-        # Create temporary valuation objects with bumped underlyings
-        val_down = OptionValuation(
-            name=f"{self.name}_vega_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_up = OptionValuation(
-            name=f"{self.name}_vega_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_down = self._build_valuation(name_suffix="vega_down", underlying=underlying_down)
+        val_up = self._build_valuation(name_suffix="vega_up", underlying=underlying_up)
 
         # Calculate central difference
         value_left = val_down.present_value(params=params)
@@ -860,23 +805,10 @@ class OptionValuation:
         ValueError
             if analytical method requested for non-BSM pricing method
         """
-        # Default to analytical for BSM, numerical for others
-        if greek_calc_method is None:
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError("Analytical theta calculation only available for BSM method")
+        use_analytical = self._resolve_greek_method(
+            greek_calc_method,
+            error_message="Analytical theta calculation only available for BSM method",
+        )
 
         if use_analytical:
             return self._impl.theta()
@@ -940,23 +872,10 @@ class OptionValuation:
         ValueError
             if analytical method requested for non-BSM pricing method
         """
-        # Default to analytical for BSM, numerical for others
-        if greek_calc_method is None:
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError("Analytical rho calculation only available for BSM method")
+        use_analytical = self._resolve_greek_method(
+            greek_calc_method,
+            error_message="Analytical rho calculation only available for BSM method",
+        )
 
         if use_analytical:
             return self._impl.rho()
@@ -974,20 +893,8 @@ class OptionValuation:
         underlying_up = self.underlying.replace(market_data=md_up)
         underlying_down = self.underlying.replace(market_data=md_down)
 
-        val_up = OptionValuation(
-            name=f"{self.name}_rho_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_down = OptionValuation(
-            name=f"{self.name}_rho_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_up = self._build_valuation(name_suffix="rho_up", underlying=underlying_up)
+        val_down = self._build_valuation(name_suffix="rho_down", underlying=underlying_down)
 
         value_up = val_up.present_value(params=params)
         value_down = val_down.present_value(params=params)
