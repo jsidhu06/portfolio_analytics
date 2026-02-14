@@ -2,17 +2,24 @@
 
 import datetime as dt
 import logging
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import ConstantShortRate, DiscountCurve
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.params import PDEParams
 
+if TYPE_CHECKING:
+    import QuantLib as ql_typing
+else:
+    ql_typing = Any
+
 ql = pytest.importorskip("QuantLib")
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +35,47 @@ PDE_CFG = PDEParams(spot_steps=200, time_steps=200, max_iter=20_000)
 
 def _market_data() -> MarketData:
     return MarketData(PRICING_DATE, ConstantShortRate("r", RISK_FREE), currency=CURRENCY)
+
+
+def _build_curve_from_forwards(
+    *,
+    name: str,
+    times: np.ndarray,
+    forwards: np.ndarray,
+) -> DiscountCurve:
+    times = np.asarray(times, dtype=float)
+    forwards = np.asarray(forwards, dtype=float)
+    if times.ndim != 1 or forwards.ndim != 1:
+        raise ValueError("times/forwards must be 1D arrays")
+    if times.size < 2:
+        raise ValueError("times must include at least [0, T]")
+    if forwards.size != times.size - 1:
+        raise ValueError("forwards must have length len(times)-1")
+    if not np.isclose(times[0], 0.0):
+        raise ValueError("times must start at 0.0")
+
+    dfs = np.empty_like(times)
+    dfs[0] = 1.0
+    for i in range(forwards.size):
+        dt = times[i + 1] - times[i]
+        dfs[i + 1] = dfs[i] * np.exp(-forwards[i] * dt)
+    return DiscountCurve(name=name, times=times, dfs=dfs)
+
+
+def _ql_curve_from_times(
+    *,
+    times: np.ndarray,
+    dfs: np.ndarray,
+) -> "ql_typing.YieldTermStructureHandle":
+    day_count = ql.Actual365Fixed()
+    ql.Settings.instance().evaluationDate = ql.Date(
+        PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
+    )
+    dates = [ql.Settings.instance().evaluationDate]
+    for t in times[1:]:
+        days = int(round(float(t) * 365.0))
+        dates.append(ql.Settings.instance().evaluationDate + days)
+    return ql.YieldTermStructureHandle(ql.DiscountCurve(dates, list(dfs), day_count))
 
 
 def _spec(*, strike: float, option_type: OptionType) -> OptionSpec:
@@ -111,6 +159,56 @@ def _quantlib_american(
     return float(option.NPV())
 
 
+def _quantlib_american_curves(
+    *,
+    spot: float,
+    strike: float,
+    option_type: OptionType,
+    r_times: np.ndarray,
+    r_dfs: np.ndarray,
+    q_times: np.ndarray,
+    q_dfs: np.ndarray,
+    grid_points: int = 200,
+    time_steps: int = 400,
+) -> float:
+    ql.Settings.instance().evaluationDate = ql.Date(
+        PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
+    )
+
+    ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
+
+    spot_handle = ql.QuoteHandle(ql.SimpleQuote(float(spot)))
+    rf_curve = _ql_curve_from_times(times=r_times, dfs=r_dfs)
+    div_curve = _ql_curve_from_times(times=q_times, dfs=q_dfs)
+    vol_handle = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(
+            ql.Settings.instance().evaluationDate,
+            ql.TARGET(),
+            float(VOL),
+            ql.Actual365Fixed(),
+        )
+    )
+
+    if option_type is OptionType.PUT:
+        payoff = ql.PlainVanillaPayoff(ql.Option.Put, float(strike))
+    else:
+        payoff = ql.PlainVanillaPayoff(ql.Option.Call, float(strike))
+
+    exercise = ql.AmericanExercise(ql.Settings.instance().evaluationDate, ql_maturity)
+    option = ql.VanillaOption(payoff, exercise)
+
+    process = ql.BlackScholesMertonProcess(spot_handle, div_curve, rf_curve, vol_handle)
+
+    engine = ql.FdBlackScholesVanillaEngine(
+        process,
+        ql.DividendVector([], []),
+        int(grid_points),
+        int(time_steps),
+    )
+    option.setPricingEngine(engine)
+    return float(option.NPV())
+
+
 def _pde_fd_american(
     *,
     spot: float,
@@ -125,6 +223,27 @@ def _pde_fd_american(
         market_data=_market_data(),
         dividend_yield=dividend_yield,
         discrete_dividends=discrete_dividends,
+    )
+    spec = _spec(strike=strike, option_type=option_type)
+    return OptionValuation("pde_am", ud, spec, PricingMethod.PDE_FD, PDE_CFG).present_value()
+
+
+def _pde_fd_american_curves(
+    *,
+    spot: float,
+    strike: float,
+    option_type: OptionType,
+    r_curve: DiscountCurve,
+    q_curve: DiscountCurve | None,
+) -> float:
+    md = MarketData(PRICING_DATE, r_curve, currency=CURRENCY)
+    ud = UnderlyingPricingData(
+        initial_value=spot,
+        volatility=VOL,
+        market_data=md,
+        dividend_yield=0.0,
+        dividend_curve=q_curve,
+        discrete_dividends=None,
     )
     spec = _spec(strike=strike, option_type=option_type)
     return OptionValuation("pde_am", ud, spec, PricingMethod.PDE_FD, PDE_CFG).present_value()
@@ -234,3 +353,116 @@ def test_american_fd_vs_quantlib_discrete_div():
     )
 
     assert np.isclose(pde, ql_price, rtol=0.01)
+
+
+@pytest.mark.parametrize("spot,strike,option_type", [(52.0, 50.0, OptionType.PUT)])
+def test_american_fd_vs_quantlib_forward_curve_only(spot, strike, option_type):
+    times = np.array([0.0, 0.25, 0.5, 1.0])
+    forwards = np.array([0.03, 0.05, 0.04])
+    r_curve = _build_curve_from_forwards(name="r_curve", times=times, forwards=forwards)
+
+    pde = _pde_fd_american_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_curve=r_curve,
+        q_curve=None,
+    )
+    ql_price = _quantlib_american_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_times=r_curve.times,
+        r_dfs=r_curve.dfs,
+        q_times=np.array([0.0, 1.0]),
+        q_dfs=np.array([1.0, 1.0]),
+    )
+
+    logger.info(
+        "Forward-curve American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde,
+        ql_price,
+    )
+
+    assert np.isclose(pde, ql_price, rtol=0.02)
+
+
+@pytest.mark.parametrize("spot,strike,option_type", [(60.0, 55.0, OptionType.CALL)])
+def test_american_fd_vs_quantlib_dividend_curve_only(spot, strike, option_type):
+    r_times = np.array([0.0, 1.0])
+    r_forwards = np.array([0.04])
+    r_curve = _build_curve_from_forwards(name="r_flat", times=r_times, forwards=r_forwards)
+
+    q_times = np.array([0.0, 0.25, 0.5, 1.0])
+    q_forwards = np.array([0.00, 0.02, 0.04])
+    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+
+    pde = _pde_fd_american_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_curve=r_curve,
+        q_curve=q_curve,
+    )
+    ql_price = _quantlib_american_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_times=r_curve.times,
+        r_dfs=r_curve.dfs,
+        q_times=q_curve.times,
+        q_dfs=q_curve.dfs,
+    )
+
+    logger.info(
+        "Dividend-curve American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde,
+        ql_price,
+    )
+
+    assert np.isclose(pde, ql_price, rtol=0.02)
+
+
+@pytest.mark.parametrize("spot,strike,option_type", [(52.0, 50.0, OptionType.PUT)])
+def test_american_fd_vs_quantlib_forward_and_dividend_curves(spot, strike, option_type):
+    r_times = np.array([0.0, 0.25, 0.5, 1.0])
+    r_forwards = np.array([0.03, 0.05, 0.04])
+    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+
+    q_times = np.array([0.0, 0.25, 0.5, 1.0])
+    q_forwards = np.array([0.01, 0.02, 0.00])
+    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+
+    pde = _pde_fd_american_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_curve=r_curve,
+        q_curve=q_curve,
+    )
+    ql_price = _quantlib_american_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_times=r_curve.times,
+        r_dfs=r_curve.dfs,
+        q_times=q_curve.times,
+        q_dfs=q_curve.dfs,
+    )
+
+    logger.info(
+        "Forward+dividend curves American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde,
+        ql_price,
+    )
+
+    assert np.isclose(pde, ql_price, rtol=0.02)

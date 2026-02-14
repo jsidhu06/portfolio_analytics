@@ -15,7 +15,7 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import ConstantShortRate, DiscountCurve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -39,6 +39,31 @@ MC_CFG_AM = MonteCarloParams(random_seed=42, deg=3)
 
 def _market_data() -> MarketData:
     return MarketData(PRICING_DATE, ConstantShortRate("r", RISK_FREE), currency=CURRENCY)
+
+
+def _build_curve_from_forwards(
+    *,
+    name: str,
+    times: np.ndarray,
+    forwards: np.ndarray,
+) -> DiscountCurve:
+    times = np.asarray(times, dtype=float)
+    forwards = np.asarray(forwards, dtype=float)
+    if times.ndim != 1 or forwards.ndim != 1:
+        raise ValueError("times/forwards must be 1D arrays")
+    if times.size < 2:
+        raise ValueError("times must include at least [0, T]")
+    if forwards.size != times.size - 1:
+        raise ValueError("forwards must have length len(times)-1")
+    if not np.isclose(times[0], 0.0):
+        raise ValueError("times must start at 0.0")
+
+    dfs = np.empty_like(times)
+    dfs[0] = 1.0
+    for i in range(forwards.size):
+        dt = times[i + 1] - times[i]
+        dfs[i + 1] = dfs[i] * np.exp(-forwards[i] * dt)
+    return DiscountCurve(name=name, times=times, dfs=dfs)
 
 
 def _underlying(
@@ -85,6 +110,23 @@ def _spec(*, strike: float, option_type: OptionType, exercise_type: ExerciseType
         strike=strike,
         maturity=MATURITY,
         currency=CURRENCY,
+    )
+
+
+def _underlying_curves(
+    *,
+    spot: float,
+    r_curve: DiscountCurve,
+    q_curve: DiscountCurve | None,
+) -> UnderlyingPricingData:
+    md = MarketData(PRICING_DATE, r_curve, currency=CURRENCY)
+    return UnderlyingPricingData(
+        initial_value=spot,
+        volatility=VOL,
+        market_data=md,
+        dividend_yield=0.0,
+        dividend_curve=q_curve,
+        discrete_dividends=None,
     )
 
 
@@ -294,3 +336,65 @@ def test_pde_fd_grid_method_equivalence_american():
                     "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
                 ).present_value()
                 assert np.isclose(pv, baseline, rtol=0.005)
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type,r_times,r_forwards,q_times,q_forwards",
+    [
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 1.0]),
+            np.array([0.0]),
+        ),
+        (
+            60.0,
+            55.0,
+            OptionType.CALL,
+            np.array([0.0, 1.0]),
+            np.array([0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.00, 0.02, 0.04]),
+        ),
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.01, 0.02, 0.00]),
+        ),
+    ],
+)
+def test_pde_fd_vs_binomial_with_forward_curves(
+    spot,
+    strike,
+    option_type,
+    r_times,
+    r_forwards,
+    q_times,
+    q_forwards,
+):
+    """PDE FD and binomial should agree under time-varying forward curves."""
+    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+
+    ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+
+    pde_pv = OptionValuation(
+        "pde_curve_am", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
+    ).present_value()
+    binom_pv = OptionValuation(
+        "binom_curve_am",
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+
+    assert np.isclose(pde_pv, binom_pv, rtol=0.01)

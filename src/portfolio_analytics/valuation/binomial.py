@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 from ..enums import OptionType, AsianAveraging, ExerciseType
+from ..rates import ConstantShortRate
 from ..utils import calculate_year_fraction, pv_discrete_dividends
 from .params import BinomialParams
 
@@ -29,37 +30,59 @@ class _BinomialValuationBase:
 
         Returns
         =======
-        tuple of (discount_factor, p, spot_lattice)
+        tuple of (discount_factors, p, spot_lattice)
         """
         start = self.parent.pricing_date
         end = self.parent.maturity
         time_intervals = pd.date_range(start, end, periods=num_steps + 1)
 
         # Numerical Parameters
-        delta_t = calculate_year_fraction(time_intervals[0], time_intervals[1])
-        r = self.parent.discount_curve.short_rate
-        discount_factor = np.exp(-r * delta_t)
-        sigma = self.parent.underlying.volatility
-        dividend_yield = self.parent.underlying.dividend_yield
+        time_grid = np.array(
+            [calculate_year_fraction(start, t) for t in time_intervals], dtype=float
+        )
+        dt_steps = np.diff(time_grid)
+        if not np.allclose(dt_steps, dt_steps[0]):
+            raise ValueError("Binomial tree requires equal time steps.")
+        delta_t = float(dt_steps[0])
+
+        sigma = float(self.parent.underlying.volatility)
         u = np.exp(sigma * np.sqrt(delta_t))
-        d = 1 / u
-        drift = np.exp((r - dividend_yield) * delta_t)
-        if not (d < drift < u):
+        d = 1.0 / u
+
+        discount_curve = self.parent.discount_curve
+        forward_rates = discount_curve.step_forward_rates(time_grid)
+
+        dividend_curve = self.parent.underlying.dividend_curve
+        if dividend_curve is not None:
+            dividend_forwards = dividend_curve.step_forward_rates(time_grid)
+        else:
+            dividend_forwards = np.full(num_steps, float(self.parent.underlying.dividend_yield))
+
+        growth = np.exp((forward_rates - dividend_forwards) * delta_t)
+        if np.any(growth <= d) or np.any(growth >= u):
             raise ValueError(
-                "Arbitrage condition violated: d < exp((r-q)*dt) < u "
-                f"(d={d:.6g}, exp((r-q)*dt)={drift:.6g}, u={u:.6g})"
+                "Arbitrage condition violated: d < exp((f-g)*dt) < u for at least one step"
             )
-        p = (np.exp((r - dividend_yield) * delta_t) - d) / (u - d)
+
+        p = (growth - d) / (u - d)
+
+        if self.parent.underlying.discrete_dividends and not isinstance(
+            discount_curve, ConstantShortRate
+        ):
+            raise NotImplementedError(
+                "Discrete dividends with time-varying discount curves are not supported."
+            )
 
         spot_lattice = self._build_spot_lattice(
             num_steps=num_steps,
             time_intervals=time_intervals,
             up=u,
             down=d,
-            short_rate=float(r),
+            short_rate=float(getattr(discount_curve, "short_rate", forward_rates[0])),
         )
 
-        return discount_factor, p, spot_lattice
+        discount_factors = np.exp(-forward_rates * delta_t)
+        return discount_factors, p, spot_lattice
 
     def _build_spot_lattice(
         self,
@@ -134,7 +157,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         if not isinstance(params, BinomialParams):
             raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
-        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         option_lattice = np.zeros_like(spot_lattice)
         option_lattice[:, num_steps] = self._get_intrinsic_values(spot_lattice[:, num_steps])
@@ -142,8 +165,9 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         # Backward induction through the tree (time in columns)
         for t in range(num_steps - 1, -1, -1):
             continuation = (
-                p * option_lattice[: t + 1, t + 1] + (1 - p) * option_lattice[1 : t + 2, t + 1]
-            ) * discount_factor
+                p[t] * option_lattice[: t + 1, t + 1]
+                + (1 - p[t]) * option_lattice[1 : t + 2, t + 1]
+            ) * discount_factors[t]
             option_lattice[: t + 1, t] = continuation
 
         return option_lattice
@@ -165,7 +189,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         if not isinstance(params, BinomialParams):
             raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
-        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         option_lattice = np.zeros_like(spot_lattice)
         intrinsic = self._get_intrinsic_values(spot_lattice)
@@ -174,8 +198,9 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         # Backward induction with early exercise decision
         for t in range(num_steps - 1, -1, -1):
             continuation = (
-                p * option_lattice[: t + 1, t + 1] + (1 - p) * option_lattice[1 : t + 2, t + 1]
-            ) * discount_factor
+                p[t] * option_lattice[: t + 1, t + 1]
+                + (1 - p[t]) * option_lattice[1 : t + 2, t + 1]
+            ) * discount_factors[t]
             option_lattice[: t + 1, t] = np.maximum(intrinsic[: t + 1, t], continuation)
 
         return option_lattice
@@ -196,7 +221,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         if not isinstance(params, BinomialParams):
             raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
-        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         if params.mc_paths is None:
             raise ValueError("BinomialParams.mc_paths must be set for Asian binomial MC")
@@ -210,7 +235,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         # Vectorized simulation of binomial paths:
         # draw Bernoulli down-steps for each path and step
-        downs = rng.random((mc_paths, num_steps)) > p  # (I,M)
+        downs = rng.random((mc_paths, num_steps)) > p[None, :]  # (I,M)
         # cumulative count of downs gives row index at each step
         down_counts = np.cumsum(downs, axis=1)  # (I,M)
         # prepend time 0 (row=0)
@@ -231,7 +256,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         else:
             payoffs = np.maximum(K - avg_s, 0.0)
 
-        return payoffs * (discount_factor**num_steps)
+        return payoffs * float(np.prod(discount_factors))
 
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
         K = self.parent.strike
@@ -275,7 +300,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         if not isinstance(params, BinomialParams):
             raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
         num_steps = int(params.num_steps)
-        discount_factor, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         if self.parent.spec.averaging is not AsianAveraging.ARITHMETIC:
             raise ValueError("Hull binomial Asian valuation only supports arithmetic averaging.")
@@ -326,7 +351,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                     avg_down[:, j], avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]
                 )
 
-            continuation = discount_factor * (p * v_up + (1.0 - p) * v_down)
+            continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)
 
             if is_american:
                 exercise = self._average_payoff(grid_here)

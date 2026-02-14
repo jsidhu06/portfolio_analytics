@@ -12,7 +12,7 @@ PDE via finite differences for vanilla European and American call/put:
 - American handling: intrinsic projection or Gauss-Seidel/PSOR
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import math
 
@@ -24,6 +24,14 @@ from .params import PDEParams
 
 if TYPE_CHECKING:
     from .core import OptionValuation
+
+
+class ForwardCurve(Protocol):
+    """Minimal interface for deterministic discount/forward curves."""
+
+    def df(self, t: float | np.ndarray) -> np.ndarray: ...
+
+    def forward_rate(self, t0: float, t1: float) -> float: ...
 
 
 def _solve_tridiagonal_thomas(
@@ -130,17 +138,16 @@ def _boundary_values(
     option_type: OptionType,
     strike: float,
     smax: float,
-    tau: float,
-    r: float,
-    q: float,
+    df_tT: float,
+    dq_tT: float,
     early_exercise: bool,
 ) -> tuple[float, float]:
     if option_type is OptionType.PUT:
-        left = strike if early_exercise else strike * np.exp(-r * tau)
+        left = strike if early_exercise else strike * df_tT
         right = 0.0
     else:
         left = 0.0
-        continuation = smax * np.exp(-q * tau) - strike * np.exp(-r * tau)
+        continuation = smax * dq_tT - strike * df_tT
         intrinsic = smax - strike
         right = max(continuation, intrinsic) if early_exercise else max(continuation, 0.0)
     return float(left), float(right)
@@ -245,8 +252,9 @@ def _vanilla_fd_core(
     spot: float,
     strike: float,
     time_to_maturity: float,
-    risk_free_rate: float,
     volatility: float,
+    discount_curve: ForwardCurve,
+    dividend_curve: ForwardCurve | None,
     dividend_yield: float,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
@@ -282,13 +290,6 @@ def _vanilla_fd_core(
         grid = np.linspace(0.0, smax, spot_steps + 1)
         S = grid
         dS = smax / spot_steps
-        gamma, beta, alpha = _spot_operator_coeffs(
-            spot_values=S[1:-1],
-            dS=dS,
-            risk_free_rate=risk_free_rate,
-            dividend_yield=dividend_yield,
-            volatility=volatility,
-        )
     else:
         grid, S, dz = _build_log_grid(
             spot=spot,
@@ -298,12 +299,6 @@ def _vanilla_fd_core(
             smax_mult=smax_mult,
             spot_steps=spot_steps,
             time_steps=time_steps,
-        )
-        gamma, beta, alpha = _log_operator_coeffs(
-            dz=dz,
-            risk_free_rate=risk_free_rate,
-            dividend_yield=dividend_yield,
-            volatility=volatility,
         )
 
     j = np.arange(1, spot_steps)  # interior indices 1..M-1
@@ -322,14 +317,31 @@ def _vanilla_fd_core(
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
     if method is PDEMethod.EXPLICIT and space_grid is PDESpaceGrid.SPOT:
-        drift = abs(risk_free_rate - dividend_yield)
+        if discount_curve is None:
+            raise ValueError("discount_curve is required for explicit PDE stability checks")
+
+        t_prev = time_to_maturity - tau_grid[:-1]
+        t_next = time_to_maturity - tau_grid[1:]
+        r_steps = np.array(
+            [discount_curve.forward_rate(t1, t0) for t0, t1 in zip(t_prev, t_next)],
+            dtype=float,
+        )
+        if dividend_curve is not None:
+            q_steps = np.array(
+                [dividend_curve.forward_rate(t1, t0) for t0, t1 in zip(t_prev, t_next)],
+                dtype=float,
+            )
+        else:
+            q_steps = np.full_like(r_steps, float(dividend_yield))
+
+        drift = float(np.max(np.abs(r_steps - q_steps)))
         if drift > volatility**2:
             raise ValueError(
-                "Explicit spot-grid scheme unstable: |r-q| must be <= sigma^2. "
+                "Explicit spot-grid scheme unstable: max |r-q| must be <= sigma^2. "
                 "Use log-spot or implicit/CN."
             )
 
-        denom = (volatility**2) * (smax**2) / (dS**2) + max(risk_free_rate, 0.0)
+        denom = (volatility**2) * (smax**2) / (dS**2) + max(float(np.max(r_steps)), 0.0)
         if denom > 0.0:
             dt_max = 1.0 / denom
             max_dt = float(np.max(np.diff(tau_grid)))
@@ -342,17 +354,58 @@ def _vanilla_fd_core(
                 )
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
+    if discount_curve is None:
+        raise ValueError("discount_curve is required for PDE valuation")
+
+    df_0T = float(discount_curve.df(time_to_maturity))  # P(0,T)
+    if dividend_curve is not None:
+        dq_0T = float(dividend_curve.df(time_to_maturity))  # Dq(0,T)
+    else:
+        dq_0T = None
+
     for n in range(1, tau_grid.size):
         dt = tau_grid[n] - tau_grid[n - 1]
         tau = float(tau_grid[n])
+        t_prev = time_to_maturity - float(tau_grid[n - 1])
+        t_curr = time_to_maturity - float(tau_grid[n])
+        # We march backward in calendar time, so t_curr < t_prev.
+
+        r = float(discount_curve.forward_rate(t_curr, t_prev))
+        if dividend_curve is not None:
+            q = float(dividend_curve.forward_rate(t_curr, t_prev))
+        else:
+            q = float(dividend_yield)
+
+        if space_grid is PDESpaceGrid.SPOT:
+            gamma, beta, alpha = _spot_operator_coeffs(
+                spot_values=S[1:-1],
+                dS=dS,
+                risk_free_rate=r,
+                dividend_yield=q,
+                volatility=volatility,
+            )
+        else:
+            gamma, beta, alpha = _log_operator_coeffs(
+                dz=dz,
+                risk_free_rate=r,
+                dividend_yield=q,
+                volatility=volatility,
+            )
+
+        df_0t = float(discount_curve.df(t_curr))
+        df_tT = df_0T / df_0t
+        if dividend_curve is not None:
+            dq_0t = float(dividend_curve.df(t_curr))
+            dq_tT = dq_0T / dq_0t
+        else:
+            dq_tT = float(np.exp(-q * tau))
 
         left, right = _boundary_values(
             option_type=option_type,
             strike=strike,
             smax=float(S[-1]),
-            tau=tau,
-            r=risk_free_rate,
-            q=dividend_yield,
+            df_tT=df_tT,
+            dq_tT=dq_tT,
             early_exercise=early_exercise,
         )
 
@@ -431,8 +484,9 @@ def _european_vanilla_fd(
     spot: float,
     strike: float,
     time_to_maturity: float,
-    risk_free_rate: float,
     volatility: float,
+    discount_curve: ForwardCurve,
+    dividend_curve: ForwardCurve | None,
     dividend_yield: float,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
@@ -446,8 +500,9 @@ def _european_vanilla_fd(
         spot=spot,
         strike=strike,
         time_to_maturity=time_to_maturity,
-        risk_free_rate=risk_free_rate,
         volatility=volatility,
+        discount_curve=discount_curve,
+        dividend_curve=dividend_curve,
         dividend_yield=dividend_yield,
         dividend_schedule=dividend_schedule,
         option_type=option_type,
@@ -466,8 +521,9 @@ def _american_vanilla_fd(
     spot: float,
     strike: float,
     time_to_maturity: float,
-    risk_free_rate: float,
     volatility: float,
+    discount_curve: ForwardCurve,
+    dividend_curve: ForwardCurve | None,
     dividend_yield: float,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
@@ -485,8 +541,9 @@ def _american_vanilla_fd(
         spot=spot,
         strike=strike,
         time_to_maturity=time_to_maturity,
-        risk_free_rate=risk_free_rate,
         volatility=volatility,
+        discount_curve=discount_curve,
+        dividend_curve=dividend_curve,
         dividend_yield=dividend_yield,
         dividend_schedule=dividend_schedule,
         option_type=option_type,
@@ -524,7 +581,8 @@ class _FDEuropeanValuation:
             raise ValueError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
-        risk_free_rate = float(self.parent.discount_curve.short_rate)
+        discount_curve = self.parent.discount_curve
+        dividend_curve = self.parent.underlying.dividend_curve
         dividend_yield = float(self.parent.underlying.dividend_yield)
         discrete_dividends = self.parent.underlying.discrete_dividends
 
@@ -544,8 +602,9 @@ class _FDEuropeanValuation:
             spot=spot,
             strike=float(strike),
             time_to_maturity=float(time_to_maturity),
-            risk_free_rate=risk_free_rate,
             volatility=volatility,
+            discount_curve=discount_curve,
+            dividend_curve=dividend_curve,
             dividend_yield=dividend_yield,
             dividend_schedule=dividend_schedule,
             option_type=self.parent.option_type,
@@ -582,7 +641,8 @@ class _FDAmericanValuation:
             raise ValueError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
-        risk_free_rate = float(self.parent.discount_curve.short_rate)
+        discount_curve = self.parent.discount_curve
+        dividend_curve = self.parent.underlying.dividend_curve
         dividend_yield = float(self.parent.underlying.dividend_yield)
         discrete_dividends = self.parent.underlying.discrete_dividends
 
@@ -605,8 +665,9 @@ class _FDAmericanValuation:
             spot=spot,
             strike=float(strike),
             time_to_maturity=float(time_to_maturity),
-            risk_free_rate=risk_free_rate,
             volatility=volatility,
+            discount_curve=discount_curve,
+            dividend_curve=dividend_curve,
             dividend_yield=dividend_yield,
             dividend_schedule=dividend_schedule,
             option_type=self.parent.option_type,

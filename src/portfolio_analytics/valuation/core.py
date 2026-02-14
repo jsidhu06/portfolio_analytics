@@ -18,7 +18,7 @@ from .binomial import (
 )
 from .bsm import _BSMEuropeanValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
-from ..rates import ConstantShortRate
+from ..rates import ConstantShortRate, DiscountCurve
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
@@ -177,7 +177,7 @@ class UnderlyingPricingData:
     Used when pricing with methods that don't require full stochastic process simulation
     (e.g., BSM, binomial trees, FD approximation to PDE).
     Contains only essential parameters: spot price, volatility, pricing date, discount curve,
-    continuous dividend yield (optional, default 0.0),
+    continuous dividend yield (optional, default 0.0) or dividend_curve,
     and optional discrete dividends as (ex_date, amount) pairs.
     """
 
@@ -188,11 +188,13 @@ class UnderlyingPricingData:
         market_data: MarketData,
         dividend_yield: float = 0.0,
         discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+        dividend_curve: DiscountCurve | None = None,
     ):
         self.initial_value = initial_value
         self.volatility = volatility
         self.market_data = market_data
         self.dividend_yield = dividend_yield
+        self.dividend_curve = dividend_curve
         if discrete_dividends is None:
             self.discrete_dividends = []
         else:
@@ -207,6 +209,12 @@ class UnderlyingPricingData:
                 cleaned.append((ex_date, amt))
             self.discrete_dividends = sorted(cleaned, key=lambda x: x[0])
 
+        if self.dividend_curve is not None and self.dividend_yield != 0.0:
+            raise ValueError("Provide either dividend_curve or dividend_yield, not both.")
+
+        if self.dividend_curve is not None and self.discrete_dividends:
+            raise ValueError("Provide either dividend_curve or discrete_dividends, not both.")
+
         if self.dividend_yield != 0.0 and self.discrete_dividends:
             raise ValueError(
                 "Provide either a continuous dividend_yield or discrete_dividends, not both."
@@ -217,7 +225,7 @@ class UnderlyingPricingData:
         return self.market_data.pricing_date
 
     @property
-    def discount_curve(self) -> ConstantShortRate:
+    def discount_curve(self) -> ConstantShortRate | DiscountCurve:
         return self.market_data.discount_curve
 
     @property
@@ -233,7 +241,8 @@ class UnderlyingPricingData:
         Parameters
         ----------
         **kwargs
-            Fields to override (initial_value, volatility, dividend_yield, market_data)
+            Fields to override (initial_value, volatility, dividend_yield,
+            dividend_curve, discrete_dividends, market_data)
 
         Returns
         -------
@@ -249,6 +258,7 @@ class UnderlyingPricingData:
             market_data=kwargs.get("market_data", self.market_data),
             dividend_yield=kwargs.get("dividend_yield", self.dividend_yield),
             discrete_dividends=kwargs.get("discrete_dividends", self.discrete_dividends),
+            dividend_curve=kwargs.get("dividend_curve", self.dividend_curve),
         )
 
 
@@ -382,6 +392,16 @@ class OptionValuation:
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
                 "Pass an UnderlyingPricingData instance instead of PathSimulation."
             )
+
+        if pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+            if not isinstance(self.discount_curve, ConstantShortRate):
+                raise NotImplementedError(
+                    "Time-varying discount curves are only supported for BINOMIAL and PDE_FD."
+                )
+            if getattr(self.underlying, "dividend_curve", None) is not None:
+                raise NotImplementedError(
+                    "Time-varying dividend curves are only supported for BINOMIAL and PDE_FD."
+                )
 
         # Dispatch to appropriate pricing method implementation
         if isinstance(spec, AsianOptionSpec):
