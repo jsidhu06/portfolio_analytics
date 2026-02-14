@@ -170,6 +170,14 @@ class TestDeltaBasicProperties(TestGreeksSetup):
         valuation = self._make_val("put_otm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() > -0.05
 
+    def test_delta_custom_epsilon(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
+
+        delta = valuation.delta(epsilon=0.5)
+        assert 0 < delta < 1
+
 
 class TestGammaBasicProperties(TestGreeksSetup):
     """Test basic properties of gamma values."""
@@ -258,6 +266,14 @@ class TestVegaBasicProperties(TestGreeksSetup):
         vega_long = val_long.vega()
 
         assert vega_long > vega_short
+
+    def test_vega_custom_epsilon(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
+
+        vega = valuation.vega(epsilon=0.02)
+        assert vega > 0
 
 
 class TestGreekCalculationMethods(TestGreeksSetup):
