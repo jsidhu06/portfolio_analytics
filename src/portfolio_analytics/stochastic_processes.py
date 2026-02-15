@@ -1,4 +1,4 @@
-"Path simulation classes for various stochastic processes"
+"""Path simulation classes for stochastic processes used in pricing."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace as dc_replace

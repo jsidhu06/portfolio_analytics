@@ -1,4 +1,4 @@
-"Discount curve utilities"
+"""Interest-rate and discount-curve utilities."""
 
 from dataclasses import dataclass
 from datetime import datetime
