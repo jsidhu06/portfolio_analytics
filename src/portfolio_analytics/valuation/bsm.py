@@ -21,9 +21,9 @@ class _BSMValuationBase:
         spot: float,
         strike: float,
         time_to_maturity: float,
-        risk_free_rate: float,
         volatility: float,
-        dividend_yield: float = 0.0,
+        df_r: float,
+        df_q: float,
     ) -> tuple[float, float]:
         """Calculate d1 and d2 for BSM model.
 
@@ -35,12 +35,12 @@ class _BSMValuationBase:
             strike price
         time_to_maturity: float
             time to maturity in years
-        risk_free_rate: float
-            risk-free rate
         volatility: float
             volatility (annualized)
-        dividend_yield: float, optional
-            continuous dividend yield (default: 0.0)
+        df_r: float
+            discount factor P(0,T)
+        df_q: float
+            dividend discount factor Dq(0,T)
 
         Returns
         =======
@@ -49,10 +49,8 @@ class _BSMValuationBase:
         if time_to_maturity <= 0:
             raise ValueError("time_to_maturity must be positive")
 
-        numerator = (
-            np.log(spot / strike)
-            + (risk_free_rate - dividend_yield + 0.5 * volatility**2) * time_to_maturity
-        )
+        forward = spot * df_q / df_r
+        numerator = np.log(forward / strike) + 0.5 * volatility**2 * time_to_maturity
         denominator = volatility * np.sqrt(time_to_maturity)
 
         d1 = numerator / denominator
@@ -60,9 +58,19 @@ class _BSMValuationBase:
 
         return d1, d2
 
-    def _get_discount_factor(self, time_to_maturity: float, risk_free_rate: float) -> float:
-        """Calculate discount factor e^(-r*T)."""
-        return np.exp(-risk_free_rate * time_to_maturity)
+    def _effective_discount_factors(self, time_to_maturity: float) -> tuple[float, float]:
+        df_r = float(self.parent.discount_curve.df(time_to_maturity))
+        dividend_curve = self.parent.underlying.dividend_curve
+        if dividend_curve is not None:
+            df_q = float(dividend_curve.df(time_to_maturity))
+        else:
+            dividend_yield = float(self.parent.underlying.dividend_yield)
+            df_q = float(np.exp(-dividend_yield * time_to_maturity))
+        return df_r, df_q
+
+    @staticmethod
+    def _implied_rate_from_df(df: float, time_to_maturity: float) -> float:
+        return -np.log(df) / time_to_maturity
 
     def _adjusted_spot(self) -> float:
         """Adjust spot for discrete dividends using PV of future dividends."""
@@ -91,8 +99,6 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = float(self.parent.discount_curve.flat_rate)
-        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
@@ -101,22 +107,18 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             day_count_convention=DayCountConvention.ACT_365F,
         )
 
+        df_r, df_q = self._effective_discount_factors(time_to_maturity)
+
         # Calculate d1 and d2
-        d1, d2 = self._calculate_d_values(
-            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
-        )
+        d1, d2 = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)
 
         # Calculate option value based on option type
-        discount_factor = self._get_discount_factor(time_to_maturity, risk_free_rate)
+        discount_factor = df_r
 
         if self.parent.option_type is OptionType.CALL:
-            option_value = spot * np.exp(-dividend_yield * time_to_maturity) * norm.cdf(
-                d1
-            ) - strike * discount_factor * norm.cdf(d2)
+            option_value = spot * df_q * norm.cdf(d1) - strike * discount_factor * norm.cdf(d2)
         else:  # PUT
-            option_value = strike * discount_factor * norm.cdf(-d2) - spot * np.exp(
-                -dividend_yield * time_to_maturity
-            ) * norm.cdf(-d1)
+            option_value = strike * discount_factor * norm.cdf(-d2) - spot * df_q * norm.cdf(-d1)
 
         return option_value
 
@@ -143,8 +145,6 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = float(self.parent.discount_curve.flat_rate)
-        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
@@ -152,17 +152,16 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             self.parent.maturity,
             day_count_convention=DayCountConvention.ACT_365F,
         )
+        df_r, df_q = self._effective_discount_factors(time_to_maturity)
 
         # Calculate d1
-        d1, _ = self._calculate_d_values(
-            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
-        )
+        d1, _ = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)
 
         # Adjust for dividend yield
         if self.parent.option_type is OptionType.CALL:
-            delta = np.exp(-dividend_yield * time_to_maturity) * norm.cdf(d1)
+            delta = df_q * norm.cdf(d1)
         else:  # PUT
-            delta = np.exp(-dividend_yield * time_to_maturity) * (norm.cdf(d1) - 1)
+            delta = df_q * (norm.cdf(d1) - 1)
 
         return delta
 
@@ -182,8 +181,6 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = float(self.parent.discount_curve.flat_rate)
-        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
@@ -191,24 +188,19 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             self.parent.maturity,
             day_count_convention=DayCountConvention.ACT_365F,
         )
+        df_r, df_q = self._effective_discount_factors(time_to_maturity)
 
         if time_to_maturity <= 0:
             return 0.0
 
         # Calculate d1
-        d1, _ = self._calculate_d_values(
-            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
-        )
+        d1, _ = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)
 
         # Standard normal PDF evaluated at d1
         n_prime_d1 = norm.pdf(d1)
 
         # Adjust for dividend yield
-        gamma = (
-            np.exp(-dividend_yield * time_to_maturity)
-            * n_prime_d1
-            / (spot * volatility * np.sqrt(time_to_maturity))
-        )
+        gamma = df_q * n_prime_d1 / (spot * volatility * np.sqrt(time_to_maturity))
 
         return gamma
 
@@ -229,8 +221,6 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = float(self.parent.discount_curve.flat_rate)
-        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
@@ -238,26 +228,19 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             self.parent.maturity,
             day_count_convention=DayCountConvention.ACT_365F,
         )
+        df_r, df_q = self._effective_discount_factors(time_to_maturity)
 
         if time_to_maturity <= 0:
             return 0.0
 
         # Calculate d1
-        d1, _ = self._calculate_d_values(
-            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
-        )
+        d1, _ = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)
 
         # Standard normal PDF evaluated at d1
         n_prime_d1 = norm.pdf(d1)
 
         # Vega is per 1% change in volatility
-        vega = (
-            spot
-            * np.exp(-dividend_yield * time_to_maturity)
-            * n_prime_d1
-            * np.sqrt(time_to_maturity)
-            / 100
-        )
+        vega = spot * df_q * n_prime_d1 * np.sqrt(time_to_maturity) / 100
 
         return vega
 
@@ -286,8 +269,6 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = float(self.parent.discount_curve.flat_rate)
-        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
@@ -295,14 +276,15 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             self.parent.maturity,
             day_count_convention=DayCountConvention.ACT_365F,
         )
+        df_r, df_q = self._effective_discount_factors(time_to_maturity)
+        risk_free_rate = self._implied_rate_from_df(df_r, time_to_maturity)
+        dividend_yield = self._implied_rate_from_df(df_q, time_to_maturity)
 
         if time_to_maturity <= 0:
             return 0.0
 
         # Calculate d1 and d2
-        d1, d2 = self._calculate_d_values(
-            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
-        )
+        d1, d2 = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)
 
         # Standard normal PDF evaluated at d1
         n_prime_d1 = norm.pdf(d1)
@@ -317,20 +299,12 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         )
 
         if self.parent.option_type is OptionType.CALL:
-            term2 = (
-                -risk_free_rate * strike * np.exp(-risk_free_rate * time_to_maturity) * norm.cdf(d2)
-            )
-            term3 = (
-                dividend_yield * spot * np.exp(-dividend_yield * time_to_maturity) * norm.cdf(d1)
-            )
+            term2 = -risk_free_rate * strike * df_r * norm.cdf(d2)
+            term3 = dividend_yield * spot * df_q * norm.cdf(d1)
             theta_annual = term1 + term2 + term3
         else:  # PUT
-            term2 = (
-                risk_free_rate * strike * np.exp(-risk_free_rate * time_to_maturity) * norm.cdf(-d2)
-            )
-            term3 = (
-                -dividend_yield * spot * np.exp(-dividend_yield * time_to_maturity) * norm.cdf(-d1)
-            )
+            term2 = risk_free_rate * strike * df_r * norm.cdf(-d2)
+            term3 = -dividend_yield * spot * df_q * norm.cdf(-d1)
             theta_annual = term1 + term2 + term3
 
         # Convert from annual to per-day (divide by 365)
@@ -356,8 +330,6 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         spot = self._adjusted_spot()
         strike = self.parent.strike
         volatility = self.parent.underlying.volatility
-        risk_free_rate = float(self.parent.discount_curve.flat_rate)
-        dividend_yield = self.parent.underlying.dividend_yield
 
         # Calculate time to maturity in years
         time_to_maturity = calculate_year_fraction(
@@ -365,31 +337,18 @@ class _BSMEuropeanValuation(_BSMValuationBase):
             self.parent.maturity,
             day_count_convention=DayCountConvention.ACT_365F,
         )
+        df_r, df_q = self._effective_discount_factors(time_to_maturity)
 
         if time_to_maturity <= 0:
             return 0.0
 
         # Calculate d2
-        _, d2 = self._calculate_d_values(
-            spot, strike, time_to_maturity, risk_free_rate, volatility, dividend_yield
-        )
+        _, d2 = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)
 
         # Rho is per 1% change in interest rate
         if self.parent.option_type is OptionType.CALL:
-            rho = (
-                strike
-                * time_to_maturity
-                * np.exp(-risk_free_rate * time_to_maturity)
-                * norm.cdf(d2)
-                / 100
-            )
+            rho = strike * time_to_maturity * df_r * norm.cdf(d2) / 100
         else:  # PUT
-            rho = (
-                -strike
-                * time_to_maturity
-                * np.exp(-risk_free_rate * time_to_maturity)
-                * norm.cdf(-d2)
-                / 100
-            )
+            rho = -strike * time_to_maturity * df_r * norm.cdf(-d2) / 100
 
         return rho

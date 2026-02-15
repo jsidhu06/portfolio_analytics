@@ -244,8 +244,8 @@ class TestOptionValuation:
         )
         assert isinstance(valuation._impl, _BinomialEuropeanValuation)
 
-    def test_bsm_rejects_nonflat_discount_curve(self):
-        """BSM should reject time-varying discount curves."""
+    def test_bsm_accepts_nonflat_discount_curve(self):
+        """BSM should accept time-varying discount curves."""
         nonflat_curve = DiscountCurve(
             name="nonflat",
             times=np.array([0.0, 0.5, 1.0]),
@@ -258,16 +258,13 @@ class TestOptionValuation:
             market_data=market_data,
         )
 
-        with pytest.raises(
-            NotImplementedError,
-            match="Time-varying discount curves are only supported",
-        ):
-            OptionValuation(
-                name="CALL_BSM_NONFLAT",
-                underlying=ud,
-                spec=self.call_spec,
-                pricing_method=PricingMethod.BSM,
-            )
+        valuation = OptionValuation(
+            name="CALL_BSM_NONFLAT",
+            underlying=ud,
+            spec=self.call_spec,
+            pricing_method=PricingMethod.BSM,
+        )
+        assert valuation.present_value() > 0.0
 
     def test_option_valuation_with_path_simulation_mcs(self):
         """Test OptionValuation creation with PathSimulation and MC pricing."""

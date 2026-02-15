@@ -396,7 +396,7 @@ def test_pde_fd_grid_method_equivalence_american():
         ),
     ],
 )
-def test_pde_fd_vs_binomial_with_forward_curves(
+def test_european_method_equivalence_with_forward_curves(
     spot,
     strike,
     option_type,
@@ -405,25 +405,36 @@ def test_pde_fd_vs_binomial_with_forward_curves(
     q_times,
     q_forwards,
 ):
-    """PDE FD and binomial should agree under time-varying forward curves."""
+    """European BSM, MC, PDE FD, and binomial should agree under time-varying curves."""
     r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
     q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
-    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+    gbm = _gbm_curves(spot=spot, r_curve=r_curve, q_curve=q_curve, paths=150_000)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
+    bsm_pv = OptionValuation("bsm_curve_eu", ud, spec, PricingMethod.BSM).present_value()
     pde_pv = OptionValuation(
-        "pde_curve_am", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
+        "pde_curve_eu", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
     ).present_value()
     binom_pv = OptionValuation(
-        "binom_curve_am",
+        "binom_curve_eu",
         ud,
         spec,
         PricingMethod.BINOMIAL,
         params=BinomialParams(num_steps=1500),
     ).present_value()
+    mc_pv = OptionValuation(
+        "mc_curve_eu",
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MC_CFG_EU,
+    ).present_value()
 
-    assert np.isclose(pde_pv, binom_pv, rtol=0.01)
+    assert np.isclose(pde_pv, bsm_pv, rtol=0.01)
+    assert np.isclose(binom_pv, bsm_pv, rtol=0.01)
+    assert np.isclose(mc_pv, bsm_pv, rtol=0.01)
 
 
 @pytest.mark.parametrize(
@@ -458,7 +469,7 @@ def test_pde_fd_vs_binomial_with_forward_curves(
         ),
     ],
 )
-def test_mc_vs_pde_binomial_with_forward_curves(
+def test_american_method_equivalence_with_forward_curves(
     spot,
     strike,
     option_type,
@@ -467,7 +478,7 @@ def test_mc_vs_pde_binomial_with_forward_curves(
     q_times,
     q_forwards,
 ):
-    """MC, PDE FD, and binomial should agree under time-varying forward curves."""
+    """American MC, PDE FD, and binomial should agree under time-varying curves."""
     r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
     q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 

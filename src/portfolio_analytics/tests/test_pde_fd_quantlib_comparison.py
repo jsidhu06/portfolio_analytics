@@ -389,7 +389,7 @@ def test_american_fd_vs_quantlib_forward_curve_only(spot, strike, option_type):
         ql_price,
     )
 
-    assert np.isclose(pde, ql_price, rtol=0.02)
+    assert np.isclose(pde, ql_price, rtol=0.01)
 
 
 @pytest.mark.parametrize("spot,strike,option_type", [(60.0, 55.0, OptionType.CALL)])
@@ -428,7 +428,7 @@ def test_american_fd_vs_quantlib_dividend_curve_only(spot, strike, option_type):
         ql_price,
     )
 
-    assert np.isclose(pde, ql_price, rtol=0.02)
+    assert np.isclose(pde, ql_price, rtol=0.01)
 
 
 @pytest.mark.parametrize("spot,strike,option_type", [(52.0, 50.0, OptionType.PUT)])
@@ -467,4 +467,4 @@ def test_american_fd_vs_quantlib_forward_and_dividend_curves(spot, strike, optio
         ql_price,
     )
 
-    assert np.isclose(pde, ql_price, rtol=0.02)
+    assert np.isclose(pde, ql_price, rtol=0.01)
