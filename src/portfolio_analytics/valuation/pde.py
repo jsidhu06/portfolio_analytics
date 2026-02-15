@@ -584,7 +584,7 @@ def _american_vanilla_fd(
 class _FDEuropeanValuation:
     """European option valuation using PDE finite differences."""
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
@@ -653,7 +653,7 @@ class _FDEuropeanValuation:
 class _FDAmericanValuation:
     """American option valuation using PDE finite differences."""
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def solve(self) -> tuple[float, np.ndarray, np.ndarray]:

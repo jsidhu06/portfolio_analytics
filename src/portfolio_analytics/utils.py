@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from math import comb
 from typing import Callable, Protocol
+from collections.abc import Iterator
 import time
 import numpy as np
 
@@ -19,7 +20,7 @@ class ForwardCurve(Protocol):
 
 
 @contextmanager
-def log_timing(logger, label: str, enabled: bool):
+def log_timing(logger, label: str, enabled: bool) -> Iterator[None]:
     """Log timing for a code block when enabled is True."""
     if not enabled:
         yield

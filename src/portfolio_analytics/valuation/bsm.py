@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 class _BSMValuationBase:
     """Base class for Black-Scholes-Merton option valuation."""
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def _calculate_d_values(

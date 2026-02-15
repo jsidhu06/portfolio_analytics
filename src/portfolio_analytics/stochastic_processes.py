@@ -9,6 +9,7 @@ import pandas as pd
 from .market_environment import MarketData, CorrelationContext
 from .enums import DayCountConvention
 from .utils import calculate_year_fraction
+from .rates import DiscountCurve
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class SimulationConfig:
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: set[dt.datetime] = field(default_factory=set)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.paths is None or int(self.paths) <= 0:
             raise ValueError("SimulationConfig.paths must be a positive integer")
 
@@ -85,7 +86,7 @@ class GBMParams:
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None
     dividend_curve: object | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.initial_value is None:
             raise ValueError("GBMParams requires initial_value to be not None")
         if self.volatility is None:
@@ -117,7 +118,7 @@ class JDParams:
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None
     dividend_curve: object | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.initial_value is None:
             raise ValueError("JDParams requires initial_value to be not None")
         if self.volatility is None:
@@ -160,7 +161,7 @@ class SRDParams:
     kappa: float  # mean reversion speed
     theta: float  # long-run mean
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.initial_value is None:
             raise ValueError("SRDParams requires initial_value to be not None")
         if self.volatility is None:
@@ -218,7 +219,7 @@ class PathSimulation(ABC):
         process_params: GBMParams | JDParams | SRDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
-    ):
+    ) -> None:
         self._name = name
         self._market_data = market_data
         self._process_params = process_params
@@ -263,7 +264,7 @@ class PathSimulation(ABC):
         return self._process_params.volatility
 
     @property
-    def dividend_curve(self):
+    def dividend_curve(self) -> DiscountCurve | None:
         return getattr(self._process_params, "dividend_curve", None)
 
     @property
@@ -370,7 +371,7 @@ class PathSimulation(ABC):
         return self._market_data.currency
 
     @property
-    def discount_curve(self):
+    def discount_curve(self) -> DiscountCurve:
         return self._market_data.discount_curve
 
     def replace(self, **kwargs) -> "PathSimulation":
@@ -508,7 +509,7 @@ class PathSimulation(ABC):
     def generate_paths(
         self,
         random_seed: int | None = None,
-    ) -> None:
+    ) -> np.ndarray:
         """Generate paths for the stochastic process.
 
         Subclasses must implement this method to define their specific
@@ -532,7 +533,7 @@ class GeometricBrownianMotion(PathSimulation):
     the Black-Scholes-Merton geometric Brownian motion model.
     """
 
-    def generate_paths(self, random_seed: int | None = None) -> None:
+    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate geometric Brownian motion paths.
 
         Implements the classic Black-Scholes-Merton model:

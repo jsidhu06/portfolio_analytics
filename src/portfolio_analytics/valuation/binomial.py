@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class _BinomialValuationBase:
     """Base class for binomial tree option valuation."""
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def _setup_binomial_parameters(self, num_steps: int) -> tuple:

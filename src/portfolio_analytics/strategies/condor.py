@@ -44,7 +44,7 @@ class CondorSpec:
     side: PositionSide = PositionSide.LONG
     contract_size: int | float = 100
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.exercise_type, ExerciseType):
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"

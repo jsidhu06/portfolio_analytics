@@ -72,7 +72,7 @@ def _year_fractions(pricing_date, dates: np.ndarray) -> np.ndarray:
 class _MCEuropeanValuation:
     """Implementation of European option valuation using Monte Carlo."""
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def solve(self) -> np.ndarray:
@@ -129,7 +129,7 @@ class _MCEuropeanValuation:
 class _MCAmericanValuation:
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
@@ -228,7 +228,7 @@ class _MCAsianValuation:
     price of the underlying over the averaging period.
     """
 
-    def __init__(self, parent: "OptionValuation"):
+    def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
     def solve(self) -> np.ndarray:

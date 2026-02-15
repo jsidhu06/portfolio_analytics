@@ -1,6 +1,8 @@
 "Discount curve utilities"
 
 from dataclasses import dataclass
+from datetime import datetime
+from collections.abc import Sequence
 import numpy as np
 from .utils import get_year_deltas
 
@@ -72,7 +74,11 @@ class DiscountCurve:
         dt = np.diff(grid)
         return (np.log(df_grid[:-1]) - np.log(df_grid[1:])) / dt
 
-    def get_discount_factors(self, date_list, dtobjects: bool = True) -> np.ndarray:
+    def get_discount_factors(
+        self,
+        date_list: Sequence[datetime] | Sequence[float] | np.ndarray,
+        dtobjects: bool = True,
+    ) -> np.ndarray:
         """Get discount factors for given date list or year fractions.
 
         For dtobjects=True, this uses the earliest date as t=0.

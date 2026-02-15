@@ -33,7 +33,7 @@ class MonteCarloParams:
     log_timings: bool = False
     std_error_warn_ratio: float | None = 0.1
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.deg is not None and self.deg < 1:
             raise ValueError(f"deg must be >= 1, got {self.deg}")
         if self.std_error_warn_ratio is not None and self.std_error_warn_ratio <= 0:
@@ -81,7 +81,7 @@ class BinomialParams:
     control_variate_european: bool = False
     log_timings: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.num_steps < 1:
             raise ValueError(f"num_steps must be >= 1, got {self.num_steps}")
         if self.mc_paths is not None and self.asian_tree_averages is not None:
@@ -157,7 +157,7 @@ class PDEParams:
     control_variate_european: bool = False
     log_timings: bool = False
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if isinstance(self.method, str):
             object.__setattr__(self, "method", PDEMethod(self.method))
         if isinstance(self.space_grid, str):

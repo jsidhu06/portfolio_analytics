@@ -35,7 +35,7 @@ class OptionSpec:
     currency: str
     contract_size: int | float = 100
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate option_type/exercise_type and coerce strike."""
         if not isinstance(self.option_type, OptionType):
             raise TypeError(
@@ -85,7 +85,7 @@ class PayoffSpec:
     # Kept for compatibility with vanilla valuation interfaces
     strike: None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.exercise_type, ExerciseType):
             raise TypeError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
@@ -143,7 +143,7 @@ class AsianOptionSpec:
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate Asian option specification."""
         if not isinstance(self.averaging, AsianAveraging):
             raise TypeError(
@@ -189,7 +189,7 @@ class UnderlyingPricingData:
         market_data: MarketData,
         discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
         dividend_curve: DiscountCurve | None = None,
-    ):
+    ) -> None:
         self.initial_value = initial_value
         self.volatility = volatility
         self.market_data = market_data
@@ -306,7 +306,7 @@ class OptionValuation:
         spec: OptionSpec | PayoffSpec | AsianOptionSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
-    ):
+    ) -> None:
         self.name = name
         self.underlying = underlying
         self.spec = spec
@@ -488,7 +488,9 @@ class OptionValuation:
             pricing_method=self.pricing_method, params=self.params
         )
 
-    def solve(self):
+    def solve(
+        self,
+    ) -> float | np.ndarray | tuple[np.ndarray, np.ndarray] | tuple[float, np.ndarray, np.ndarray]:
         """Run the pricing method's core solver and return its raw output.
 
         This is intentionally method-specific:
