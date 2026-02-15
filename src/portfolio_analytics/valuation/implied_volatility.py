@@ -30,12 +30,19 @@ class ImpliedVolResult:
     converged: bool
 
 
-def _adjusted_spot_and_dividend_yield(valuation: OptionValuation) -> tuple[float, float]:
+def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, float]:
     spot = float(valuation.underlying.initial_value)
-    dividend_yield = float(valuation.underlying.dividend_yield)
+    dividend_curve = valuation.underlying.dividend_curve
     discrete_dividends = valuation.underlying.discrete_dividends
     if not discrete_dividends:
-        return spot, dividend_yield
+        if dividend_curve is None:
+            return spot, 1.0
+        time_to_maturity = calculate_year_fraction(
+            valuation.pricing_date,
+            valuation.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
+        )
+        return spot, float(dividend_curve.df(time_to_maturity))
     if valuation.discount_curve.flat_rate is None:
         raise NotImplementedError("Discrete dividend adjustments require a flat curve.")
 
@@ -45,7 +52,16 @@ def _adjusted_spot_and_dividend_yield(valuation: OptionValuation) -> tuple[float
         valuation.maturity,
         float(valuation.discount_curve.flat_rate),
     )
-    return max(spot - pv_divs, 0.0), dividend_yield
+    if dividend_curve is None:
+        df_q = 1.0
+    else:
+        time_to_maturity = calculate_year_fraction(
+            valuation.pricing_date,
+            valuation.maturity,
+            day_count_convention=DayCountConvention.ACT_365F,
+        )
+        df_q = float(dividend_curve.df(time_to_maturity))
+    return max(spot - pv_divs, 0.0), df_q
 
 
 def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
@@ -69,18 +85,15 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
             upper = strike
         return lower, upper
 
-    spot, dividend_yield = _adjusted_spot_and_dividend_yield(valuation)
-    risk_free_rate = float(valuation.discount_curve.flat_rate)
-
-    discount_factor = np.exp(-risk_free_rate * time_to_maturity)
-    forward_discount = np.exp(-dividend_yield * time_to_maturity)
+    spot, df_q = _adjusted_spot_and_dividend_df(valuation)
+    df_r = float(valuation.discount_curve.df(time_to_maturity))
 
     if valuation.option_type is OptionType.CALL:
-        lower = max(0.0, spot * forward_discount - strike * discount_factor)
-        upper = spot * forward_discount
+        lower = max(0.0, spot * df_q - strike * df_r)
+        upper = spot * df_q
     else:  # PUT
-        lower = max(0.0, strike * discount_factor - spot * forward_discount)
-        upper = strike * discount_factor
+        lower = max(0.0, strike * df_r - spot * df_q)
+        upper = strike * df_r
 
     return lower, upper
 
@@ -290,9 +303,15 @@ def implied_volatility(
             day_count_convention=DayCountConvention.ACT_365F,
         )
         dt = time_to_maturity / max(int(valuation.params.num_steps), 1)
-        drift = float(valuation.discount_curve.flat_rate) - float(
-            valuation.underlying.dividend_yield
-        )
+        df_r = float(valuation.discount_curve.df(time_to_maturity))
+        r = -np.log(df_r) / time_to_maturity
+        dividend_curve = valuation.underlying.dividend_curve
+        if dividend_curve is None:
+            q = 0.0
+        else:
+            df_q = float(dividend_curve.df(time_to_maturity))
+            q = -np.log(df_q) / time_to_maturity
+        drift = r - q
         sigma_min = abs(drift) * np.sqrt(max(dt, 1.0e-12))
         low = max(low, sigma_min * 1.01)
 

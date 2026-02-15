@@ -394,7 +394,7 @@ class TestOptionValuation:
             initial_value=90.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
 
         strikes = (50.0, 90.0, 110.0, 150.0)
@@ -503,7 +503,7 @@ class TestOptionValuation:
             initial_value=initial_value,
             volatility=volatility,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         simulation_config = SimulationConfig(
             paths=200_000,
@@ -594,7 +594,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         pv_binom_am = OptionValuation(
             name="CUSTOM_AM_BINOM",
@@ -642,7 +642,7 @@ class TestOptionValuation:
             initial_value=90.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
 
         strikes = (50.0, 90.0, 110.0, 150.0)
@@ -778,15 +778,13 @@ class TestOptionValuation:
             )
 
     def test_underlying_pricing_data_rejects_mixed_dividends(self):
-        """Continuous dividend_yield and discrete_dividends should be mutually exclusive."""
-        with pytest.raises(
-            ValueError, match="either a continuous dividend_yield or discrete_dividends"
-        ):
+        """Continuous dividend_curve and discrete_dividends should be mutually exclusive."""
+        with pytest.raises(ValueError, match="either dividend_curve or discrete_dividends"):
             UnderlyingPricingData(
                 initial_value=100.0,
                 volatility=0.2,
                 market_data=self.market_data,
-                dividend_yield=0.02,
+                dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.02, name="q"),
                 discrete_dividends=[(self.pricing_date + dt.timedelta(days=90), 1.0)],
             )
 
@@ -887,7 +885,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec = OptionSpec(
             option_type=OptionType.PUT,
@@ -905,7 +903,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec = OptionSpec(
             option_type=OptionType.PUT,
@@ -937,7 +935,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.03,
+            dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.03, name="q"),
         )
         spec = OptionSpec(
             option_type=OptionType.CALL,
@@ -974,7 +972,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec_am = OptionSpec(
             option_type=OptionType.CALL,
@@ -1006,7 +1004,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec_am = OptionSpec(
             option_type=OptionType.CALL,
@@ -1057,7 +1055,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
             discrete_dividends=discrete_divs,
         )
 
@@ -1099,7 +1097,12 @@ class TestBSMValuation:
 
         self.ud = UnderlyingPricingData(**underlying_params)
 
-        self.ud_div = UnderlyingPricingData(**{**underlying_params, "dividend_yield": 0.03})
+        self.ud_div = UnderlyingPricingData(
+            **{
+                **underlying_params,
+                "dividend_curve": flat_curve(self.pricing_date, self.maturity, 0.03, name="q"),
+            }
+        )
 
     def test_bsm_call_option_atm(self):
         """Test BSM pricing for ATM call option (basic sanity check)."""
@@ -1139,7 +1142,7 @@ class TestBSMValuation:
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
             discrete_dividends=[],
         )
 
@@ -1147,7 +1150,7 @@ class TestBSMValuation:
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
             discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
         )
 
@@ -1235,8 +1238,8 @@ class TestBSMValuation:
         # Put value for OTM should be less than the case when ITM
         assert pv < 5.0
 
-    def test_bsm_with_dividend_yield(self):
-        """Test BSM pricing with dividend yield."""
+    def test_bsm_with_dividend_curve(self):
+        """Test BSM pricing with dividend curve."""
         call_spec = OptionSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
@@ -1444,7 +1447,7 @@ class TestBinomialValuation:
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
             discrete_dividends=[],
         )
 
@@ -1452,7 +1455,7 @@ class TestBinomialValuation:
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
             discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
         )
 

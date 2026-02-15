@@ -82,7 +82,6 @@ class SimulationConfig:
 class GBMParams:
     initial_value: float
     volatility: float
-    dividend_yield: float = 0.0
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None
     dividend_curve: object | None = None
 
@@ -102,17 +101,9 @@ class GBMParams:
             "discrete_dividends",
             tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
         )
-        if self.dividend_curve is not None and self.dividend_yield != 0.0:
-            raise ValueError(
-                "Provide either dividend_curve or dividend_yield in GBMParams, not both"
-            )
         if self.dividend_curve is not None and self.discrete_dividends:
             raise ValueError(
                 "Provide either dividend_curve or discrete_dividends in GBMParams, not both"
-            )
-        if self.dividend_yield != 0.0 and self.discrete_dividends:
-            raise ValueError(
-                "Provide either dividend_yield or discrete_dividends in GBMParams, not both"
             )
 
 
@@ -123,7 +114,6 @@ class JDParams:
     lambd: float  # lambda (per year)
     mu: float  # mu_J (mean of log jump size)
     delta: float  # delta_J (std of log jump size)
-    dividend_yield: float = 0.0
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None
     dividend_curve: object | None = None
 
@@ -157,17 +147,9 @@ class JDParams:
             "discrete_dividends",
             tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
         )
-        if self.dividend_curve is not None and self.dividend_yield != 0.0:
-            raise ValueError(
-                "Provide either dividend_curve or dividend_yield in JDParams, not both"
-            )
         if self.dividend_curve is not None and self.discrete_dividends:
             raise ValueError(
                 "Provide either dividend_curve or discrete_dividends in JDParams, not both"
-            )
-        if self.dividend_yield != 0.0 and self.discrete_dividends:
-            raise ValueError(
-                "Provide either dividend_yield or discrete_dividends in JDParams, not both"
             )
 
 
@@ -279,10 +261,6 @@ class PathSimulation(ABC):
     @property
     def volatility(self) -> float:
         return self._process_params.volatility
-
-    @property
-    def dividend_yield(self) -> float:
-        return getattr(self._process_params, "dividend_yield", 0.0)
 
     @property
     def dividend_curve(self):
@@ -406,7 +384,6 @@ class PathSimulation(ABC):
             "market_data",
             "initial_value",
             "volatility",
-            "dividend_yield",
             "dividend_curve",
             "discrete_dividends",
             "paths",
@@ -441,22 +418,10 @@ class PathSimulation(ABC):
             cloned._name = kwargs["name"]
 
         # Build updated process_params if any of its fields changed
-        process_param_keys = {
-            "initial_value",
-            "volatility",
-            "dividend_yield",
-            "dividend_curve",
-            "discrete_dividends",
-        }
+        process_param_keys = {"initial_value", "volatility", "dividend_curve", "discrete_dividends"}
         if process_param_keys.intersection(kwargs):
             param_updates = {}
-            for key in (
-                "initial_value",
-                "volatility",
-                "dividend_yield",
-                "dividend_curve",
-                "discrete_dividends",
-            ):
+            for key in ("initial_value", "volatility", "dividend_curve", "discrete_dividends"):
                 if key in kwargs:
                     if not hasattr(cloned._process_params, key):
                         raise ValueError(
@@ -615,7 +580,7 @@ class GeometricBrownianMotion(PathSimulation):
                 dtype=float,
             )
         else:
-            q_steps = np.full_like(r_steps, float(self.dividend_yield))
+            q_steps = np.zeros_like(r_steps)
 
         # If no discrete dividends, use fully vectorized implementation (faster)
         if not self.discrete_dividends:
@@ -723,7 +688,7 @@ class JumpDiffusion(PathSimulation):
                 dtype=float,
             )
         else:
-            q_steps = np.full_like(r_steps, float(self.dividend_yield))
+            q_steps = np.zeros_like(r_steps)
         lam = float(self.lambd)
         mu_j = float(self.mu)
         sig_j = float(self.delta)

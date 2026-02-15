@@ -16,14 +16,19 @@ MATURITY = dt.datetime(2026, 1, 1)
 CURRENCY = "USD"
 
 
-def _build_underlying(spot: float, vol: float, rate: float, dividend_yield: float = 0.0):
+def _build_underlying(spot: float, vol: float, rate: float, dividend_rate: float = 0.0):
     curve = flat_curve(PRICING_DATE, MATURITY, rate, name="csr")
+    dividend_curve = (
+        None
+        if dividend_rate == 0.0
+        else flat_curve(PRICING_DATE, MATURITY, dividend_rate, name="q")
+    )
     market_data = MarketData(PRICING_DATE, curve, currency=CURRENCY)
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
     )
 
 

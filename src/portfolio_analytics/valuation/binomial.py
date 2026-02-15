@@ -55,7 +55,7 @@ class _BinomialValuationBase:
         if dividend_curve is not None:
             dividend_forwards = dividend_curve.step_forward_rates(time_grid)
         else:
-            dividend_forwards = np.full(num_steps, float(self.parent.underlying.dividend_yield))
+            dividend_forwards = np.zeros(num_steps, dtype=float)
 
         growth = np.exp((forward_rates - dividend_forwards) * delta_t)
         if np.any(growth <= d) or np.any(growth >= u):

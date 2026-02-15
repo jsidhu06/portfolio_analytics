@@ -201,11 +201,11 @@ def _spot_operator_coeffs(
     spot_values: np.ndarray,
     dS: float,
     risk_free_rate: float,
-    dividend_yield: float,
+    dividend_rate: float,
     volatility: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     diffusion = (volatility**2) * (spot_values**2) / (dS**2)
-    drift = (risk_free_rate - dividend_yield) * spot_values / dS
+    drift = (risk_free_rate - dividend_rate) * spot_values / dS
     gamma = 0.5 * (diffusion - drift)
     beta = -(diffusion + risk_free_rate)
     alpha = 0.5 * (diffusion + drift)
@@ -216,10 +216,10 @@ def _log_operator_coeffs(
     *,
     dz: float,
     risk_free_rate: float,
-    dividend_yield: float,
+    dividend_rate: float,
     volatility: float,
 ) -> tuple[float, float, float]:
-    mu = risk_free_rate - dividend_yield - 0.5 * volatility**2
+    mu = risk_free_rate - dividend_rate - 0.5 * volatility**2
     diffusion = (volatility**2) / (dz**2)
     drift = mu / dz
     gamma = 0.5 * (diffusion - drift)
@@ -255,7 +255,6 @@ def _vanilla_fd_core(
     volatility: float,
     discount_curve: ForwardCurve,
     dividend_curve: ForwardCurve | None,
-    dividend_yield: float,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
@@ -332,7 +331,7 @@ def _vanilla_fd_core(
                 dtype=float,
             )
         else:
-            q_steps = np.full_like(r_steps, float(dividend_yield))
+            q_steps = np.zeros_like(r_steps)
 
         drift = float(np.max(np.abs(r_steps - q_steps)))
         if drift > volatility**2:
@@ -374,21 +373,21 @@ def _vanilla_fd_core(
         if dividend_curve is not None:
             q = float(dividend_curve.forward_rate(t_curr, t_prev))
         else:
-            q = float(dividend_yield)
+            q = 0.0
 
         if space_grid is PDESpaceGrid.SPOT:
             gamma, beta, alpha = _spot_operator_coeffs(
                 spot_values=S[1:-1],
                 dS=dS,
                 risk_free_rate=r,
-                dividend_yield=q,
+                dividend_rate=q,
                 volatility=volatility,
             )
         else:
             gamma, beta, alpha = _log_operator_coeffs(
                 dz=dz,
                 risk_free_rate=r,
-                dividend_yield=q,
+                dividend_rate=q,
                 volatility=volatility,
             )
 
@@ -487,7 +486,6 @@ def _european_vanilla_fd(
     volatility: float,
     discount_curve: ForwardCurve,
     dividend_curve: ForwardCurve | None,
-    dividend_yield: float,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
@@ -503,7 +501,6 @@ def _european_vanilla_fd(
         volatility=volatility,
         discount_curve=discount_curve,
         dividend_curve=dividend_curve,
-        dividend_yield=dividend_yield,
         dividend_schedule=dividend_schedule,
         option_type=option_type,
         smax_mult=smax_mult,
@@ -524,7 +521,6 @@ def _american_vanilla_fd(
     volatility: float,
     discount_curve: ForwardCurve,
     dividend_curve: ForwardCurve | None,
-    dividend_yield: float,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
@@ -544,7 +540,6 @@ def _american_vanilla_fd(
         volatility=volatility,
         discount_curve=discount_curve,
         dividend_curve=dividend_curve,
-        dividend_yield=dividend_yield,
         dividend_schedule=dividend_schedule,
         option_type=option_type,
         smax_mult=smax_mult,
@@ -583,7 +578,6 @@ class _FDEuropeanValuation:
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve
         dividend_curve = self.parent.underlying.dividend_curve
-        dividend_yield = float(self.parent.underlying.dividend_yield)
         discrete_dividends = self.parent.underlying.discrete_dividends
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
@@ -605,7 +599,6 @@ class _FDEuropeanValuation:
             volatility=volatility,
             discount_curve=discount_curve,
             dividend_curve=dividend_curve,
-            dividend_yield=dividend_yield,
             dividend_schedule=dividend_schedule,
             option_type=self.parent.option_type,
             smax_mult=smax_mult,
@@ -643,7 +636,6 @@ class _FDAmericanValuation:
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve
         dividend_curve = self.parent.underlying.dividend_curve
-        dividend_yield = float(self.parent.underlying.dividend_yield)
         discrete_dividends = self.parent.underlying.discrete_dividends
 
         time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
@@ -668,7 +660,6 @@ class _FDAmericanValuation:
             volatility=volatility,
             discount_curve=discount_curve,
             dividend_curve=dividend_curve,
-            dividend_yield=dividend_yield,
             dividend_schedule=dividend_schedule,
             option_type=self.parent.option_type,
             smax_mult=smax_mult,

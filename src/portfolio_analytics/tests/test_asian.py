@@ -14,6 +14,7 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
@@ -47,7 +48,7 @@ def _gbm_underlying(
     spot: float,
     vol: float,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
     maturity: dt.datetime,
     paths: int,
@@ -62,7 +63,7 @@ def _gbm_underlying(
     gbm_params = GBMParams(
         initial_value=spot,
         volatility=vol,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
     return GeometricBrownianMotion(
@@ -78,7 +79,7 @@ def _binomial_underlying(
     spot: float,
     vol: float,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
     maturity: dt.datetime,
 ) -> UnderlyingPricingData:
@@ -86,7 +87,7 @@ def _binomial_underlying(
         initial_value=spot,
         volatility=vol,
         market_data=_market_data(short_rate, maturity),
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
 
@@ -126,12 +127,17 @@ def test_asian_binomial_hull_close_to_mc(
 ):
     maturity = PRICING_DATE + dt.timedelta(days=days)
     spec = _asian_spec(strike=strike, maturity=maturity, call_put=call_put)
+    q_curve = (
+        None
+        if dividend_yield == 0.0
+        else flat_curve(PRICING_DATE, maturity, dividend_yield, name="q")
+    )
 
     mc_underlying = _gbm_underlying(
         spot=spot,
         vol=vol,
         short_rate=short_rate,
-        dividend_yield=dividend_yield,
+        dividend_curve=q_curve,
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
@@ -148,7 +154,7 @@ def test_asian_binomial_hull_close_to_mc(
         spot=spot,
         vol=vol,
         short_rate=short_rate,
-        dividend_yield=dividend_yield,
+        dividend_curve=q_curve,
         maturity=maturity,
     )
 
@@ -322,7 +328,7 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
         spot=spot,
         vol=vol,
         short_rate=short_rate,
-        dividend_yield=0.0,
+        dividend_curve=None,
         maturity=maturity,
     )
 

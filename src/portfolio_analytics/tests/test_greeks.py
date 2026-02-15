@@ -13,6 +13,7 @@ from portfolio_analytics.enums import (
     DayCountConvention,
 )
 from portfolio_analytics.market_environment import MarketData
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
@@ -66,7 +67,7 @@ class TestGreeksSetup:
         *,
         spot: float | None = None,
         vol: float | None = None,
-        dividend_yield: float = 0.0,
+        dividend_curve: DiscountCurve | None = None,
         pricing_date: dt.datetime | None = None,
     ) -> UnderlyingPricingData:
         md = (
@@ -78,8 +79,18 @@ class TestGreeksSetup:
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
             market_data=md,
-            dividend_yield=dividend_yield,
+            dividend_curve=dividend_curve,
         )
+
+    def _make_q_curve(
+        self,
+        dividend_rate: float,
+        pricing_date: dt.datetime | None = None,
+    ) -> DiscountCurve | None:
+        if dividend_rate == 0.0:
+            return None
+        base_date = self.pricing_date if pricing_date is None else pricing_date
+        return flat_curve(base_date, self.maturity, dividend_rate, name="q")
 
     def _make_spec(
         self,
@@ -113,12 +124,12 @@ class TestGreeksSetup:
         *,
         spot: float | None = None,
         vol: float | None = None,
-        dividend_yield: float = 0.0,
+        dividend_curve: DiscountCurve | None = None,
     ) -> GeometricBrownianMotion:
         params = GBMParams(
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
-            dividend_yield=dividend_yield,
+            dividend_curve=dividend_curve,
         )
         return GeometricBrownianMotion("gbm", self.market_data, params, self.sim_config)
 
@@ -346,7 +357,7 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
         delta_bsm = bsm_val.delta()
 
-        gbm = self._make_gbm(dividend_yield=0.0)
+        gbm = self._make_gbm(dividend_curve=None)
         mcs_val = self._make_val(
             "call_mcs",
             gbm,
@@ -393,34 +404,46 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         assert np.isclose(vega_bsm, vega_binomial, atol=0.1)
 
 
-class TestGreeksDividendYieldEffect(TestGreeksSetup):
-    """Test the effect of dividend yield on greeks."""
+class TestGreeksDividendCurveEffect(TestGreeksSetup):
+    """Test the effect of dividend curves on greeks."""
 
-    def test_call_delta_lower_with_dividend_yield(self):
+    def test_call_delta_lower_with_dividend_curve(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
         val_no_div = self._make_val(
-            "call_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM
+            "call_no_div",
+            self._make_ud(dividend_curve=None),
+            spec,
+            PricingMethod.BSM,
         )
         delta_no_div = val_no_div.delta()
 
         val_with_div = self._make_val(
-            "call_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM
+            "call_with_div",
+            self._make_ud(dividend_curve=self._make_q_curve(0.03)),
+            spec,
+            PricingMethod.BSM,
         )
         delta_with_div = val_with_div.delta()
 
         assert delta_with_div < delta_no_div
 
-    def test_put_delta_more_negative_with_dividend_yield(self):
+    def test_put_delta_more_negative_with_dividend_curve(self):
         spec = self._make_spec(option_type=OptionType.PUT)
 
         val_no_div = self._make_val(
-            "put_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM
+            "put_no_div",
+            self._make_ud(dividend_curve=None),
+            spec,
+            PricingMethod.BSM,
         )
         delta_no_div = val_no_div.delta()
 
         val_with_div = self._make_val(
-            "put_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM
+            "put_with_div",
+            self._make_ud(dividend_curve=self._make_q_curve(0.03)),
+            spec,
+            PricingMethod.BSM,
         )
         delta_with_div = val_with_div.delta()
 

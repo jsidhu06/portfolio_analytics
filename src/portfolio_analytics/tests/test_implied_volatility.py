@@ -36,17 +36,22 @@ def _build_valuation(
     strike: float = 100.0,
     vol: float = 0.2,
     rate: float = 0.05,
-    dividend_yield: float = 0.0,
+    dividend_rate: float = 0.0,
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     curve = flat_curve(pricing_date, maturity, rate, name="csr")
+    dividend_curve = (
+        None
+        if dividend_rate == 0.0
+        else flat_curve(pricing_date, maturity, dividend_rate, name="q")
+    )
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
     )
     spec = OptionSpec(
         option_type=option_type,
@@ -108,18 +113,23 @@ def _build_binomial_valuation(
     strike: float = 100.0,
     vol: float = 0.2,
     rate: float = 0.05,
-    dividend_yield: float = 0.0,
+    dividend_rate: float = 0.0,
     num_steps: int = 400,
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     curve = flat_curve(pricing_date, maturity, rate, name="csr")
+    dividend_curve = (
+        None
+        if dividend_rate == 0.0
+        else flat_curve(pricing_date, maturity, dividend_rate, name="q")
+    )
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
     )
     spec = OptionSpec(
         option_type=option_type,
@@ -187,7 +197,6 @@ def test_implied_volatility_rejects_monte_carlo():
     gbm_params = GBMParams(
         initial_value=100.0,
         volatility=0.2,
-        dividend_yield=0.0,
     )
     underlying = GeometricBrownianMotion("gbm", market_data, gbm_params, sim_config)
     spec = OptionSpec(
@@ -218,16 +227,16 @@ def test_implied_volatility_rejects_american_bsm():
         implied_volatility(target_price, valuation)
 
 
-def test_implied_volatility_with_dividend_yield():
+def test_implied_volatility_with_dividend_curve():
     true_vol = 0.3
     initial_vol = 0.1
     pricing_valuation = _build_valuation(
-        option_type=OptionType.CALL, vol=true_vol, dividend_yield=0.02
+        option_type=OptionType.CALL, vol=true_vol, dividend_rate=0.02
     )
     target_price = pricing_valuation.present_value()
 
     solver_valuation = _build_valuation(
-        option_type=OptionType.CALL, vol=initial_vol, dividend_yield=0.02
+        option_type=OptionType.CALL, vol=initial_vol, dividend_rate=0.02
     )
     result = implied_volatility(target_price, solver_valuation)
 
@@ -254,13 +263,13 @@ def test_implied_volatility_with_discrete_dividends():
 def test_implied_volatility_recovers_american_binomial(option_type: OptionType):
     true_vol = 0.3
     initial_vol = 0.12
-    dividend_yield = 0.02 if option_type is OptionType.CALL else 0.0
+    dividend_rate = 0.02 if option_type is OptionType.CALL else 0.0
 
     pricing_valuation = _build_binomial_valuation(
         option_type=option_type,
         exercise_type=ExerciseType.AMERICAN,
         vol=true_vol,
-        dividend_yield=dividend_yield,
+        dividend_rate=dividend_rate,
     )
     target_price = pricing_valuation.present_value()
 
@@ -268,7 +277,7 @@ def test_implied_volatility_recovers_american_binomial(option_type: OptionType):
         option_type=option_type,
         exercise_type=ExerciseType.AMERICAN,
         vol=initial_vol,
-        dividend_yield=dividend_yield,
+        dividend_rate=dividend_rate,
     )
     result = implied_volatility(
         target_price,

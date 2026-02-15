@@ -2,12 +2,18 @@
 
 from datetime import datetime
 from math import comb
-from typing import Callable
+from typing import Callable, Protocol
 import numpy as np
 
 from .enums import DayCountConvention, OptionType
 
 SECONDS_IN_DAY = 86400
+
+
+class ForwardCurve(Protocol):
+    """Minimal interface for a curve supplying discount factors."""
+
+    def df(self, t: float | np.ndarray) -> np.ndarray: ...
 
 
 def _day_count_30_360_us(start_date: datetime, end_date: datetime) -> float:
@@ -126,17 +132,17 @@ def forward_price(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: ForwardCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Compute the no-arbitrage forward price for an equity-style underlying.
 
-    Supports either continuous dividend yield or discrete dividends (not both).
+    Supports either continuous dividend curve or discrete dividends (not both).
     """
-    if dividend_yield != 0.0 and discrete_dividends:
+    if dividend_curve is not None and discrete_dividends:
         raise ValueError(
-            "Provide either a continuous dividend_yield or discrete_dividends, not both."
+            "Provide either a continuous dividend_curve or discrete_dividends, not both."
         )
 
     t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
@@ -145,7 +151,6 @@ def forward_price(
 
     spot = float(spot)
     short_rate = float(short_rate)
-    dividend_yield = float(dividend_yield)
 
     if discrete_dividends:
         pv_divs = pv_discrete_dividends(
@@ -154,7 +159,8 @@ def forward_price(
         prepaid_forward = spot - pv_divs
         return float(prepaid_forward * np.exp(short_rate * t))
 
-    return float(spot * np.exp((short_rate - dividend_yield) * t))
+    df_q = 1.0 if dividend_curve is None else float(dividend_curve.df(t))
+    return float(spot * np.exp(short_rate * t) * df_q)
 
 
 def put_call_parity_rhs(
@@ -164,7 +170,7 @@ def put_call_parity_rhs(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: ForwardCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -181,7 +187,7 @@ def put_call_parity_rhs(
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=short_rate,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,
     )
@@ -197,7 +203,7 @@ def put_call_parity_gap(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: ForwardCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -208,7 +214,7 @@ def put_call_parity_gap(
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=short_rate,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,
     )

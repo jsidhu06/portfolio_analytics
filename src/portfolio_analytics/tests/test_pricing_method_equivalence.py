@@ -71,14 +71,14 @@ def _build_curve_from_forwards(
 def _underlying(
     *,
     spot: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingPricingData:
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
 
@@ -86,7 +86,7 @@ def _underlying(
 def _gbm(
     *,
     spot: float,
-    dividend_yield: float = 0.0,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
     paths: int = 200_000,
 ) -> GeometricBrownianMotion:
@@ -99,7 +99,7 @@ def _gbm(
     gbm_params = GBMParams(
         initial_value=spot,
         volatility=VOL,
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
     return GeometricBrownianMotion("gbm", _market_data(), gbm_params, sim_config)
@@ -121,7 +121,6 @@ def _gbm_curves(
     gbm_params = GBMParams(
         initial_value=spot,
         volatility=VOL,
-        dividend_yield=0.0,
         dividend_curve=q_curve,
         discrete_dividends=None,
     )
@@ -150,7 +149,6 @@ def _underlying_curves(
         initial_value=spot,
         volatility=VOL,
         market_data=md,
-        dividend_yield=0.0,
         dividend_curve=q_curve,
         discrete_dividends=None,
     )
@@ -165,8 +163,9 @@ def _underlying_curves(
 )
 @pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
 def test_pde_fd_european_close_to_bsm(spot, strike, option_type, dividend_yield):
-    """PDE FD European should match BSM for no/continuous dividends."""
-    ud = _underlying(spot=spot, dividend_yield=dividend_yield)
+    """PDE FD European should match BSM for continuous dividend curves."""
+    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
+    ud = _underlying(spot=spot, dividend_curve=q_curve)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
     pde_pv = OptionValuation(
@@ -186,9 +185,10 @@ def test_pde_fd_european_close_to_bsm(spot, strike, option_type, dividend_yield)
 )
 @pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
 def test_pde_fd_american_close_to_mc(spot, strike, option_type, dividend_yield):
-    """PDE FD American should match MC (LSM) for no/continuous dividends."""
-    ud = _underlying(spot=spot, dividend_yield=dividend_yield)
-    gbm = _gbm(spot=spot, dividend_yield=dividend_yield)
+    """PDE FD American should match MC (LSM) for continuous dividend curves."""
+    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
+    ud = _underlying(spot=spot, dividend_curve=q_curve)
+    gbm = _gbm(spot=spot, dividend_curve=q_curve)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
     pde_pv = OptionValuation(
@@ -289,7 +289,8 @@ def test_pde_fd_grid_method_equivalence_european():
     """PDE FD variants should be in the same neighborhood for European options."""
     spot = 100.0
     strike = 100.0
-    ud = _underlying(spot=spot, dividend_yield=0.01)
+    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.01)
+    ud = _underlying(spot=spot, dividend_curve=q_curve)
     spec = _spec(strike=strike, option_type=OptionType.CALL, exercise_type=ExerciseType.EUROPEAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
@@ -324,7 +325,8 @@ def test_pde_fd_grid_method_equivalence_american():
     """PDE FD American variants should be in the same neighborhood."""
     spot = 95.0
     strike = 100.0
-    ud = _underlying(spot=spot, dividend_yield=0.0)
+    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.0)
+    ud = _underlying(spot=spot, dividend_curve=q_curve)
     spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)

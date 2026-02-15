@@ -178,7 +178,7 @@ class UnderlyingPricingData:
     Used when pricing with methods that don't require full stochastic process simulation
     (e.g., BSM, binomial trees, FD approximation to PDE).
     Contains only essential parameters: spot price, volatility, pricing date, discount curve,
-    continuous dividend yield (optional, default 0.0) or dividend_curve,
+    continuous dividend yield via dividend_curve,
     and optional discrete dividends as (ex_date, amount) pairs.
     """
 
@@ -187,14 +187,12 @@ class UnderlyingPricingData:
         initial_value: float,
         volatility: float,
         market_data: MarketData,
-        dividend_yield: float = 0.0,
         discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
         dividend_curve: DiscountCurve | None = None,
     ):
         self.initial_value = initial_value
         self.volatility = volatility
         self.market_data = market_data
-        self.dividend_yield = dividend_yield
         self.dividend_curve = dividend_curve
         if discrete_dividends is None:
             self.discrete_dividends = []
@@ -210,16 +208,8 @@ class UnderlyingPricingData:
                 cleaned.append((ex_date, amt))
             self.discrete_dividends = sorted(cleaned, key=lambda x: x[0])
 
-        if self.dividend_curve is not None and self.dividend_yield != 0.0:
-            raise ValueError("Provide either dividend_curve or dividend_yield, not both.")
-
         if self.dividend_curve is not None and self.discrete_dividends:
             raise ValueError("Provide either dividend_curve or discrete_dividends, not both.")
-
-        if self.dividend_yield != 0.0 and self.discrete_dividends:
-            raise ValueError(
-                "Provide either a continuous dividend_yield or discrete_dividends, not both."
-            )
 
     @property
     def pricing_date(self) -> dt.datetime:
@@ -242,8 +232,8 @@ class UnderlyingPricingData:
         Parameters
         ----------
         **kwargs
-            Fields to override (initial_value, volatility, dividend_yield,
-            dividend_curve, discrete_dividends, market_data)
+            Fields to override (initial_value, volatility, dividend_curve,
+            discrete_dividends, market_data)
 
         Returns
         -------
@@ -257,7 +247,6 @@ class UnderlyingPricingData:
             initial_value=kwargs.get("initial_value", self.initial_value),
             volatility=kwargs.get("volatility", self.volatility),
             market_data=kwargs.get("market_data", self.market_data),
-            dividend_yield=kwargs.get("dividend_yield", self.dividend_yield),
             discrete_dividends=kwargs.get("discrete_dividends", self.discrete_dividends),
             dividend_curve=kwargs.get("dividend_curve", self.dividend_curve),
         )

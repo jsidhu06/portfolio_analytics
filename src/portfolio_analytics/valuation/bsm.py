@@ -64,8 +64,7 @@ class _BSMValuationBase:
         if dividend_curve is not None:
             df_q = float(dividend_curve.df(time_to_maturity))
         else:
-            dividend_yield = float(self.parent.underlying.dividend_yield)
-            df_q = float(np.exp(-dividend_yield * time_to_maturity))
+            df_q = 1.0
         return df_r, df_q
 
     @staticmethod

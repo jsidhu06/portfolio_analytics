@@ -216,14 +216,14 @@ def _pde_fd_american(
     spot: float,
     strike: float,
     option_type: OptionType,
-    dividend_yield: float,
+    dividend_curve: DiscountCurve | None,
     discrete_dividends: list[tuple[dt.datetime, float]] | None,
 ) -> float:
     ud = UnderlyingPricingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),
-        dividend_yield=dividend_yield,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type)
@@ -243,7 +243,6 @@ def _pde_fd_american_curves(
         initial_value=spot,
         volatility=VOL,
         market_data=md,
-        dividend_yield=0.0,
         dividend_curve=q_curve,
         discrete_dividends=None,
     )
@@ -263,7 +262,7 @@ def test_american_fd_vs_quantlib_no_div(spot, strike, option_type):
         spot=spot,
         strike=strike,
         option_type=option_type,
-        dividend_yield=0.0,
+        dividend_curve=None,
         discrete_dividends=None,
     )
     ql_price = _quantlib_american(
@@ -294,11 +293,12 @@ def test_american_fd_vs_quantlib_no_div(spot, strike, option_type):
     ],
 )
 def test_american_fd_vs_quantlib_continuous_div(spot, strike, option_type):
+    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.03)
     pde = _pde_fd_american(
         spot=spot,
         strike=strike,
         option_type=option_type,
-        dividend_yield=0.03,
+        dividend_curve=q_curve,
         discrete_dividends=None,
     )
     ql_price = _quantlib_american(
@@ -333,7 +333,7 @@ def test_american_fd_vs_quantlib_discrete_div():
         spot=spot,
         strike=strike,
         option_type=OptionType.PUT,
-        dividend_yield=0.0,
+        dividend_curve=None,
         discrete_dividends=divs,
     )
     ql_price = _quantlib_american(
