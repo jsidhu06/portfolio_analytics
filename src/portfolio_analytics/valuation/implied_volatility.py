@@ -270,6 +270,11 @@ def implied_volatility(
     max_iter:
         Maximum iterations for iterative solvers.
 
+    Notes
+    =====
+    Vega is expected in per-1% volatility terms. The solver rescales vega to a
+    per-1.0 volatility derivative when computing Newton updates.
+
     Returns
     =======
     ImpliedVolResult

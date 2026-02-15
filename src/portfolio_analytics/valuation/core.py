@@ -759,6 +759,11 @@ class OptionValuation:
         =======
         float
             option vega
+
+        Notes
+        =====
+        Vega is returned per 1% point change in volatility. The implied-vol solver
+        scales this back to per-1.0 volatility when computing Newton steps.
         """
         use_analytical = self._resolve_greek_method(
             greek_calc_method,
@@ -813,6 +818,12 @@ class OptionValuation:
         =======
         float
             option theta (change in option value per day)
+
+        Notes
+        =====
+        Numerical theta bumps the pricing date forward by calendar days. This is
+        consistent with the BSM analytical theta using a 365-day scaling, but it
+        can differ from trading-day conventions.
 
         Raises
         ======
