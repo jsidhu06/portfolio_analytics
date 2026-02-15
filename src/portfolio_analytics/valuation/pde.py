@@ -14,16 +14,20 @@ PDE via finite differences for vanilla European and American call/put:
 
 from typing import TYPE_CHECKING, Protocol
 
+import logging
 import math
 
 import numpy as np
 
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
-from ..utils import calculate_year_fraction
+from ..utils import calculate_year_fraction, log_timing
 from .params import PDEParams
 
 if TYPE_CHECKING:
     from .core import OptionValuation
+
+
+logger = logging.getLogger(__name__)
 
 
 class ForwardCurve(Protocol):
@@ -362,6 +366,11 @@ def _vanilla_fd_core(
     else:
         dq_0T = None
 
+    psor_steps = 0
+    psor_total_iters = 0
+    psor_max_iters = 0
+    psor_not_converged = 0
+
     for n in range(1, tau_grid.size):
         dt = tau_grid[n] - tau_grid[n - 1]
         tau = float(tau_grid[n])
@@ -452,7 +461,8 @@ def _vanilla_fd_core(
                     V[j] = np.maximum(x, exercise_j)
                 else:
                     x = np.maximum(x, exercise_j)
-                    for _ in range(int(max_iter)):
+                    iter_used = int(max_iter)
+                    for iter_idx in range(int(max_iter)):
                         x_prev = x.copy()
                         for k in range(x.size):
                             left_val = x[k - 1] if k > 0 else V[0]
@@ -463,8 +473,14 @@ def _vanilla_fd_core(
                             sor = x[k] + float(omega) * (gs - x[k])
                             x[k] = max(sor, exercise_j[k])
                         if np.max(np.abs(x - x_prev)) < float(tol):
+                            iter_used = iter_idx + 1
                             break
                     V[j] = x
+                    psor_steps += 1
+                    psor_total_iters += iter_used
+                    psor_max_iters = max(psor_max_iters, iter_used)
+                    if iter_used == int(max_iter):
+                        psor_not_converged += 1
 
         # Apply discrete dividend jump at tau if needed
         if dividend_map:
@@ -473,6 +489,16 @@ def _vanilla_fd_core(
                 _apply_dividend_jump(V, grid, amount, space_grid=space_grid)
                 if early_exercise:
                     V[:] = np.maximum(V, intrinsic)
+
+    if psor_steps > 0:
+        avg_iters = psor_total_iters / psor_steps
+        logger.debug(
+            "PDE PSOR steps=%d avg_iters=%.2f max_iters=%d not_converged=%d",
+            psor_steps,
+            avg_iters,
+            psor_max_iters,
+            psor_not_converged,
+        )
 
     price = np.interp(spot, S, V)
     return price, S, V
@@ -570,6 +596,13 @@ class _FDEuropeanValuation:
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+        logger.debug(
+            "PDE European method=%s grid=%s spot_steps=%d time_steps=%d",
+            params.method.value,
+            params.space_grid.value,
+            params.spot_steps,
+            params.time_steps,
+        )
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
@@ -609,7 +642,11 @@ class _FDEuropeanValuation:
         )
 
     def present_value(self) -> float:
-        pv, *_ = self._solve()
+        params = self.parent.params
+        if not isinstance(params, PDEParams):
+            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+        with log_timing(logger, "PDE European present_value", params.log_timings):
+            pv, *_ = self._solve()
         return float(pv)
 
 
@@ -628,6 +665,14 @@ class _FDAmericanValuation:
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+        logger.debug(
+            "PDE American method=%s grid=%s solver=%s spot_steps=%d time_steps=%d",
+            params.method.value,
+            params.space_grid.value,
+            params.american_solver.value,
+            params.spot_steps,
+            params.time_steps,
+        )
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
@@ -674,5 +719,9 @@ class _FDAmericanValuation:
         )
 
     def present_value(self) -> float:
-        pv, *_ = self._solve()
+        params = self.parent.params
+        if not isinstance(params, PDEParams):
+            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+        with log_timing(logger, "PDE American present_value", params.log_timings):
+            pv, *_ = self._solve()
         return float(pv)

@@ -21,14 +21,25 @@ class MonteCarloParams:
     deg:
         Polynomial degree for Longstaff-Schwartz regression (American only).
         Typical range: 2-5. Default: 2.
+    log_timings:
+        If True, log debug timing for solver execution.
+    std_error_warn_ratio:
+        If set, emit a warning log when MC standard error exceeds
+        std_error_warn_ratio * |PV|. Use None to disable.
     """
 
     random_seed: int | None = None
     deg: int = 2
+    log_timings: bool = False
+    std_error_warn_ratio: float | None = 0.1
 
     def __post_init__(self):
         if self.deg is not None and self.deg < 1:
             raise ValueError(f"deg must be >= 1, got {self.deg}")
+        if self.std_error_warn_ratio is not None and self.std_error_warn_ratio <= 0:
+            raise ValueError(
+                f"std_error_warn_ratio must be > 0 when set, got {self.std_error_warn_ratio}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +70,8 @@ class BinomialParams:
         Apply Hull-style control variate adjustment for American options using
         BSM European price and the numerical European price from the same method.
         Only applicable to vanilla call/put American pricing.
+    log_timings:
+        If True, log debug timing for solver execution.
     """
 
     num_steps: int = 500
@@ -66,6 +79,7 @@ class BinomialParams:
     random_seed: int | None = None
     asian_tree_averages: int | None = None
     control_variate_european: bool = False
+    log_timings: bool = False
 
     def __post_init__(self):
         if self.num_steps < 1:
@@ -127,6 +141,8 @@ class PDEParams:
             Apply Hull-style control variate adjustment for American options using
             BSM European price and the numerical European price from the same method.
             Only applicable to vanilla call/put American pricing.
+        log_timings:
+            If True, log debug timing for solver execution.
     """
 
     smax_mult: float = 4.0
@@ -139,6 +155,7 @@ class PDEParams:
     space_grid: PDESpaceGrid | str = PDESpaceGrid.SPOT
     american_solver: PDEEarlyExercise | str = PDEEarlyExercise.GAUSS_SEIDEL
     control_variate_european: bool = False
+    log_timings: bool = False
 
     def __post_init__(self):
         if isinstance(self.method, str):

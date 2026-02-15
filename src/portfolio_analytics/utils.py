@@ -1,8 +1,10 @@
 """Helper functions and classes for derivatives valuation."""
 
+from contextlib import contextmanager
 from datetime import datetime
 from math import comb
 from typing import Callable, Protocol
+import time
 import numpy as np
 
 from .enums import DayCountConvention, OptionType
@@ -14,6 +16,20 @@ class ForwardCurve(Protocol):
     """Minimal interface for a curve supplying discount factors."""
 
     def df(self, t: float | np.ndarray) -> np.ndarray: ...
+
+
+@contextmanager
+def log_timing(logger, label: str, enabled: bool):
+    """Log timing for a code block when enabled is True."""
+    if not enabled:
+        yield
+        return
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        logger.debug("Timing %s: %.6fs", label, elapsed)
 
 
 def _day_count_30_360_us(start_date: datetime, end_date: datetime) -> float:

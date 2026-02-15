@@ -1,15 +1,52 @@
 """Monte Carlo Simulation option valuation implementations."""
 
 from typing import TYPE_CHECKING
+import logging
 import numpy as np
 
-from ..utils import calculate_year_fraction
+from ..utils import calculate_year_fraction, log_timing
 
 from ..enums import OptionType, AsianAveraging
 from .params import MonteCarloParams
 
 if TYPE_CHECKING:
     from .core import OptionValuation
+
+
+logger = logging.getLogger(__name__)
+
+
+def _warn_if_high_std_error(
+    *,
+    pv_pathwise: np.ndarray,
+    pv_mean: float,
+    params: MonteCarloParams,
+    label: str,
+) -> None:
+    if params.std_error_warn_ratio is None:
+        return
+    n_paths = pv_pathwise.size
+    if n_paths < 2:
+        return
+    std_error = float(np.std(pv_pathwise, ddof=1) / np.sqrt(n_paths))
+    scale = max(abs(pv_mean), 1.0e-12)
+    ratio = std_error / scale
+    logger.debug(
+        "MC %s std_error=%.6g ratio=%.6g paths=%d",
+        label,
+        std_error,
+        ratio,
+        n_paths,
+    )
+    if ratio > params.std_error_warn_ratio:
+        logger.warning(
+            "MC %s standard error high: std_error=%.6g ratio=%.6g (>%.3g) paths=%d",
+            label,
+            std_error,
+            ratio,
+            params.std_error_warn_ratio,
+            n_paths,
+        )
 
 
 def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
@@ -62,10 +99,24 @@ class _MCEuropeanValuation:
 
     def present_value(self) -> float:
         """Return the scalar present value."""
-        pv_pathwise = self.present_value_pathwise()
-        pv = np.mean(pv_pathwise)
-
-        return float(pv)
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+        with log_timing(logger, "MC European present_value", params.log_timings):
+            pv_pathwise = self.present_value_pathwise()
+            pv = float(np.mean(pv_pathwise))
+        logger.debug(
+            "MC European paths=%d time_steps=%d",
+            pv_pathwise.size,
+            len(self.parent.underlying.time_grid) - 1,
+        )
+        _warn_if_high_std_error(
+            pv_pathwise=pv_pathwise,
+            pv_mean=pv,
+            params=params,
+            label="European",
+        )
+        return pv
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
@@ -116,9 +167,25 @@ class _MCAmericanValuation:
 
     def present_value(self) -> float:
         """Calculate PV using Longstaff-Schwartz regression method."""
-        pv_pathwise = self.present_value_pathwise()
-        pv = np.mean(pv_pathwise)
-        return float(pv)
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+        with log_timing(logger, "MC American present_value", params.log_timings):
+            pv_pathwise = self.present_value_pathwise()
+            pv = float(np.mean(pv_pathwise))
+        logger.debug(
+            "MC American paths=%d time_steps=%d deg=%d",
+            pv_pathwise.size,
+            len(self.parent.underlying.time_grid) - 1,
+            params.deg,
+        )
+        _warn_if_high_std_error(
+            pv_pathwise=pv_pathwise,
+            pv_mean=pv,
+            params=params,
+            label="American",
+        )
+        return pv
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path (LSM output at pricing date)."""
@@ -225,9 +292,24 @@ class _MCAsianValuation:
 
     def present_value(self) -> float:
         """Return the scalar present value."""
-        pv_pathwise = self.present_value_pathwise()
-        pv = np.mean(pv_pathwise)
-        return float(pv)
+        params = self.parent.params
+        if not isinstance(params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+        with log_timing(logger, "MC Asian present_value", params.log_timings):
+            pv_pathwise = self.present_value_pathwise()
+            pv = float(np.mean(pv_pathwise))
+        logger.debug(
+            "MC Asian paths=%d time_steps=%d",
+            pv_pathwise.size,
+            len(self.parent.underlying.time_grid) - 1,
+        )
+        _warn_if_high_std_error(
+            pv_pathwise=pv_pathwise,
+            pv_mean=pv,
+            params=params,
+            label="Asian",
+        )
+        return pv
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""

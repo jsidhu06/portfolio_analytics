@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Callable
 
 import numpy as np
@@ -16,9 +17,12 @@ from ..enums import (
     PricingMethod,
     GreekCalculationMethod,
 )
-from ..utils import calculate_year_fraction, pv_discrete_dividends
+from ..utils import calculate_year_fraction, pv_discrete_dividends, log_timing
 from .core import OptionValuation, UnderlyingPricingData
 from .params import BinomialParams
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +248,7 @@ def implied_volatility(
     vol_bounds: tuple[float, float] = (1.0e-6, 5.0),
     tol: float = 1.0e-8,
     max_iter: int = 100,
+    log_timings: bool = False,
 ) -> ImpliedVolResult:
     """Solve for implied volatility using BSM, binomial, or PDE pricing.
 
@@ -348,27 +353,39 @@ def implied_volatility(
     if f_low > 0 or f_high < 0:
         raise ValueError("Price not bracketed by vol_bounds; adjust bounds.")
 
-    if method == ImpliedVolMethod.NEWTON_RAPHSON:
-        result = _newton_raphson(
-            f=f,
-            vega=vega_at,
-            low=low,
-            high=high,
-            initial=initial,
-            tol=tol,
-            max_iter=max_iter,
-        )
-        if result.converged:
-            return result
-        return _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
+    with log_timing(logger, "Implied vol solver", log_timings):
+        if method == ImpliedVolMethod.NEWTON_RAPHSON:
+            result = _newton_raphson(
+                f=f,
+                vega=vega_at,
+                low=low,
+                high=high,
+                initial=initial,
+                tol=tol,
+                max_iter=max_iter,
+            )
+            if not result.converged:
+                result = _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
+        elif method == ImpliedVolMethod.BISECTION:
+            result = _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
+        elif method == ImpliedVolMethod.BRENTQ:
+            implied = optimize.brentq(f, low, high, xtol=tol, maxiter=max_iter)
+            result = ImpliedVolResult(
+                implied_vol=float(implied),
+                iterations=max_iter,
+                converged=True,
+            )
+        else:
+            raise NotImplementedError(
+                f"Implied vol method '{method.value}' is not implemented in this solver."
+            )
 
-    if method == ImpliedVolMethod.BISECTION:
-        return _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
-
-    if method == ImpliedVolMethod.BRENTQ:
-        implied = optimize.brentq(f, low, high, xtol=tol, maxiter=max_iter)
-        return ImpliedVolResult(implied_vol=float(implied), iterations=max_iter, converged=True)
-
-    raise NotImplementedError(
-        f"Implied vol method '{method.value}' is not implemented in this solver."
+    logger.debug(
+        "Implied vol method=%s converged=%s iterations=%d implied_vol=%.6g",
+        method.value,
+        result.converged,
+        result.iterations,
+        result.implied_vol,
     )
+
+    return result
