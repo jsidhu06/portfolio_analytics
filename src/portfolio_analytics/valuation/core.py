@@ -1,5 +1,5 @@
 from dataclasses import dataclass, replace as dc_replace
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import datetime as dt
 import numpy as np
 from ..stochastic_processes import PathSimulation
@@ -190,6 +190,7 @@ class AsianOptionSpec:
         object.__setattr__(self, "strike", strike)
 
 
+@dataclass(frozen=True, slots=True)
 class UnderlyingPricingData:
     """Minimal data container for option valuation underlying asset.
 
@@ -200,23 +201,16 @@ class UnderlyingPricingData:
     and optional discrete dividends as (ex_date, amount) pairs.
     """
 
-    def __init__(
-        self,
-        initial_value: float,
-        volatility: float,
-        market_data: MarketData,
-        discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
-        dividend_curve: DiscountCurve | None = None,
-    ) -> None:
-        self.initial_value = initial_value
-        self.volatility = volatility
-        self.market_data = market_data
-        self.dividend_curve = dividend_curve
-        if discrete_dividends is None:
-            self.discrete_dividends = []
-        else:
+    initial_value: float
+    volatility: float
+    market_data: MarketData
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None
+    dividend_curve: DiscountCurve | None = None
+
+    def __post_init__(self) -> None:
+        if self.discrete_dividends is not None:
             cleaned: list[tuple[dt.datetime, float]] = []
-            for ex_date, amount in discrete_dividends:
+            for ex_date, amount in self.discrete_dividends:
                 if not isinstance(ex_date, dt.datetime):
                     raise TypeError("discrete_dividends entries must be (datetime, amount) tuples")
                 try:
@@ -224,7 +218,13 @@ class UnderlyingPricingData:
                 except (TypeError, ValueError) as exc:
                     raise TypeError("dividend amount must be numeric") from exc
                 cleaned.append((ex_date, amt))
-            self.discrete_dividends = sorted(cleaned, key=lambda x: x[0])
+            object.__setattr__(
+                self,
+                "discrete_dividends",
+                tuple(sorted(cleaned, key=lambda x: x[0])),
+            )
+        else:
+            object.__setattr__(self, "discrete_dividends", ())
 
         if self.dividend_curve is not None and self.discrete_dividends:
             raise ValueError("Provide either dividend_curve or discrete_dividends, not both.")
@@ -241,7 +241,7 @@ class UnderlyingPricingData:
     def currency(self) -> str:
         return self.market_data.currency
 
-    def replace(self, **kwargs) -> "UnderlyingPricingData":
+    def replace(self, **kwargs: object) -> "UnderlyingPricingData":
         """Create a new UnderlyingPricingData instance with modified fields.
 
         This is used for bump-and-revalue calculations (e.g., Greeks) without
@@ -258,27 +258,7 @@ class UnderlyingPricingData:
         UnderlyingPricingData
             New instance with specified fields replaced
         """
-        allowed_fields = {
-            "initial_value",
-            "volatility",
-            "market_data",
-            "discrete_dividends",
-            "dividend_curve",
-        }
-        unknown = set(kwargs).difference(allowed_fields)
-        if unknown:
-            raise ValueError(
-                f"replace() only supports overriding {sorted(allowed_fields)}; "
-                f"unknown: {sorted(unknown)}"
-            )
-
-        return UnderlyingPricingData(
-            initial_value=kwargs.get("initial_value", self.initial_value),
-            volatility=kwargs.get("volatility", self.volatility),
-            market_data=kwargs.get("market_data", self.market_data),
-            discrete_dividends=kwargs.get("discrete_dividends", self.discrete_dividends),
-            dividend_curve=kwargs.get("dividend_curve", self.dividend_curve),
-        )
+        return dc_replace(self, **kwargs)
 
 
 class OptionValuation:
@@ -381,10 +361,13 @@ class OptionValuation:
         if self.maturity <= self.pricing_date:
             raise ValueError("Option maturity must be after pricing_date.")
 
-        # Only add special dates for PathSimulation (Monte Carlo)
+        # Merge pricing_date + maturity into the simulation's special_dates
+        # via replace() so the caller's PathSimulation is never mutated.
         if isinstance(underlying, PathSimulation):
-            for d in (self.pricing_date, self.maturity):
-                underlying.special_dates.add(d)
+            merged = underlying.special_dates | {self.pricing_date, self.maturity}
+            if merged != underlying.special_dates:
+                underlying = underlying.replace(special_dates=merged)
+            self.underlying = underlying
 
         # Validate pricing_method
         if not isinstance(pricing_method, PricingMethod):

@@ -246,8 +246,6 @@ class PathSimulation(ABC):
             for ex_date, _ in self.discrete_dividends:
                 self.special_dates.add(ex_date)
 
-        self.instrument_values = None
-
         if corr is not None:
             # only needed in a portfolio context when
             # risk factors are correlated
@@ -419,9 +417,6 @@ class PathSimulation(ABC):
         cloned.special_dates = set(self.special_dates)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
 
-        # Always reset cached paths unless explicitly overridden.
-        cloned.instrument_values = None
-
         # Handle simple name override
         if "name" in kwargs:
             cloned._name = kwargs["name"]
@@ -468,10 +463,19 @@ class PathSimulation(ABC):
                 None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
             )
         else:
-            if any(
-                key in kwargs
-                for key in ("pricing_date", "end_date", "frequency", "num_steps", "special_dates")
-            ):
+            grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps"}
+            if grid_rebuild_keys.intersection(kwargs):
+                # Grid-shaping parameters changed → must rebuild from scratch.
+                cloned.time_grid = None
+            elif "special_dates" in kwargs and cloned.time_grid is not None:
+                # Explicit-grid mode: augment the existing grid with the new
+                # special dates (there is no end_date/frequency/num_steps to
+                # rebuild from, so nulling the grid would be unrecoverable).
+                augmented = sorted(set(cloned.time_grid) | cloned.special_dates)
+                cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
+            elif "special_dates" in kwargs:
+                # Lazy-build mode: null the grid so _build_time_grid picks up
+                # the updated special_dates on next generate_time_grid() call.
                 cloned.time_grid = None
 
         # Update market_data if any related fields were overridden
@@ -497,7 +501,7 @@ class PathSimulation(ABC):
         return cloned
 
     def get_instrument_values(self, random_seed: int | None = None) -> np.ndarray:
-        """Generate paths and get instrument values matrix
+        """Generate and return simulated instrument value paths.
 
         Parameters
         ==========
@@ -506,12 +510,10 @@ class PathSimulation(ABC):
 
         Returns
         =======
-        instrument_values: np.ndarray
+        np.ndarray
             simulated instrument value paths
         """
-
-        self.instrument_values = self.generate_paths(random_seed=random_seed)
-        return self.instrument_values
+        return self.generate_paths(random_seed=random_seed)
 
     @abstractmethod
     def generate_paths(

@@ -171,16 +171,15 @@ class TestUnderlyingPricingData:
         assert ud.volatility == 0.2
         assert ud.pricing_date == self.pricing_date
 
-    def test_underlying_data_attributes_mutable(self):
-        """Test that UnderlyingPricingData attributes can be modified (unlike frozen dataclasses)."""
+    def test_underlying_data_is_frozen(self):
+        """Test that UnderlyingPricingData is frozen (immutable)."""
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
         )
-        # Should be able to modify attributes
-        ud.initial_value = 105.0
-        assert ud.initial_value == 105.0
+        with pytest.raises(AttributeError):
+            ud.initial_value = 105.0
 
 
 class TestOptionValuation:
