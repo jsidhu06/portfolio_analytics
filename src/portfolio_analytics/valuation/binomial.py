@@ -265,7 +265,12 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         # Advanced indexing: col_idx broadcasts to (I, M+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
         prices = spot_lattice[row_idx, col_idx]  # (I, M+1)
-        avg_s = prices.mean(axis=1)  # (I,)
+        if self.parent.spec.averaging is AsianAveraging.GEOMETRIC:
+            if np.any(prices <= 0.0):
+                raise ValueError("Geometric averaging requires strictly positive path prices.")
+            avg_s = np.exp(np.mean(np.log(prices), axis=1))  # (I,)
+        else:
+            avg_s = prices.mean(axis=1)  # (I,)
 
         if self.parent.spec.call_put is OptionType.CALL:
             payoffs = np.maximum(avg_s - K, 0.0)
@@ -311,6 +316,29 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         return avg_min, avg_max
 
+    @staticmethod
+    def _compute_log_average_bounds(
+        log_spot_lattice: np.ndarray, num_steps: int
+    ) -> tuple[np.ndarray, np.ndarray]:
+        log_avg_min = np.zeros_like(log_spot_lattice)
+        log_avg_max = np.zeros_like(log_spot_lattice)
+
+        for t in range(num_steps + 1):
+            time_idx = np.arange(t + 1)
+            row = np.arange(t + 1)[:, None]
+            time = time_idx[None, :]
+
+            downs_first_rows = np.minimum(time, row)
+            prices_min = log_spot_lattice[downs_first_rows, time]
+            log_avg_min[: t + 1, t] = prices_min.mean(axis=1)
+
+            ups_first = t - row
+            ups_first_rows = np.maximum(0, time - ups_first)
+            prices_max = log_spot_lattice[ups_first_rows, time]
+            log_avg_max[: t + 1, t] = prices_max.mean(axis=1)
+
+        return log_avg_min, log_avg_max
+
     def _solve_hull(self) -> tuple[np.ndarray, np.ndarray]:
         params = self.parent.params
         if not isinstance(params, BinomialParams):
@@ -323,8 +351,9 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         )
         discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
-        if self.parent.spec.averaging is not AsianAveraging.ARITHMETIC:
-            raise ValueError("Hull binomial Asian valuation only supports arithmetic averaging.")
+        averaging = self.parent.spec.averaging
+        if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
+            raise ValueError("Unsupported Asian averaging type for Hull binomial valuation.")
 
         if params.asian_tree_averages is None:
             raise ValueError(
@@ -336,7 +365,15 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             raise ValueError("Hull binomial Asian valuation requires averaging_start=pricing_date.")
 
         k = int(params.asian_tree_averages)
-        avg_min, avg_max = self._compute_average_bounds(spot_lattice, num_steps)
+        if averaging is AsianAveraging.GEOMETRIC:
+            if np.any(spot_lattice <= 0.0):
+                raise ValueError(
+                    "Hull binomial geometric averaging requires strictly positive spot lattice."
+                )
+            log_spot_lattice = np.log(spot_lattice)
+            avg_min, avg_max = self._compute_log_average_bounds(log_spot_lattice, num_steps)
+        else:
+            avg_min, avg_max = self._compute_average_bounds(spot_lattice, num_steps)
 
         avg_grid = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):
@@ -349,7 +386,10 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         values = np.zeros_like(avg_grid)
 
         for row in range(num_steps + 1):
-            values[:, row, num_steps] = self._average_payoff(avg_grid[:, row, num_steps])
+            maturity_avg = avg_grid[:, row, num_steps]
+            if averaging is AsianAveraging.GEOMETRIC:
+                maturity_avg = np.exp(maturity_avg)
+            values[:, row, num_steps] = self._average_payoff(maturity_avg)
 
         # values[0,:,:] is option values corresponding to S_avg,min.
         # values[-1,:,:] is option values corresponding to S_avg,max.
@@ -357,8 +397,12 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         for t in range(num_steps - 1, -1, -1):
             rows = np.arange(t + 1)
-            s_up = spot_lattice[rows, t + 1]
-            s_down = spot_lattice[rows + 1, t + 1]
+            if averaging is AsianAveraging.GEOMETRIC:
+                s_up = log_spot_lattice[rows, t + 1]
+                s_down = log_spot_lattice[rows + 1, t + 1]
+            else:
+                s_up = spot_lattice[rows, t + 1]
+                s_down = spot_lattice[rows + 1, t + 1]
             grid_here = avg_grid[:, rows, t]
 
             avg_up = ((t + 1) * grid_here + s_up) / (t + 2)
@@ -375,7 +419,10 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)
 
             if is_american:
-                exercise = self._average_payoff(grid_here)
+                exercise_avg = grid_here
+                if averaging is AsianAveraging.GEOMETRIC:
+                    exercise_avg = np.exp(exercise_avg)
+                exercise = self._average_payoff(exercise_avg)
                 values[:, rows, t] = np.maximum(continuation, exercise)
             else:
                 values[:, rows, t] = continuation
@@ -392,7 +439,10 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 return float(np.mean(pv_pathwise))
 
             values, avg_grid = self._solve_hull()
-            root_avg = float(self.parent.underlying.initial_value)
+            if self.parent.spec.averaging is AsianAveraging.GEOMETRIC:
+                root_avg = float(np.log(self.parent.underlying.initial_value))
+            else:
+                root_avg = float(self.parent.underlying.initial_value)
             root_value = self._interp_value(root_avg, avg_grid[:, 0, 0], values[:, 0, 0])
             return float(root_value)
 
