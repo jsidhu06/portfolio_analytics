@@ -245,6 +245,134 @@ def _as_array(coeff: np.ndarray | float, size: int) -> np.ndarray:
     return np.full(size, float(coeff))
 
 
+# ---------------------------------------------------------------------------
+# Time-step helpers (extracted from _vanilla_fd_core for readability)
+# ---------------------------------------------------------------------------
+
+
+def _explicit_step(
+    V_old: np.ndarray,
+    j: np.ndarray,
+    a: np.ndarray | float,
+    b: np.ndarray | float,
+    c: np.ndarray | float,
+    left: float,
+    right: float,
+    intrinsic: np.ndarray | None,
+) -> np.ndarray:
+    """Explicit (forward-Euler) time step."""
+    V_new = V_old.copy()
+    V_new[j] = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
+    V_new[0] = left
+    V_new[-1] = right
+    if intrinsic is not None:
+        V_new[:] = np.maximum(V_new, intrinsic)
+    return V_new
+
+
+def _psor_solve(
+    x: np.ndarray,
+    exercise_j: np.ndarray,
+    rhs: np.ndarray,
+    A_lower: np.ndarray,
+    A_diag: np.ndarray,
+    A_upper: np.ndarray,
+    V_left: float,
+    V_right: float,
+    omega: float,
+    tol: float,
+    max_iter: int,
+) -> tuple[np.ndarray, int]:
+    """Projected SOR (Gauss-Seidel with overrelaxation) for American exercise.
+
+    Returns the updated interior values and the number of iterations used.
+    """
+    x = np.maximum(x, exercise_j)
+    iter_used = max_iter
+    for iter_idx in range(max_iter):
+        x_prev = x.copy()
+        for k in range(x.size):
+            left_val = x[k - 1] if k > 0 else V_left
+            right_val = x[k + 1] if k < x.size - 1 else V_right
+            gs = (rhs[k] - A_lower[k] * left_val - A_upper[k] * right_val) / A_diag[k]
+            sor = x[k] + omega * (gs - x[k])
+            x[k] = max(sor, exercise_j[k])
+        if np.max(np.abs(x - x_prev)) < tol:
+            iter_used = iter_idx + 1
+            break
+    return x, iter_used
+
+
+def _implicit_cn_step(
+    V_old: np.ndarray,
+    V: np.ndarray,
+    j: np.ndarray,
+    a: np.ndarray | float,
+    b: np.ndarray | float,
+    c: np.ndarray | float,
+    left: float,
+    right: float,
+    method: "PDEMethod",
+    spot_steps: int,
+    intrinsic: np.ndarray | None,
+    american_solver: "PDEEarlyExercise",
+    omega: float | None,
+    tol: float | None,
+    max_iter: int | None,
+) -> tuple[np.ndarray, int | None]:
+    """One implicit or Crank-Nicolson time step (with optional early exercise).
+
+    Returns the updated V array and the PSOR iteration count (None if PSOR was not used).
+    """
+    if method is PDEMethod.CRANK_NICOLSON:
+        a = a * 0.5
+        b = b * 0.5
+        c = c * 0.5
+
+    A_lower = _as_array(a, spot_steps - 1)
+    A_diag = _as_array(1.0 + b, spot_steps - 1)
+    A_upper = _as_array(c, spot_steps - 1)
+
+    if method is PDEMethod.IMPLICIT:
+        rhs = V_old[j].copy()
+    else:
+        rhs = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
+
+    V[0] = left
+    V[-1] = right
+
+    rhs_adj = rhs.copy()
+    rhs_adj[0] -= A_lower[0] * V[0]
+    rhs_adj[-1] -= A_upper[-1] * V[-1]
+
+    x = _solve_tridiagonal_thomas(A_lower[1:], A_diag, A_upper[:-1], rhs_adj)
+    psor_iters: int | None = None
+
+    if intrinsic is None:
+        V[j] = x
+    else:
+        exercise_j = intrinsic[j]
+        if american_solver is PDEEarlyExercise.INTRINSIC:
+            V[j] = np.maximum(x, exercise_j)
+        else:
+            x, psor_iters = _psor_solve(
+                x,
+                exercise_j,
+                rhs,
+                A_lower,
+                A_diag,
+                A_upper,
+                V[0],
+                V[-1],
+                float(omega),
+                float(tol),
+                int(max_iter),
+            )
+            V[j] = x
+
+    return V, psor_iters
+
+
 def _vanilla_fd_core(
     *,
     spot: float,
@@ -411,66 +539,34 @@ def _vanilla_fd_core(
 
         a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, d_tau=d_tau)
 
+        intrinsic_for_step = intrinsic if early_exercise else None
+
         if method is PDEMethod.EXPLICIT:
-            V_new = V_old.copy()
-            V_new[j] = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
-            V_new[0] = left
-            V_new[-1] = right
-            if early_exercise:
-                V_new[:] = np.maximum(V_new, intrinsic)
-            V = V_new
+            V = _explicit_step(V_old, j, a, b, c, left, right, intrinsic_for_step)
         else:
-            if method is PDEMethod.CRANK_NICOLSON:
-                a *= 0.5
-                b *= 0.5
-                c *= 0.5
-
-            # A = -dt * L (L being the tridiagonal matrix of gamma/beta/alpha).
-            A_lower = _as_array(a, spot_steps - 1)
-            A_diag = _as_array(1.0 + b, spot_steps - 1)
-            A_upper = _as_array(c, spot_steps - 1)
-
-            if method is PDEMethod.IMPLICIT:
-                rhs = V_old[j].copy()
-            else:
-                rhs = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
-
-            V[0] = left
-            V[-1] = right
-
-            rhs_adj = rhs.copy()
-            rhs_adj[0] -= A_lower[0] * V[0]
-            rhs_adj[-1] -= A_upper[-1] * V[-1]
-
-            x = _solve_tridiagonal_thomas(A_lower[1:], A_diag, A_upper[:-1], rhs_adj)
-            if not early_exercise:
-                V[j] = x
-            else:
-                exercise_j = intrinsic[j]
-                if american_solver is PDEEarlyExercise.INTRINSIC:
-                    V[j] = np.maximum(x, exercise_j)
-                else:
-                    x = np.maximum(x, exercise_j)
-                    iter_used = int(max_iter)
-                    for iter_idx in range(int(max_iter)):
-                        x_prev = x.copy()
-                        for k in range(x.size):
-                            left_val = x[k - 1] if k > 0 else V[0]
-                            right_val = x[k + 1] if k < x.size - 1 else V[-1]
-                            gs = (rhs[k] - A_lower[k] * left_val - A_upper[k] * right_val) / A_diag[
-                                k
-                            ]
-                            sor = x[k] + float(omega) * (gs - x[k])
-                            x[k] = max(sor, exercise_j[k])
-                        if np.max(np.abs(x - x_prev)) < float(tol):
-                            iter_used = iter_idx + 1
-                            break
-                    V[j] = x
-                    psor_steps += 1
-                    psor_total_iters += iter_used
-                    psor_max_iters = max(psor_max_iters, iter_used)
-                    if iter_used == int(max_iter):
-                        psor_not_converged += 1
+            V, psor_iters = _implicit_cn_step(
+                V_old,
+                V,
+                j,
+                a,
+                b,
+                c,
+                left,
+                right,
+                method,
+                spot_steps,
+                intrinsic_for_step,
+                american_solver,
+                omega,
+                tol,
+                max_iter,
+            )
+            if psor_iters is not None:
+                psor_steps += 1
+                psor_total_iters += psor_iters
+                psor_max_iters = max(psor_max_iters, psor_iters)
+                if psor_iters == int(max_iter):
+                    psor_not_converged += 1
 
         # Apply discrete dividend jump at tau if needed
         if dividend_map:
