@@ -1,17 +1,21 @@
 """Helper functions and classes for derivatives valuation."""
 
+from __future__ import annotations
+
 from contextlib import contextmanager
 from datetime import datetime
 from math import comb
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable
 from collections.abc import Iterator
 import time
 import numpy as np
 
 from .enums import DayCountConvention, OptionType
 
+if TYPE_CHECKING:
+    from .rates import DiscountCurve
+
 __all__ = [
-    "ForwardCurve",
     "log_timing",
     "calculate_year_fraction",
     "get_year_deltas",
@@ -19,21 +23,12 @@ __all__ = [
     "forward_price",
     "put_call_parity_rhs",
     "put_call_parity_gap",
-    "sn_random_numbers",
     "binomial_pmf",
     "expected_binomial",
     "expected_binomial_payoff",
 ]
 
 SECONDS_IN_DAY = 86400
-
-
-class ForwardCurve(Protocol):
-    """Minimal interface for a deterministic discount/forward curve."""
-
-    def df(self, t: float | np.ndarray) -> np.ndarray: ...
-
-    def forward_rate(self, t0: float, t1: float) -> float: ...
 
 
 @contextmanager
@@ -142,7 +137,7 @@ def pv_discrete_dividends(
     dividends: list[tuple[datetime, float]],
     curve_date: datetime,
     end_date: datetime,
-    discount_curve: ForwardCurve,
+    discount_curve: DiscountCurve,
     start_date: datetime | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -173,8 +168,8 @@ def forward_price(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    discount_curve: ForwardCurve | None = None,
-    dividend_curve: ForwardCurve | None = None,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -218,8 +213,8 @@ def put_call_parity_rhs(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    discount_curve: ForwardCurve | None = None,
-    dividend_curve: ForwardCurve | None = None,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -253,8 +248,8 @@ def put_call_parity_gap(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    discount_curve: ForwardCurve | None = None,
-    dividend_curve: ForwardCurve | None = None,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -271,48 +266,6 @@ def put_call_parity_gap(
         day_count_convention=day_count_convention,
     )
     return float(call_price - put_price - rhs)
-
-
-def sn_random_numbers(
-    shape: tuple[int, int, int],
-    antithetic: bool = True,
-    moment_matching: bool = True,
-    random_seed: int | None = None,
-) -> np.ndarray:
-    """Return array of standard normally distributed pseudo-random numbers.
-
-    Supports antithetic variates and moment matching for variance reduction
-    in Monte Carlo simulations.
-
-    Parameters
-    ==========
-    shape: tuple (o, n, m)
-        array shape (# simulations, # time steps, # paths)
-    antithetic: bool, default True
-        if True, use antithetic variates for variance reduction
-        (generates n/2 randoms and appends their negatives)
-    moment_matching: bool, default True
-        if True, rescale to match sample mean=0 and std=1
-    random_seed: int, optional
-        random number generator seed for reproducibility
-
-    Returns
-    =======
-    ran: np.ndarray
-        shape (o, n, m) if o > 1, else shape (n, m)
-        standard normally distributed random numbers
-    """
-    rng = np.random.default_rng(random_seed)
-    if antithetic:
-        ran = rng.standard_normal((shape[0], shape[1], shape[2] // 2))
-        ran = np.concatenate((ran, -ran), axis=2)
-    else:
-        ran = rng.standard_normal(shape)
-    if moment_matching:
-        ran = (ran - np.mean(ran)) / np.std(ran)  # note this is population std dev
-    if shape[0] == 1:
-        return ran[0]
-    return ran
 
 
 def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:

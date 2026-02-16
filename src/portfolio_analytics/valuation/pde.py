@@ -21,7 +21,8 @@ import datetime as dt
 import numpy as np
 
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
-from ..utils import ForwardCurve, calculate_year_fraction, log_timing
+from ..rates import DiscountCurve
+from ..utils import calculate_year_fraction, log_timing
 from .params import PDEParams
 
 if TYPE_CHECKING:
@@ -250,8 +251,8 @@ def _vanilla_fd_core(
     strike: float,
     time_to_maturity: float,
     volatility: float,
-    discount_curve: ForwardCurve,
-    dividend_curve: ForwardCurve | None,
+    discount_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
@@ -499,8 +500,8 @@ def _european_vanilla_fd(
     strike: float,
     time_to_maturity: float,
     volatility: float,
-    discount_curve: ForwardCurve,
-    dividend_curve: ForwardCurve | None,
+    discount_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,
@@ -534,8 +535,8 @@ def _american_vanilla_fd(
     strike: float,
     time_to_maturity: float,
     volatility: float,
-    discount_curve: ForwardCurve,
-    dividend_curve: ForwardCurve | None,
+    discount_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
     dividend_schedule: list[tuple[float, float]] | None,
     option_type: OptionType,
     smax_mult: float,

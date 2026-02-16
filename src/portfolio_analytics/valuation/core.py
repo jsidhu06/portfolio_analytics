@@ -23,6 +23,24 @@ from ..utils import calculate_year_fraction
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
+# ── Implementation registries ───────────────────────────────────────
+# Maps (PricingMethod, ExerciseType) → implementation class for vanilla specs.
+_VANILLA_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
+    (PricingMethod.MONTE_CARLO, ExerciseType.EUROPEAN): _MCEuropeanValuation,
+    (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCAmericanValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialEuropeanValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.AMERICAN): _BinomialAmericanValuation,
+    (PricingMethod.BSM, ExerciseType.EUROPEAN): _BSMEuropeanValuation,
+    (PricingMethod.PDE_FD, ExerciseType.EUROPEAN): _FDEuropeanValuation,
+    (PricingMethod.PDE_FD, ExerciseType.AMERICAN): _FDAmericanValuation,
+}
+
+# Maps PricingMethod → implementation class for Asian option specs.
+_ASIAN_REGISTRY: dict[PricingMethod, type] = {
+    PricingMethod.MONTE_CARLO: _MCAsianValuation,
+    PricingMethod.BINOMIAL: _BinomialAsianValuation,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class OptionSpec:
@@ -416,47 +434,24 @@ class OptionValuation:
                 raise ValueError(
                     "American Asian options are only supported with BINOMIAL (Hull tree)."
                 )
-            if pricing_method == PricingMethod.MONTE_CARLO:
-                self._impl = _MCAsianValuation(self)
-            elif pricing_method == PricingMethod.BINOMIAL:
-                self._impl = _BinomialAsianValuation(self)
-            else:
+            impl_cls = _ASIAN_REGISTRY.get(pricing_method)
+            if impl_cls is None:
                 raise ValueError(
                     "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL pricing."
                 )
-        elif pricing_method == PricingMethod.MONTE_CARLO:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _MCEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _MCAmericanValuation(self)
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.BINOMIAL:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _BinomialEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _BinomialAmericanValuation(self)
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.BSM:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _BSMEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                raise NotImplementedError(
-                    "BSM is only applicable to European option valuation. "
-                    "Select a different pricing method for American options such as Binomial or Monte Carlo."
-                )
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.PDE_FD:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _FDEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _FDAmericanValuation(self)
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
         else:
-            raise ValueError(f"Unknown pricing method: {pricing_method}")
+            impl_cls = _VANILLA_REGISTRY.get((pricing_method, spec.exercise_type))
+            if impl_cls is None:
+                if pricing_method is PricingMethod.BSM:
+                    raise NotImplementedError(
+                        "BSM is only applicable to European option valuation. "
+                        "Select a different pricing method for American options such as Binomial, "
+                        "PDE_FD or MONTE_CARLO."
+                    )
+                raise ValueError(
+                    f"{pricing_method.name} does not support {spec.exercise_type.name} exercise."
+                )
+        self._impl = impl_cls(self)
 
     @staticmethod
     def _validate_and_default_params(
