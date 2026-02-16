@@ -1,5 +1,4 @@
-# pylint: disable=too-few-public-methods, missing-function-docstring
-"""Model market environments for valuation."""
+"""Market data containers for valuation and simulation."""
 
 from dataclasses import dataclass
 import datetime as dt

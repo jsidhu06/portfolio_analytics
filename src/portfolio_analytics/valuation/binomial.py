@@ -23,7 +23,9 @@ class _BinomialValuationBase:
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
 
-    def _setup_binomial_parameters(self, num_steps: int) -> tuple:
+    def _setup_binomial_parameters(
+        self, num_steps: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Setup binomial tree parameters and lattice.
 
         Parameters
@@ -34,6 +36,9 @@ class _BinomialValuationBase:
         Returns
         =======
         tuple of (discount_factors, p, spot_lattice)
+            discount_factors : shape (num_steps,) — per-step discount factors
+            p : shape (num_steps,) — risk-neutral up-move probabilities
+            spot_lattice : shape (num_steps+1, num_steps+1) — CRR spot prices
         """
         start = self.parent.pricing_date
         end = self.parent.maturity
@@ -280,6 +285,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         return payoffs * float(np.prod(discount_factors))
 
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
+        """Compute Asian option intrinsic payoff given average price(s)."""
         K = self.parent.strike
         if K is None:
             raise ValueError("strike is required for Asian option payoff.")
@@ -294,11 +300,19 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         return float(np.interp(x, grid, values))
 
     @staticmethod
-    def _compute_average_bounds(
-        spot_lattice: np.ndarray, num_steps: int
+    def _compute_ordering_bounds(
+        lattice: np.ndarray, num_steps: int
     ) -> tuple[np.ndarray, np.ndarray]:
-        avg_min = np.zeros_like(spot_lattice)
-        avg_max = np.zeros_like(spot_lattice)
+        """Compute min/max running-average bounds achievable at each node.
+
+        Works for any additive state variable: pass spot values for arithmetic
+        averaging, or log-spot values for geometric averaging.
+
+        For each node (row, t), avg_min is the mean obtained when all down moves
+        precede all up moves, and avg_max is the mean when all up moves come first.
+        """
+        avg_min = np.zeros_like(lattice)
+        avg_max = np.zeros_like(lattice)
 
         for t in range(num_steps + 1):
             time_idx = np.arange(t + 1)
@@ -306,40 +320,30 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             time = time_idx[None, :]
 
             downs_first_rows = np.minimum(time, row)
-            prices_min = spot_lattice[downs_first_rows, time]
+            prices_min = lattice[downs_first_rows, time]
             avg_min[: t + 1, t] = prices_min.mean(axis=1)
 
             ups_first = t - row
             ups_first_rows = np.maximum(0, time - ups_first)
-            prices_max = spot_lattice[ups_first_rows, time]
+            prices_max = lattice[ups_first_rows, time]
             avg_max[: t + 1, t] = prices_max.mean(axis=1)
 
         return avg_min, avg_max
 
-    @staticmethod
-    def _compute_log_average_bounds(
-        log_spot_lattice: np.ndarray, num_steps: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        log_avg_min = np.zeros_like(log_spot_lattice)
-        log_avg_max = np.zeros_like(log_spot_lattice)
-
-        for t in range(num_steps + 1):
-            time_idx = np.arange(t + 1)
-            row = np.arange(t + 1)[:, None]
-            time = time_idx[None, :]
-
-            downs_first_rows = np.minimum(time, row)
-            prices_min = log_spot_lattice[downs_first_rows, time]
-            log_avg_min[: t + 1, t] = prices_min.mean(axis=1)
-
-            ups_first = t - row
-            ups_first_rows = np.maximum(0, time - ups_first)
-            prices_max = log_spot_lattice[ups_first_rows, time]
-            log_avg_max[: t + 1, t] = prices_max.mean(axis=1)
-
-        return log_avg_min, log_avg_max
-
     def _solve_hull(self) -> tuple[np.ndarray, np.ndarray]:
+        """Price an Asian option using Hull's representative-averages binomial tree.
+
+        At each node, k linearly spaced average values between the attainable
+        minimum and maximum are maintained. Backward induction interpolates
+        continuation values from the child nodes' grids. For geometric
+        averaging, all state variables are stored in log space.
+
+        Returns
+        =======
+        tuple of (values, avg_grid)
+            values : shape (k, num_steps+1, num_steps+1) — option values per average bucket
+            avg_grid : shape (k, num_steps+1, num_steps+1) — representative averages
+        """
         params = self.parent.params
         if not isinstance(params, BinomialParams):
             raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
@@ -371,9 +375,9 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                     "Hull binomial geometric averaging requires strictly positive spot lattice."
                 )
             log_spot_lattice = np.log(spot_lattice)
-            avg_min, avg_max = self._compute_log_average_bounds(log_spot_lattice, num_steps)
+            avg_min, avg_max = self._compute_ordering_bounds(log_spot_lattice, num_steps)
         else:
-            avg_min, avg_max = self._compute_average_bounds(spot_lattice, num_steps)
+            avg_min, avg_max = self._compute_ordering_bounds(spot_lattice, num_steps)
 
         avg_grid = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):

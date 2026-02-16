@@ -23,11 +23,12 @@ from .valuation import (
     OptionSpec,
     OptionValuation,
     UnderlyingPricingData,
+    PayoffSpec,
+    AsianOptionSpec,
     MonteCarloParams,
     BinomialParams,
     PDEParams,
 )
-from .valuation.core import AsianOptionSpec
 from .valuation.implied_volatility import implied_volatility
 
 __all__ = [
@@ -49,9 +50,10 @@ __all__ = [
     "OptionSpec",
     "OptionValuation",
     "UnderlyingPricingData",
+    "PayoffSpec",
+    "AsianOptionSpec",
     "MonteCarloParams",
     "BinomialParams",
     "PDEParams",
-    "AsianOptionSpec",
     "implied_volatility",
 ]

@@ -12,7 +12,7 @@ PDE via finite differences for vanilla European and American call/put:
 - American handling: intrinsic projection or Gauss-Seidel/PSOR
 """
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 import logging
 import math
@@ -21,7 +21,7 @@ import datetime as dt
 import numpy as np
 
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
-from ..utils import calculate_year_fraction, log_timing
+from ..utils import ForwardCurve, calculate_year_fraction, log_timing
 from .params import PDEParams
 
 if TYPE_CHECKING:
@@ -29,14 +29,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-class ForwardCurve(Protocol):
-    """Minimal interface for deterministic discount/forward curves."""
-
-    def df(self, t: float | np.ndarray) -> np.ndarray: ...
-
-    def forward_rate(self, t0: float, t1: float) -> float: ...
 
 
 def _solve_tridiagonal_thomas(

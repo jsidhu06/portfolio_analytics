@@ -23,6 +23,7 @@ def _warn_if_high_std_error(
     params: MonteCarloParams,
     label: str,
 ) -> None:
+    """Emit a warning log if MC standard error is high relative to the PV estimate."""
     if params.std_error_warn_ratio is None:
         return
     n_paths = pv_pathwise.size
@@ -50,6 +51,7 @@ def _warn_if_high_std_error(
 
 
 def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
+    """Return the index of *target* in *time_grid*, raising ValueError if absent."""
     idx = np.where(time_grid == target)[0]
     if idx.size == 0:
         raise ValueError(f"{label} not in underlying time_grid.")
@@ -57,6 +59,7 @@ def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
 
 
 def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) -> np.ndarray:
+    """Vectorized vanilla payoff: max(S-K,0) for calls, max(K-S,0) for puts."""
     if option_type is OptionType.CALL:
         return np.maximum(spot - strike, 0.0)
     return np.maximum(strike - spot, 0.0)
@@ -271,10 +274,9 @@ class _MCAsianValuation:
         elif spec.averaging is AsianAveraging.GEOMETRIC:
             # Geometric average: (Π S_i)^(1/N)
             # Use log space for numerical stability: exp(mean(log(S_i)))
-            epsilon = 1e-10
-            with np.errstate(divide="ignore", invalid="ignore"):
-                safe_paths = np.where(averaging_paths > 0.0, averaging_paths, epsilon)
-                log_prices = np.log(safe_paths)
+            if np.any(averaging_paths <= 0.0):
+                raise ValueError("Geometric averaging requires strictly positive path prices.")
+            log_prices = np.log(averaging_paths)
             avg_prices = np.exp(np.mean(log_prices, axis=0))
         else:
             raise ValueError(f"Unsupported averaging method for Asian valuation: {spec.averaging}")

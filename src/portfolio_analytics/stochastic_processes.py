@@ -641,7 +641,7 @@ class JumpDiffusion(PathSimulation):
         self,
         name: str,
         market_data: MarketData,
-        process_params,  # expects: initial_value, volatility, lambd, mu, delta
+        process_params: JDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):
@@ -777,7 +777,7 @@ class SquareRootDiffusion(PathSimulation):
         self,
         name: str,
         market_data: MarketData,
-        process_params,  # should provide initial_value, volatility, kappa, theta
+        process_params: SRDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
     ):

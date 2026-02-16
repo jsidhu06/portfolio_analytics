@@ -10,13 +10,30 @@ import numpy as np
 
 from .enums import DayCountConvention, OptionType
 
+__all__ = [
+    "ForwardCurve",
+    "log_timing",
+    "calculate_year_fraction",
+    "get_year_deltas",
+    "pv_discrete_dividends",
+    "forward_price",
+    "put_call_parity_rhs",
+    "put_call_parity_gap",
+    "sn_random_numbers",
+    "binomial_pmf",
+    "expected_binomial",
+    "expected_binomial_payoff",
+]
+
 SECONDS_IN_DAY = 86400
 
 
 class ForwardCurve(Protocol):
-    """Minimal interface for a curve supplying discount factors."""
+    """Minimal interface for a deterministic discount/forward curve."""
 
     def df(self, t: float | np.ndarray) -> np.ndarray: ...
+
+    def forward_rate(self, t0: float, t1: float) -> float: ...
 
 
 @contextmanager

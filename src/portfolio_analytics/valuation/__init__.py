@@ -23,6 +23,7 @@ from .core import (
     OptionValuation,
     OptionSpec,
     PayoffSpec,
+    AsianOptionSpec,
     UnderlyingPricingData,
 )
 from .params import (
@@ -38,6 +39,7 @@ __all__ = [
     "OptionValuation",
     "OptionSpec",
     "PayoffSpec",
+    "AsianOptionSpec",
     "UnderlyingPricingData",
     # Parameter classes
     "MonteCarloParams",
