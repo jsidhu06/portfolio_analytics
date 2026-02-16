@@ -77,13 +77,11 @@ class _BSMValuationBase:
         discrete_dividends = self.parent.underlying.discrete_dividends
         if not discrete_dividends:
             return spot
-        if self.parent.discount_curve.flat_rate is None:
-            raise NotImplementedError("Discrete dividend adjustments require a flat curve.")
         pv_divs = pv_discrete_dividends(
             discrete_dividends,
             self.parent.pricing_date,
             self.parent.maturity,
-            float(self.parent.discount_curve.flat_rate),
+            discount_curve=self.parent.discount_curve,
         )
         return max(spot - pv_divs, 0.0)
 

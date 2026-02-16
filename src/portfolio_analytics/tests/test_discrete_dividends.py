@@ -3,7 +3,6 @@
 import datetime as dt
 
 import numpy as np
-import pytest
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.enums import DayCountConvention
@@ -122,7 +121,7 @@ def test_discrete_dividend_engine_consistency():
     assert np.isclose(pde_pv, binom_adj, rtol=0.02)
 
 
-def test_binomial_rejects_discrete_dividends_with_nonflat_curve():
+def test_binomial_accepts_discrete_dividends_with_nonflat_curve():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = pricing_date + dt.timedelta(days=365)
     nonflat_curve = DiscountCurve(
@@ -149,14 +148,10 @@ def test_binomial_rejects_discrete_dividends_with_nonflat_curve():
         currency="USD",
     )
 
-    with pytest.raises(
-        NotImplementedError,
-        match="Discrete dividends with time-varying discount curves",
-    ):
-        OptionValuation(
-            "put_binom_nonflat",
-            underlying,
-            spec,
-            PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=400),
-        ).present_value()
+    OptionValuation(
+        "put_binom_nonflat",
+        underlying,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=400),
+    ).present_value()

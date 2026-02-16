@@ -125,21 +125,40 @@ def pv_discrete_dividends(
     dividends: list[tuple[datetime, float]],
     pricing_date: datetime,
     maturity: datetime,
-    short_rate: float,
+    short_rate: float | None = None,
+    discount_curve: ForwardCurve | None = None,
+    start_date: datetime | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Present value of discrete cash dividends between pricing_date and maturity.
 
-    Only dividends with pricing_date < ex_date <= maturity are included.
+    Only dividends with start_date < ex_date <= maturity are included.
     """
     if not dividends:
         return 0.0
 
+    if discount_curve is None and short_rate is None:
+        raise ValueError("Provide either short_rate or discount_curve for dividend PV.")
+    if discount_curve is not None and short_rate is not None:
+        raise ValueError("Provide only one of short_rate or discount_curve.")
+
+    start_date = pricing_date if start_date is None else start_date
+    t_start = calculate_year_fraction(pricing_date, start_date, day_count_convention)
+
+    df_start = 1.0
+    if discount_curve is not None:
+        df_start = float(discount_curve.df(t_start))
+
     pv = 0.0
     for ex_date, amount in dividends:
-        if pricing_date < ex_date <= maturity:
-            t = calculate_year_fraction(pricing_date, ex_date, day_count_convention)
-            pv += float(amount) * np.exp(-short_rate * t)
+        if start_date < ex_date <= maturity:
+            t_ex = calculate_year_fraction(pricing_date, ex_date, day_count_convention)
+            if discount_curve is not None:
+                df_ex = float(discount_curve.df(t_ex))
+                df = df_ex / df_start
+            else:
+                df = np.exp(-float(short_rate) * (t_ex - t_start))
+            pv += float(amount) * df
     return float(pv)
 
 
@@ -171,7 +190,11 @@ def forward_price(
 
     if discrete_dividends:
         pv_divs = pv_discrete_dividends(
-            discrete_dividends, pricing_date, maturity, short_rate, day_count_convention
+            discrete_dividends,
+            pricing_date,
+            maturity,
+            short_rate,
+            day_count_convention=day_count_convention,
         )
         prepaid_forward = spot - pv_divs
         return float(prepaid_forward * np.exp(short_rate * t))

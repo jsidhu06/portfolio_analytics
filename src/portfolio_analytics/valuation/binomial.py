@@ -69,23 +69,12 @@ class _BinomialValuationBase:
 
         p = (growth - d) / (u - d)
 
-        if self.parent.underlying.discrete_dividends and discount_curve.flat_rate is None:
-            raise NotImplementedError(
-                "Discrete dividends with time-varying discount curves are not supported."
-            )
-
-        short_rate_for_divs = (
-            float(discount_curve.flat_rate)
-            if discount_curve.flat_rate is not None
-            else float(forward_rates[0])
-        )
-
         spot_lattice = self._build_spot_lattice(
             num_steps=num_steps,
             time_intervals=time_intervals,
             up=u,
             down=d,
-            short_rate=short_rate_for_divs,
+            discount_curve=discount_curve,
         )
 
         discount_factors = np.exp(-forward_rates * delta_t)
@@ -98,7 +87,7 @@ class _BinomialValuationBase:
         time_intervals: pd.DatetimeIndex,
         up: float,
         down: float,
-        short_rate: float,
+        discount_curve,
     ) -> np.ndarray:
         """Build a CRR spot lattice with time on columns (row=down moves, col=time)."""
         spot = float(self.parent.underlying.initial_value)
@@ -111,7 +100,10 @@ class _BinomialValuationBase:
 
         if discrete_dividends:
             pv_all = pv_discrete_dividends(
-                discrete_dividends, time_intervals[0], time_intervals[-1], short_rate
+                discrete_dividends,
+                time_intervals[0],
+                time_intervals[-1],
+                discount_curve=discount_curve,
             )
             spot = max(spot - pv_all, 0.0)
 
@@ -122,7 +114,13 @@ class _BinomialValuationBase:
 
         pv_remaining = np.array(
             [
-                pv_discrete_dividends(discrete_dividends, t, time_intervals[-1], short_rate)
+                pv_discrete_dividends(
+                    discrete_dividends,
+                    time_intervals[0],
+                    time_intervals[-1],
+                    discount_curve=discount_curve,
+                    start_date=t,
+                )
                 for t in time_intervals
             ],
             dtype=float,
