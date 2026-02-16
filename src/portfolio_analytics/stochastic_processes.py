@@ -44,6 +44,12 @@ class SimulationConfig:
         if self.paths is None or int(self.paths) <= 0:
             raise ValueError("SimulationConfig.paths must be a positive integer")
 
+        if not isinstance(self.day_count_convention, DayCountConvention):
+            raise TypeError(
+                f"day_count_convention must be a DayCountConvention enum, "
+                f"got {type(self.day_count_convention).__name__}"
+            )
+
         has_end_date = self.end_date is not None
         has_time_grid = self.time_grid is not None
         has_frequency = self.frequency is not None

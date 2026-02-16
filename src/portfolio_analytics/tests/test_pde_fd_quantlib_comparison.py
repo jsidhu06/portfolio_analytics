@@ -10,7 +10,7 @@ import pytest
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import flat_curve, build_curve_from_forwards
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.params import PDEParams
 
@@ -37,31 +37,6 @@ PDE_CFG = PDEParams(spot_steps=200, time_steps=200, max_iter=20_000)
 def _market_data(r_curve: DiscountCurve | None = None) -> MarketData:
     curve = r_curve if r_curve is not None else flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
-
-
-def _build_curve_from_forwards(
-    *,
-    name: str,
-    times: np.ndarray,
-    forwards: np.ndarray,
-) -> DiscountCurve:
-    times = np.asarray(times, dtype=float)
-    forwards = np.asarray(forwards, dtype=float)
-    if times.ndim != 1 or forwards.ndim != 1:
-        raise ValueError("times/forwards must be 1D arrays")
-    if times.size < 2:
-        raise ValueError("times must include at least [0, T]")
-    if forwards.size != times.size - 1:
-        raise ValueError("forwards must have length len(times)-1")
-    if not np.isclose(times[0], 0.0):
-        raise ValueError("times must start at 0.0")
-
-    dfs = np.empty_like(times)
-    dfs[0] = 1.0
-    for i in range(forwards.size):
-        dt = times[i + 1] - times[i]
-        dfs[i + 1] = dfs[i] * np.exp(-forwards[i] * dt)
-    return DiscountCurve(name=name, times=times, dfs=dfs)
 
 
 def _ql_curve_from_times(
@@ -350,7 +325,7 @@ def test_american_fd_vs_quantlib_discrete_div():
 def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = _build_curve_from_forwards(name="r_curve", times=times, forwards=forwards)
+    r_curve = build_curve_from_forwards(name="r_curve", times=times, forwards=forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -385,11 +360,11 @@ def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
 def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, option_type):
     r_times = np.array([0.0, 1.0])
     r_forwards = np.array([0.04])
-    r_curve = _build_curve_from_forwards(name="r_flat", times=r_times, forwards=r_forwards)
+    r_curve = build_curve_from_forwards(name="r_flat", times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 0.25, 0.5, 1.0])
     q_forwards = np.array([0.00, 0.02, 0.04])
-    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -426,11 +401,11 @@ def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, opt
 def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 0.25, 0.5, 1.0])
     q_forwards = np.array([0.01, 0.02, 0.00])
-    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -467,7 +442,7 @@ def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, 
 def test_american_fd_vs_quantlib_nonflat_rate_with_discrete_divs(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 1.0])
     q_dfs = np.array([1.0, 1.0])

@@ -16,7 +16,7 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import flat_curve, build_curve_from_forwards
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -43,35 +43,10 @@ def _market_data(r_curve: DiscountCurve | None = None) -> MarketData:
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
-def _build_curve_from_forwards(
-    *,
-    name: str,
-    times: np.ndarray,
-    forwards: np.ndarray,
-) -> DiscountCurve:
-    times = np.asarray(times, dtype=float)
-    forwards = np.asarray(forwards, dtype=float)
-    if times.ndim != 1 or forwards.ndim != 1:
-        raise ValueError("times/forwards must be 1D arrays")
-    if times.size < 2:
-        raise ValueError("times must include at least [0, T]")
-    if forwards.size != times.size - 1:
-        raise ValueError("forwards must have length len(times)-1")
-    if not np.isclose(times[0], 0.0):
-        raise ValueError("times must start at 0.0")
-
-    dfs = np.empty_like(times)
-    dfs[0] = 1.0
-    for i in range(forwards.size):
-        dt = times[i + 1] - times[i]
-        dfs[i + 1] = dfs[i] * np.exp(-forwards[i] * dt)
-    return DiscountCurve(name=name, times=times, dfs=dfs)
-
-
 def _nonflat_r_curve() -> DiscountCurve:
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
-    return _build_curve_from_forwards(name="r_curve_nonflat", times=times, forwards=forwards)
+    return build_curve_from_forwards(name="r_curve_nonflat", times=times, forwards=forwards)
 
 
 def _underlying(
@@ -415,8 +390,8 @@ def test_european_method_equivalence_with_forward_curves(
     q_forwards,
 ):
     """European BSM, MC, PDE FD, and binomial should agree under time-varying curves."""
-    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
-    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
     gbm = _gbm(
@@ -494,8 +469,8 @@ def test_american_method_equivalence_with_forward_curves(
     q_forwards,
 ):
     """American MC, PDE FD, and binomial should agree under time-varying curves."""
-    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
-    q_curve = _build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
     gbm = _gbm(

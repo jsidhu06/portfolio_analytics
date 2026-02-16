@@ -405,15 +405,25 @@ class TestSimulationConfig:
         assert config.day_count_convention == DayCountConvention.ACT_365F  # default
 
     def test_simulation_config_custom_day_count(self):
-        """Test SimulationConfig with custom day count convention."""
+        """Test SimulationConfig with a non-default DayCountConvention."""
         config = SimulationConfig(
             paths=1000,
             frequency="W",
             end_date=dt.datetime(2026, 1, 1),
-            day_count_convention=360,
+            day_count_convention=DayCountConvention.ACT_360,
         )
 
-        assert config.day_count_convention == 360
+        assert config.day_count_convention == DayCountConvention.ACT_360
+
+    def test_simulation_config_rejects_non_enum_day_count(self):
+        """Passing a raw int/str instead of DayCountConvention must raise TypeError."""
+        with pytest.raises(TypeError, match="day_count_convention must be a DayCountConvention"):
+            SimulationConfig(
+                paths=1000,
+                frequency="W",
+                end_date=dt.datetime(2026, 1, 1),
+                day_count_convention=360,
+            )
 
     def test_simulation_config_with_special_dates(self):
         """Test SimulationConfig with special dates."""

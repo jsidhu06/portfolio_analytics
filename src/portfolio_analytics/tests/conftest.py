@@ -2,7 +2,6 @@
 
 import datetime as dt
 
-import numpy as np
 import pytest
 
 from portfolio_analytics.enums import (
@@ -139,32 +138,7 @@ def standard_discrete_dividends(pricing_date: dt.datetime) -> list[tuple[dt.date
 
 
 # ---------------------------------------------------------------------------
-# Helpers (non-fixture utilities available via import)
+# Re-export helpers for convenience (non-fixture utilities available via import)
 # ---------------------------------------------------------------------------
 
-
-def build_curve_from_forwards(
-    *,
-    name: str,
-    times: np.ndarray,
-    forwards: np.ndarray,
-) -> DiscountCurve:
-    """Build a DiscountCurve from piecewise-constant forward rates.
-
-    Parameters
-    ----------
-    name : str
-        Curve name.
-    times : np.ndarray
-        Time grid including 0. Shape ``(N+1,)``.
-    forwards : np.ndarray
-        Forward rate on each interval. Shape ``(N,)``.
-
-    Returns
-    -------
-    DiscountCurve
-    """
-    dt_steps = np.diff(times)
-    cum_rate = np.concatenate([[0.0], np.cumsum(forwards * dt_steps)])
-    dfs = np.exp(-cum_rate)
-    return DiscountCurve(name=name, times=times, dfs=dfs)
+from portfolio_analytics.tests.helpers import build_curve_from_forwards  # noqa: F401,E402
