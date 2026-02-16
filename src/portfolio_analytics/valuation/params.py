@@ -140,6 +140,9 @@ class PDEParams:
         max_iter: Maximum PSOR iterations per time step (American only).
                    Default: 20000
         method: Time-stepping scheme for the FD solver.
+        rannacher_steps:
+            Number of implicit substeps used to smooth the initial condition
+            when method is CRANK_NICOLSON. Typical: 2. Set 0 to disable.
         space_grid: Spatial discretization grid in spot or log-spot space.
         american_solver: Early exercise handling for American options.
         control_variate_european:
@@ -157,6 +160,7 @@ class PDEParams:
     tol: float = 1e-6
     max_iter: int = 20_000
     method: PDEMethod | str = PDEMethod.CRANK_NICOLSON
+    rannacher_steps: int = 2
     space_grid: PDESpaceGrid | str = PDESpaceGrid.SPOT
     american_solver: PDEEarlyExercise | str = PDEEarlyExercise.GAUSS_SEIDEL
     control_variate_european: bool = False
@@ -181,6 +185,8 @@ class PDEParams:
             raise ValidationError(f"tol must be positive, got {self.tol}")
         if self.max_iter < 1:
             raise ValidationError(f"max_iter must be >= 1, got {self.max_iter}")
+        if self.rannacher_steps < 0:
+            raise ValidationError(f"rannacher_steps must be >= 0, got {self.rannacher_steps}")
         if not isinstance(self.method, PDEMethod):
             raise ValidationError(f"method must be a PDEMethod, got {self.method}")
         if not isinstance(self.space_grid, PDESpaceGrid):

@@ -8,6 +8,7 @@ Current scope
 -------------
 PDE via finite differences for vanilla European and American call/put:
 - time stepping: implicit, explicit, or Crank–Nicolson
+- optional Rannacher smoothing for Crank–Nicolson
 - spatial grids: spot or log-spot
 - American handling: intrinsic projection or Gauss-Seidel/PSOR
 """
@@ -394,6 +395,7 @@ def _vanilla_fd_core(
     time_steps: int,
     early_exercise: bool,
     method: PDEMethod,
+    rannacher_steps: int,
     space_grid: PDESpaceGrid,
     american_solver: PDEEarlyExercise,
     omega: float | None = None,
@@ -497,12 +499,24 @@ def _vanilla_fd_core(
     psor_max_iters = 0
     psor_not_converged = 0
 
-    for n in range(1, tau_grid.size):
-        d_tau = tau_grid[n] - tau_grid[n - 1]
-        tau = float(tau_grid[n])
-        t_prev = time_to_maturity - float(tau_grid[n - 1])
-        t_curr = time_to_maturity - float(tau_grid[n])
-        # We march backward in calendar time, so t_curr < t_prev.
+    # Build step schedule: (tau_start, tau_end, method_for_step)
+    # Rannacher smoothing subdivides the first tau interval into implicit sub-steps.
+    steps: list[tuple[float, float, PDEMethod]] = []
+    if method is PDEMethod.CRANK_NICOLSON and rannacher_steps > 0 and tau_grid.size > 1:
+        tau0, tau1 = float(tau_grid[0]), float(tau_grid[1])
+        d_tau_sub = (tau1 - tau0) / rannacher_steps
+        for k in range(rannacher_steps):
+            steps.append((tau0 + k * d_tau_sub, tau0 + (k + 1) * d_tau_sub, PDEMethod.IMPLICIT))
+        for n in range(2, tau_grid.size):
+            steps.append((float(tau_grid[n - 1]), float(tau_grid[n]), method))
+    else:
+        for n in range(1, tau_grid.size):
+            steps.append((float(tau_grid[n - 1]), float(tau_grid[n]), method))
+
+    for tau_prev, tau_curr, method_used in steps:
+        d_tau = tau_curr - tau_prev
+        t_prev = time_to_maturity - tau_prev
+        t_curr = time_to_maturity - tau_curr
 
         r = float(discount_curve.forward_rate(t_curr, t_prev))
         if dividend_curve is not None:
@@ -532,7 +546,7 @@ def _vanilla_fd_core(
             dq_0t = float(dividend_curve.df(t_curr))
             dq_tT = dq_0T / dq_0t
         else:
-            dq_tT = float(np.exp(-q * tau))
+            dq_tT = float(np.exp(-q * tau_curr))
 
         left, right = _boundary_values(
             option_type=option_type,
@@ -549,7 +563,7 @@ def _vanilla_fd_core(
 
         intrinsic_for_step = intrinsic if early_exercise else None
 
-        if method is PDEMethod.EXPLICIT:
+        if method_used is PDEMethod.EXPLICIT:
             V = _explicit_step(V_old, j, a, b, c, left, right, intrinsic_for_step)
         else:
             V, psor_iters = _implicit_cn_step(
@@ -561,7 +575,7 @@ def _vanilla_fd_core(
                 c,
                 left,
                 right,
-                method,
+                method_used,
                 spot_steps,
                 intrinsic_for_step,
                 american_solver,
@@ -578,7 +592,7 @@ def _vanilla_fd_core(
 
         # Apply discrete dividend jump at tau if needed
         if dividend_map:
-            amount = dividend_map.get(round(tau, 12))
+            amount = dividend_map.get(round(tau_curr, 12))
             if amount is not None:
                 _apply_dividend_jump(V, grid, amount, space_grid=space_grid)
                 if early_exercise:
@@ -612,6 +626,7 @@ def _european_vanilla_fd(
     spot_steps: int,
     time_steps: int,
     method: PDEMethod,
+    rannacher_steps: int,
     space_grid: PDESpaceGrid,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     return _vanilla_fd_core(
@@ -628,6 +643,7 @@ def _european_vanilla_fd(
         time_steps=time_steps,
         early_exercise=False,
         method=method,
+        rannacher_steps=rannacher_steps,
         space_grid=space_grid,
         american_solver=PDEEarlyExercise.INTRINSIC,
     )
@@ -647,6 +663,7 @@ def _american_vanilla_fd(
     spot_steps: int,
     time_steps: int,
     method: PDEMethod,
+    rannacher_steps: int,
     space_grid: PDESpaceGrid,
     american_solver: PDEEarlyExercise,
     omega: float,
@@ -667,6 +684,7 @@ def _american_vanilla_fd(
         time_steps=time_steps,
         early_exercise=True,
         method=method,
+        rannacher_steps=rannacher_steps,
         space_grid=space_grid,
         american_solver=american_solver,
         omega=omega,
@@ -732,6 +750,7 @@ class _FDEuropeanValuation:
             spot_steps=spot_steps,
             time_steps=time_steps,
             method=params.method,
+            rannacher_steps=int(params.rannacher_steps),
             space_grid=params.space_grid,
         )
 
@@ -805,6 +824,7 @@ class _FDAmericanValuation:
             spot_steps=spot_steps,
             time_steps=time_steps,
             method=params.method,
+            rannacher_steps=int(params.rannacher_steps),
             space_grid=params.space_grid,
             american_solver=params.american_solver,
             omega=omega,
