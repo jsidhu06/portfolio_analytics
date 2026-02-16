@@ -5,6 +5,7 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from portfolio_analytics.exceptions import StabilityError, UnsupportedFeatureError
 from portfolio_analytics.enums import (
     DayCountConvention,
     ExerciseType,
@@ -291,7 +292,7 @@ def test_pde_fd_grid_method_equivalence_european():
             )
 
             if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
-                with pytest.raises(ValueError, match="Explicit spot-grid scheme unstable"):
+                with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
                     OptionValuation(
                         "pde_var", ud, spec, PricingMethod.PDE_FD, params=params
                     ).present_value()
@@ -329,14 +330,16 @@ def test_pde_fd_grid_method_equivalence_american():
                 )
 
                 if method is PDEMethod.EXPLICIT and solver is PDEEarlyExercise.GAUSS_SEIDEL:
-                    with pytest.raises(ValueError, match="GAUSS_SEIDEL is not supported"):
+                    with pytest.raises(
+                        UnsupportedFeatureError, match="GAUSS_SEIDEL is not supported"
+                    ):
                         OptionValuation(
                             "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
                         ).present_value()
                     continue
 
                 if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
-                    with pytest.raises(ValueError, match="Explicit spot-grid scheme unstable"):
+                    with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
                         OptionValuation(
                             "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
                         ).present_value()

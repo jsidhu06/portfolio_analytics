@@ -5,6 +5,7 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from portfolio_analytics.exceptions import UnsupportedFeatureError, ValidationError
 from portfolio_analytics.enums import (
     DayCountConvention,
     ExerciseType,
@@ -179,7 +180,7 @@ def test_implied_volatility_rejects_out_of_bounds_price():
     valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
     target_price = valuation.present_value() + 1000.0
 
-    with pytest.raises(ValueError, match="outside no-arbitrage bounds"):
+    with pytest.raises(ValidationError, match="outside no-arbitrage bounds"):
         implied_volatility(target_price, valuation)
 
 
@@ -214,7 +215,7 @@ def test_implied_volatility_rejects_monte_carlo():
     )
     target_price = valuation.present_value()
 
-    with pytest.raises(NotImplementedError, match="pricing methods"):
+    with pytest.raises(UnsupportedFeatureError, match="pricing methods"):
         implied_volatility(target_price, valuation)
 
 
@@ -223,7 +224,7 @@ def test_implied_volatility_rejects_american_bsm():
     target_price = valuation.present_value()
 
     valuation.exercise_type = ExerciseType.AMERICAN
-    with pytest.raises(NotImplementedError, match="European"):
+    with pytest.raises(UnsupportedFeatureError, match="European"):
         implied_volatility(target_price, valuation)
 
 

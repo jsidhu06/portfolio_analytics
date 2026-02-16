@@ -1,6 +1,7 @@
 import pytest
 import datetime as dt
 import numpy as np
+from portfolio_analytics.exceptions import ConfigurationError, ValidationError
 from portfolio_analytics.stochastic_processes import (
     PathSimulation,
     GeometricBrownianMotion,
@@ -417,7 +418,9 @@ class TestSimulationConfig:
 
     def test_simulation_config_rejects_non_enum_day_count(self):
         """Passing a raw int/str instead of DayCountConvention must raise TypeError."""
-        with pytest.raises(TypeError, match="day_count_convention must be a DayCountConvention"):
+        with pytest.raises(
+            ConfigurationError, match="day_count_convention must be a DayCountConvention"
+        ):
             SimulationConfig(
                 paths=1000,
                 frequency="W",
@@ -469,7 +472,7 @@ class TestSimulationConfig:
             ]
         )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             SimulationConfig(
                 paths=500,
                 end_date=dt.datetime(2026, 1, 1),
@@ -478,7 +481,7 @@ class TestSimulationConfig:
 
     def test_simulation_config_with_frequency_and_num_steps_raise_error(self):
         """Supplying both frequency and num_steps should raise."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             SimulationConfig(
                 paths=500,
                 end_date=dt.datetime(2026, 1, 1),

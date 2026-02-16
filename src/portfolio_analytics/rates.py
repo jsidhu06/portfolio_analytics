@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import numpy as np
 
+from .exceptions import ValidationError
+
 
 @dataclass(frozen=True, slots=True)
 class DiscountCurve:
@@ -21,17 +23,17 @@ class DiscountCurve:
         t = np.asarray(self.times, dtype=float)
         df = np.asarray(self.dfs, dtype=float)
         if t.ndim != 1 or df.ndim != 1 or t.shape != df.shape:
-            raise ValueError("times and dfs must be 1D arrays of the same length")
+            raise ValidationError("times and dfs must be 1D arrays of the same length")
         if np.any(np.diff(t) <= 0.0):
-            raise ValueError("times must be strictly increasing")
+            raise ValidationError("times must be strictly increasing")
         if np.any(df <= 0.0) or np.any(df > 1.0 + 1e-12):
-            raise ValueError("discount factors must be in (0, 1]")
+            raise ValidationError("discount factors must be in (0, 1]")
         if self.flat_rate is not None and not np.isfinite(float(self.flat_rate)):
-            raise ValueError("flat_rate must be finite when provided")
+            raise ValidationError("flat_rate must be finite when provided")
         if self.flat_rate is not None:
             implied = np.exp(-float(self.flat_rate) * t)
             if not np.allclose(df, implied, rtol=1e-10, atol=1e-12):
-                raise ValueError(
+                raise ValidationError(
                     "flat_rate is only allowed when consistent with the provided discount factors"
                 )
         object.__setattr__(self, "times", t)
@@ -46,9 +48,9 @@ class DiscountCurve:
         steps: int = 1,
     ) -> "DiscountCurve":
         if end_time <= 0.0:
-            raise ValueError("end_time must be positive")
+            raise ValidationError("end_time must be positive")
         if steps < 1:
-            raise ValueError("steps must be >= 1")
+            raise ValidationError("steps must be >= 1")
         times = np.linspace(0.0, float(end_time), int(steps) + 1)
         dfs = np.exp(-float(rate) * times)
         return cls(name=name, times=times, dfs=dfs, flat_rate=float(rate))
@@ -63,7 +65,7 @@ class DiscountCurve:
     def forward_rate(self, t0: float, t1: float) -> float:
         """Continuously-compounded forward rate between t0 and t1."""
         if t1 <= t0:
-            raise ValueError("Need t1 > t0")
+            raise ValidationError("Need t1 > t0")
         df0 = float(self.df(t0))
         df1 = float(self.df(t1))
         return (np.log(df0) - np.log(df1)) / (t1 - t0)
@@ -72,7 +74,7 @@ class DiscountCurve:
         """Forward rates on each interval of a time grid."""
         grid = np.asarray(grid, dtype=float)
         if np.any(np.diff(grid) <= 0.0):
-            raise ValueError("grid must be strictly increasing")
+            raise ValidationError("grid must be strictly increasing")
         df_grid = self.df(grid)
         dt = np.diff(grid)
         return (np.log(df_grid[:-1]) - np.log(df_grid[1:])) / dt

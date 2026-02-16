@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 from ..enums import OptionType, AsianAveraging, ExerciseType
 from ..utils import calculate_year_fraction, pv_discrete_dividends, log_timing
+from ..exceptions import (
+    ArbitrageViolationError,
+    ConfigurationError,
+    NumericalError,
+    ValidationError,
+)
 from .params import BinomialParams
 
 if TYPE_CHECKING:
@@ -23,7 +29,9 @@ class _BinomialValuationBase:
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
         if not isinstance(parent.params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
+            raise ConfigurationError(
+                "Binomial valuation requires BinomialParams on OptionValuation"
+            )
         self.binom_params: BinomialParams = parent.params
 
     def _setup_binomial_parameters(
@@ -53,7 +61,7 @@ class _BinomialValuationBase:
         )
         dt_steps = np.diff(time_grid)
         if not np.allclose(dt_steps, dt_steps[0]):
-            raise ValueError("Binomial tree requires equal time steps.")
+            raise ValidationError("Binomial tree requires equal time steps.")
         delta_t = float(dt_steps[0])
 
         sigma = float(self.parent.underlying.volatility)
@@ -71,7 +79,7 @@ class _BinomialValuationBase:
 
         growth = np.exp((forward_rates - dividend_forwards) * delta_t)
         if np.any(growth <= d) or np.any(growth >= u):
-            raise ValueError(
+            raise ArbitrageViolationError(
                 "Arbitrage condition violated: d < exp((f-g)*dt) < u for at least one step"
             )
 
@@ -152,7 +160,7 @@ class _BinomialValuationBase:
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
             if K is None:
-                raise ValueError("strike is required for vanilla call/put payoff.")
+                raise ValidationError("strike is required for vanilla call/put payoff.")
             if self.parent.option_type is OptionType.CALL:
                 return np.maximum(instrument_values - K, 0)
             return np.maximum(K - instrument_values, 0)
@@ -235,14 +243,14 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
         if self.binom_params.mc_paths is None:
-            raise ValueError("BinomialParams.mc_paths must be set for Asian binomial MC")
+            raise ValidationError("BinomialParams.mc_paths must be set for Asian binomial MC")
 
         mc_paths = int(self.binom_params.mc_paths)
         rng = np.random.default_rng(self.binom_params.random_seed)
 
         K = self.parent.strike
         if K is None:
-            raise ValueError("strike is required for Asian option payoff.")
+            raise ValidationError("strike is required for Asian option payoff.")
 
         # Vectorized simulation of binomial paths:
         # draw Bernoulli down-steps for each path and step
@@ -262,7 +270,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         prices = spot_lattice[row_idx, col_idx]  # (I, M+1)
         if self.parent.spec.averaging is AsianAveraging.GEOMETRIC:
             if np.any(prices <= 0.0):
-                raise ValueError("Geometric averaging requires strictly positive path prices.")
+                raise NumericalError("Geometric averaging requires strictly positive path prices.")
             avg_s = np.exp(np.mean(np.log(prices), axis=1))  # (I,)
         else:
             avg_s = prices.mean(axis=1)  # (I,)
@@ -278,7 +286,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         """Compute Asian option intrinsic payoff given average price(s)."""
         K = self.parent.strike
         if K is None:
-            raise ValueError("strike is required for Asian option payoff.")
+            raise ValidationError("strike is required for Asian option payoff.")
         if self.parent.spec.call_put is OptionType.CALL:
             return np.maximum(avg_price - K, 0.0)
         return np.maximum(K - avg_price, 0.0)
@@ -344,21 +352,23 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         averaging = self.parent.spec.averaging
         if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
-            raise ValueError("Unsupported Asian averaging type for Hull binomial valuation.")
+            raise ValidationError("Unsupported Asian averaging type for Hull binomial valuation.")
 
         if self.binom_params.asian_tree_averages is None:
-            raise ValueError(
+            raise ValidationError(
                 "BinomialParams.asian_tree_averages must be set for Hull binomial Asian valuation"
             )
 
         averaging_start = self.parent.spec.averaging_start
         if averaging_start is not None and averaging_start != self.parent.pricing_date:
-            raise ValueError("Hull binomial Asian valuation requires averaging_start=pricing_date.")
+            raise ValidationError(
+                "Hull binomial Asian valuation requires averaging_start=pricing_date."
+            )
 
         k = int(self.binom_params.asian_tree_averages)
         if averaging is AsianAveraging.GEOMETRIC:
             if np.any(spot_lattice <= 0.0):
-                raise ValueError(
+                raise NumericalError(
                     "Hull binomial geometric averaging requires strictly positive spot lattice."
                 )
             log_spot_lattice = np.log(spot_lattice)

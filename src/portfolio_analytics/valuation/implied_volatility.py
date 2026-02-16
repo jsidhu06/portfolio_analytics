@@ -18,6 +18,12 @@ from ..enums import (
     GreekCalculationMethod,
 )
 from ..utils import calculate_year_fraction, pv_discrete_dividends, log_timing
+from ..exceptions import (
+    ConfigurationError,
+    ConvergenceError,
+    UnsupportedFeatureError,
+    ValidationError,
+)
 from .core import OptionValuation, UnderlyingPricingData
 from .params import BinomialParams
 
@@ -72,7 +78,7 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
         day_count_convention=DayCountConvention.ACT_365F,
     )
     if time_to_maturity <= 0:
-        raise ValueError("Option maturity must be after pricing date.")
+        raise ValidationError("Option maturity must be after pricing date.")
 
     strike = float(valuation.strike)
 
@@ -101,7 +107,9 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
 
 def _valuation_with_vol(valuation: OptionValuation, vol: float) -> OptionValuation:
     if not isinstance(valuation.underlying, UnderlyingPricingData):
-        raise TypeError("Implied volatility requires UnderlyingPricingData (not PathSimulation).")
+        raise ConfigurationError(
+            "Implied volatility requires UnderlyingPricingData (not PathSimulation)."
+        )
 
     bumped_underlying = valuation.underlying.replace(volatility=float(vol))
     return OptionValuation(
@@ -220,7 +228,7 @@ def _bisection(
     f_high = f(high)
 
     if f_low > 0 or f_high < 0:
-        raise ValueError("Price not bracketed by vol_bounds; adjust bounds.")
+        raise ConvergenceError("Price not bracketed by vol_bounds; adjust bounds.")
 
     vol = 0.5 * (low + high)
     for i in range(max_iter):
@@ -281,25 +289,25 @@ def implied_volatility(
     """
 
     if not isinstance(valuation, OptionValuation):
-        raise TypeError("valuation must be an OptionValuation instance")
+        raise ConfigurationError("valuation must be an OptionValuation instance")
     if valuation.option_type not in (OptionType.CALL, OptionType.PUT):
-        raise NotImplementedError("Implied volatility is only supported for vanilla CALL/PUT.")
+        raise UnsupportedFeatureError("Implied volatility is only supported for vanilla CALL/PUT.")
     if valuation.pricing_method == PricingMethod.BSM:
         if valuation.exercise_type != ExerciseType.EUROPEAN:
-            raise NotImplementedError("BSM implied volatility supports European options only.")
+            raise UnsupportedFeatureError("BSM implied volatility supports European options only.")
     elif valuation.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
-        raise NotImplementedError(
+        raise UnsupportedFeatureError(
             "Implied volatility supports BSM, BINOMIAL, or PDE_FD pricing methods only."
         )
 
     if not np.isfinite(target_price):
-        raise ValueError("target_price must be finite")
+        raise ValidationError("target_price must be finite")
     if target_price < 0:
-        raise ValueError("target_price must be non-negative")
+        raise ValidationError("target_price must be non-negative")
 
     low, high = vol_bounds
     if low <= 0 or high <= 0 or low >= high:
-        raise ValueError("vol_bounds must be positive and satisfy low < high")
+        raise ValidationError("vol_bounds must be positive and satisfy low < high")
 
     if valuation.pricing_method == PricingMethod.BINOMIAL and isinstance(
         valuation.params, BinomialParams
@@ -324,7 +332,7 @@ def implied_volatility(
 
     min_price, max_price = _price_bounds(valuation)
     if target_price < min_price - tol or target_price > max_price + tol:
-        raise ValueError("target_price is outside no-arbitrage bounds for the provided inputs")
+        raise ValidationError("target_price is outside no-arbitrage bounds for the provided inputs")
 
     def price_at(vol: float) -> float:
         return _valuation_with_vol(valuation, vol).present_value()
@@ -353,7 +361,7 @@ def implied_volatility(
 
     low, high, f_low, f_high = _bracket_volatility(f=f, low=low, high=high)
     if f_low > 0 or f_high < 0:
-        raise ValueError("Price not bracketed by vol_bounds; adjust bounds.")
+        raise ConvergenceError("Price not bracketed by vol_bounds; adjust bounds.")
 
     with log_timing(logger, "Implied vol solver", log_timings):
         if method == ImpliedVolMethod.NEWTON_RAPHSON:
@@ -378,7 +386,7 @@ def implied_volatility(
                 converged=True,
             )
         else:
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 f"Implied vol method '{method.value}' is not implemented in this solver."
             )
 

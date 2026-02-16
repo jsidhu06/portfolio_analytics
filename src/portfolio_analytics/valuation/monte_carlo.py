@@ -7,6 +7,7 @@ import numpy as np
 from ..utils import calculate_year_fraction, log_timing
 
 from ..enums import OptionType, AsianAveraging
+from ..exceptions import ConfigurationError, NumericalError, ValidationError
 from .params import MonteCarloParams
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
     """Return the index of *target* in *time_grid*, raising ValueError if absent."""
     idx = np.where(time_grid == target)[0]
     if idx.size == 0:
-        raise ValueError(f"{label} not in underlying time_grid.")
+        raise ValidationError(f"{label} not in underlying time_grid.")
     return int(idx[0])
 
 
@@ -78,7 +79,9 @@ class _MCEuropeanValuation:
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+            raise ConfigurationError(
+                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
+            )
         self.mc_params: MonteCarloParams = parent.params
 
     def solve(self) -> np.ndarray:
@@ -92,12 +95,12 @@ class _MCEuropeanValuation:
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
             if K is None:
-                raise ValueError("strike is required for vanilla European call/put payoff.")
+                raise ValidationError("strike is required for vanilla European call/put payoff.")
             return _vanilla_payoff(self.parent.option_type, K, maturity_value)
 
         payoff_fn = getattr(self.parent.spec, "payoff", None)
         if payoff_fn is None:
-            raise ValueError("Unsupported option type for Monte Carlo valuation.")
+            raise ValidationError("Unsupported option type for Monte Carlo valuation.")
         return payoff_fn(maturity_value)
 
     def present_value(self) -> float:
@@ -132,7 +135,9 @@ class _MCAmericanValuation:
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+            raise ConfigurationError(
+                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
+            )
         self.mc_params: MonteCarloParams = parent.params
 
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
@@ -157,7 +162,7 @@ class _MCAmericanValuation:
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
             if K is None:
-                raise ValueError("strike is required for vanilla American call/put payoff.")
+                raise ValidationError("strike is required for vanilla American call/put payoff.")
             payoff = _vanilla_payoff(self.parent.option_type, K, instrument_values)
         else:
             payoff_fn = self.parent.spec.payoff
@@ -224,7 +229,9 @@ class _MCAsianValuation:
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+            raise ConfigurationError(
+                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
+            )
         self.mc_params: MonteCarloParams = parent.params
 
     def solve(self) -> np.ndarray:
@@ -247,9 +254,9 @@ class _MCAsianValuation:
         idx_end = np.where(time_grid == self.parent.maturity)[0]
 
         if idx_start.size == 0:
-            raise ValueError(f"averaging_start {averaging_start} not in underlying time_grid.")
+            raise ValidationError(f"averaging_start {averaging_start} not in underlying time_grid.")
         if idx_end.size == 0:
-            raise ValueError(f"maturity {self.parent.maturity} not in underlying time_grid.")
+            raise ValidationError(f"maturity {self.parent.maturity} not in underlying time_grid.")
 
         time_index_start = int(idx_start[0])
         time_index_end = int(idx_end[0])
@@ -265,16 +272,18 @@ class _MCAsianValuation:
             # Geometric average: (Π S_i)^(1/N)
             # Use log space for numerical stability: exp(mean(log(S_i)))
             if np.any(averaging_paths <= 0.0):
-                raise ValueError("Geometric averaging requires strictly positive path prices.")
+                raise NumericalError("Geometric averaging requires strictly positive path prices.")
             log_prices = np.log(averaging_paths)
             avg_prices = np.exp(np.mean(log_prices, axis=0))
         else:
-            raise ValueError(f"Unsupported averaging method for Asian valuation: {spec.averaging}")
+            raise ValidationError(
+                f"Unsupported averaging method for Asian valuation: {spec.averaging}"
+            )
 
         # Calculate payoff based on average
         K = self.parent.strike
         if K is None:
-            raise ValueError("strike is required for Asian option payoff.")
+            raise ValidationError("strike is required for Asian option payoff.")
 
         # Asian call: max(S_avg - K, 0)
         # Asian put: max(K - S_avg, 0)

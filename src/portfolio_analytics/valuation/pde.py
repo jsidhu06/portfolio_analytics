@@ -23,6 +23,12 @@ import numpy as np
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
 from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction, log_timing
+from ..exceptions import (
+    ConfigurationError,
+    StabilityError,
+    UnsupportedFeatureError,
+    ValidationError,
+)
 from .params import PDEParams
 
 if TYPE_CHECKING:
@@ -47,9 +53,9 @@ def _solve_tridiagonal_thomas(
     """
     n = diag.size
     if rhs.size != n:
-        raise ValueError("rhs length must match diag length")
+        raise ValidationError("rhs length must match diag length")
     if lower.size != n - 1 or upper.size != n - 1:
-        raise ValueError("lower/upper must have length n-1")
+        raise ValidationError("lower/upper must have length n-1")
 
     # Copy to avoid mutating inputs
     c = upper.astype(float, copy=True)
@@ -395,22 +401,24 @@ def _vanilla_fd_core(
     max_iter: int | None = None,
 ) -> tuple[float, np.ndarray, np.ndarray]:
     if option_type not in (OptionType.CALL, OptionType.PUT):
-        raise NotImplementedError("FD PDE valuation supports only vanilla CALL/PUT.")
+        raise UnsupportedFeatureError("FD PDE valuation supports only vanilla CALL/PUT.")
     if time_to_maturity <= 0:
-        raise ValueError("time_to_maturity must be positive")
+        raise ValidationError("time_to_maturity must be positive")
     if spot_steps < 3:
-        raise ValueError("spot_steps must be >= 3")
+        raise ValidationError("spot_steps must be >= 3")
     if time_steps < 1:
-        raise ValueError("time_steps must be >= 1")
+        raise ValidationError("time_steps must be >= 1")
     if volatility <= 0:
-        raise ValueError("volatility must be positive")
+        raise ValidationError("volatility must be positive")
     if discount_curve is None:
-        raise ValueError("discount_curve is required for PDE valuation")
+        raise ValidationError("discount_curve is required for PDE valuation")
     if early_exercise and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
         if omega is None or tol is None or max_iter is None:
-            raise ValueError("PSOR params (omega/tol/max_iter) are required for early exercise")
+            raise ValidationError(
+                "PSOR params (omega/tol/max_iter) are required for early exercise"
+            )
     if method is PDEMethod.EXPLICIT and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
-        raise ValueError("GAUSS_SEIDEL is not supported with explicit time stepping")
+        raise UnsupportedFeatureError("GAUSS_SEIDEL is not supported with explicit time stepping")
 
     smax = float(smax_mult * max(spot, strike))
     if space_grid is PDESpaceGrid.SPOT:
@@ -460,7 +468,7 @@ def _vanilla_fd_core(
 
         drift = float(np.max(np.abs(r_steps - q_steps)))
         if drift > volatility**2:
-            raise ValueError(
+            raise StabilityError(
                 "Explicit spot-grid scheme unstable: max |r-q| must be <= sigma^2. "
                 "Use log-spot or implicit/CN."
             )
@@ -471,7 +479,7 @@ def _vanilla_fd_core(
             max_dt = float(np.max(np.diff(tau_grid)))
             if max_dt > dt_max:
                 min_steps = int(math.ceil(time_to_maturity / dt_max))
-                raise ValueError(
+                raise StabilityError(
                     "Explicit spot-grid scheme unstable: time step too large. "
                     f"max_dt={max_dt:.4g} exceeds dt_max={dt_max:.4g}. "
                     f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
@@ -681,7 +689,7 @@ class _FDEuropeanValuation:
     def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         params = self.parent.params
         if not isinstance(params, PDEParams):
-            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+            raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
         logger.debug(
             "PDE European method=%s grid=%s spot_steps=%d time_steps=%d",
             params.method.value,
@@ -692,7 +700,7 @@ class _FDEuropeanValuation:
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
-            raise ValueError("strike is required for PDE FD valuation")
+            raise ValidationError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve
@@ -730,7 +738,7 @@ class _FDEuropeanValuation:
     def present_value(self) -> float:
         params = self.parent.params
         if not isinstance(params, PDEParams):
-            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+            raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
         with log_timing(logger, "PDE European present_value", params.log_timings):
             pv, *_ = self._solve()
         return float(pv)
@@ -750,7 +758,7 @@ class _FDAmericanValuation:
     def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         params = self.parent.params
         if not isinstance(params, PDEParams):
-            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+            raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
         logger.debug(
             "PDE American method=%s grid=%s solver=%s spot_steps=%d time_steps=%d",
             params.method.value,
@@ -762,7 +770,7 @@ class _FDAmericanValuation:
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
         if strike is None:
-            raise ValueError("strike is required for PDE FD valuation")
+            raise ValidationError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve
@@ -807,7 +815,7 @@ class _FDAmericanValuation:
     def present_value(self) -> float:
         params = self.parent.params
         if not isinstance(params, PDEParams):
-            raise TypeError("PDE valuation requires PDEParams on OptionValuation")
+            raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
         with log_timing(logger, "PDE American present_value", params.log_timings):
             pv, *_ = self._solve()
         return float(pv)

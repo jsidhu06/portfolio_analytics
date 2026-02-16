@@ -5,6 +5,7 @@ import numpy as np
 from scipy.stats import norm
 from ..utils import calculate_year_fraction, pv_discrete_dividends
 from ..enums import DayCountConvention, OptionType
+from ..exceptions import ValidationError
 
 if TYPE_CHECKING:
     from .core import OptionValuation
@@ -60,7 +61,7 @@ class _BSMValuationBase:
         tuple of (d1, d2)
         """
         if time_to_maturity <= 0:
-            raise ValueError("time_to_maturity must be positive")
+            raise ValidationError("time_to_maturity must be positive")
 
         forward = spot * df_q / df_r
         numerator = np.log(forward / strike) + 0.5 * volatility**2 * time_to_maturity

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import warnings
 
 from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid
+from ..exceptions import ValidationError
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,9 +36,9 @@ class MonteCarloParams:
 
     def __post_init__(self) -> None:
         if self.deg is not None and self.deg < 1:
-            raise ValueError(f"deg must be >= 1, got {self.deg}")
+            raise ValidationError(f"deg must be >= 1, got {self.deg}")
         if self.std_error_warn_ratio is not None and self.std_error_warn_ratio <= 0:
-            raise ValueError(
+            raise ValidationError(
                 f"std_error_warn_ratio must be > 0 when set, got {self.std_error_warn_ratio}"
             )
 
@@ -83,13 +84,17 @@ class BinomialParams:
 
     def __post_init__(self) -> None:
         if self.num_steps < 1:
-            raise ValueError(f"num_steps must be >= 1, got {self.num_steps}")
+            raise ValidationError(f"num_steps must be >= 1, got {self.num_steps}")
         if self.mc_paths is not None and self.asian_tree_averages is not None:
-            raise ValueError("Only one of mc_paths and asian_tree_averages can be set, got both")
+            raise ValidationError(
+                "Only one of mc_paths and asian_tree_averages can be set, got both"
+            )
         if self.mc_paths is not None and self.mc_paths < 1:
-            raise ValueError(f"mc_paths must be >= 1, got {self.mc_paths}")
+            raise ValidationError(f"mc_paths must be >= 1, got {self.mc_paths}")
         if self.asian_tree_averages is not None and self.asian_tree_averages < 1:
-            raise ValueError(f"asian_tree_averages must be >= 1, got {self.asian_tree_averages}")
+            raise ValidationError(
+                f"asian_tree_averages must be >= 1, got {self.asian_tree_averages}"
+            )
         if self.asian_tree_averages is not None:
             ratio = self.asian_tree_averages / self.num_steps
             if ratio < 0.5:
@@ -165,23 +170,23 @@ class PDEParams:
         if isinstance(self.american_solver, str):
             object.__setattr__(self, "american_solver", PDEEarlyExercise(self.american_solver))
         if self.smax_mult <= 0:
-            raise ValueError(f"smax_mult must be positive, got {self.smax_mult}")
+            raise ValidationError(f"smax_mult must be positive, got {self.smax_mult}")
         if self.spot_steps < 3:
-            raise ValueError(f"spot_steps must be >= 3, got {self.spot_steps}")
+            raise ValidationError(f"spot_steps must be >= 3, got {self.spot_steps}")
         if self.time_steps < 1:
-            raise ValueError(f"time_steps must be >= 1, got {self.time_steps}")
+            raise ValidationError(f"time_steps must be >= 1, got {self.time_steps}")
         if not (1.0 < self.omega < 2.0):
-            raise ValueError(f"omega must be in (1.0, 2.0), got {self.omega}")
+            raise ValidationError(f"omega must be in (1.0, 2.0), got {self.omega}")
         if self.tol <= 0:
-            raise ValueError(f"tol must be positive, got {self.tol}")
+            raise ValidationError(f"tol must be positive, got {self.tol}")
         if self.max_iter < 1:
-            raise ValueError(f"max_iter must be >= 1, got {self.max_iter}")
+            raise ValidationError(f"max_iter must be >= 1, got {self.max_iter}")
         if not isinstance(self.method, PDEMethod):
-            raise ValueError(f"method must be a PDEMethod, got {self.method}")
+            raise ValidationError(f"method must be a PDEMethod, got {self.method}")
         if not isinstance(self.space_grid, PDESpaceGrid):
-            raise ValueError(f"space_grid must be a PDESpaceGrid, got {self.space_grid}")
+            raise ValidationError(f"space_grid must be a PDESpaceGrid, got {self.space_grid}")
         if not isinstance(self.american_solver, PDEEarlyExercise):
-            raise ValueError(
+            raise ValidationError(
                 f"american_solver must be a PDEEarlyExercise, got {self.american_solver}"
             )
 

@@ -1,5 +1,15 @@
 """Top-level exports for common portfolio_analytics types."""
 
+from .exceptions import (
+    DerivativesAnalyticsError,
+    ValidationError,
+    ConfigurationError,
+    UnsupportedFeatureError,
+    NumericalError,
+    ArbitrageViolationError,
+    ConvergenceError,
+    StabilityError,
+)
 from .market_environment import MarketData
 from .rates import DiscountCurve
 from .stochastic_processes import (
@@ -75,4 +85,13 @@ __all__ = [
     "implied_volatility",
     # Strategies
     "CondorSpec",
+    # Exceptions
+    "DerivativesAnalyticsError",
+    "ValidationError",
+    "ConfigurationError",
+    "UnsupportedFeatureError",
+    "NumericalError",
+    "ArbitrageViolationError",
+    "ConvergenceError",
+    "StabilityError",
 ]

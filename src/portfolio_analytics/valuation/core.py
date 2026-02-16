@@ -3,6 +3,7 @@ from collections.abc import Callable, Sequence
 import datetime as dt
 import numpy as np
 from ..stochastic_processes import PathSimulation
+from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
     OptionType,
     AsianAveraging,
@@ -56,26 +57,28 @@ class OptionSpec:
     def __post_init__(self) -> None:
         """Validate option_type/exercise_type and coerce strike."""
         if not isinstance(self.option_type, OptionType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
-            raise ValueError("OptionSpec.option_type must be OptionType.CALL or OptionType.PUT")
+            raise ValidationError(
+                "OptionSpec.option_type must be OptionType.CALL or OptionType.PUT"
+            )
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
 
         if self.strike is None:
-            raise ValueError("OptionSpec.strike must be provided")
+            raise ValidationError("OptionSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise TypeError("OptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("OptionSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValueError("OptionSpec.strike must be finite")
+            raise ValidationError("OptionSpec.strike must be finite")
         if strike < 0.0:
-            raise ValueError("OptionSpec.strike must be >= 0")
+            raise ValidationError("OptionSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
 
@@ -105,11 +108,11 @@ class PayoffSpec:
 
     def __post_init__(self) -> None:
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
         if not callable(self.payoff_fn):
-            raise TypeError("payoff_fn must be callable")
+            raise ConfigurationError("payoff_fn must be callable")
 
     def payoff(self, spot: np.ndarray | float) -> np.ndarray:
         """Vectorized payoff as a function of spot."""
@@ -164,29 +167,33 @@ class AsianOptionSpec:
     def __post_init__(self) -> None:
         """Validate Asian option specification."""
         if not isinstance(self.averaging, AsianAveraging):
-            raise TypeError(
+            raise ConfigurationError(
                 f"averaging must be AsianAveraging enum, got {type(self.averaging).__name__}"
             )
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
 
         if not isinstance(self.call_put, OptionType):
-            raise TypeError(f"call_put must be OptionType enum, got {type(self.call_put).__name__}")
+            raise ConfigurationError(
+                f"call_put must be OptionType enum, got {type(self.call_put).__name__}"
+            )
         if self.call_put not in (OptionType.CALL, OptionType.PUT):
-            raise ValueError("AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT")
+            raise ValidationError(
+                "AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT"
+            )
 
         if self.strike is None:
-            raise ValueError("AsianOptionSpec.strike must be provided")
+            raise ValidationError("AsianOptionSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise TypeError("AsianOptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("AsianOptionSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValueError("AsianOptionSpec.strike must be finite")
+            raise ValidationError("AsianOptionSpec.strike must be finite")
         if strike < 0.0:
-            raise ValueError("AsianOptionSpec.strike must be >= 0")
+            raise ValidationError("AsianOptionSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
 
@@ -212,11 +219,13 @@ class UnderlyingPricingData:
             cleaned: list[tuple[dt.datetime, float]] = []
             for ex_date, amount in self.discrete_dividends:
                 if not isinstance(ex_date, dt.datetime):
-                    raise TypeError("discrete_dividends entries must be (datetime, amount) tuples")
+                    raise ConfigurationError(
+                        "discrete_dividends entries must be (datetime, amount) tuples"
+                    )
                 try:
                     amt = float(amount)
                 except (TypeError, ValueError) as exc:
-                    raise TypeError("dividend amount must be numeric") from exc
+                    raise ConfigurationError("dividend amount must be numeric") from exc
                 cleaned.append((ex_date, amt))
             object.__setattr__(
                 self,
@@ -227,7 +236,7 @@ class UnderlyingPricingData:
             object.__setattr__(self, "discrete_dividends", ())
 
         if self.dividend_curve is not None and self.discrete_dividends:
-            raise ValueError("Provide either dividend_curve or discrete_dividends, not both.")
+            raise ValidationError("Provide either dividend_curve or discrete_dividends, not both.")
 
     @property
     def pricing_date(self) -> dt.datetime:
@@ -336,7 +345,7 @@ class OptionValuation:
             self.option_type = None
 
         if self.currency != underlying.currency:
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "Cross-currency valuation is not supported. "
                 "Option currency must match the underlying market currency."
             )
@@ -353,13 +362,13 @@ class OptionValuation:
             OptionType.CALL,
             OptionType.PUT,
         ):
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "BSM pricing is only available for vanilla CALL/PUT option types."
             )
 
         # Optional sanity check: maturity must be after pricing date
         if self.maturity <= self.pricing_date:
-            raise ValueError("Option maturity must be after pricing_date.")
+            raise ValidationError("Option maturity must be after pricing_date.")
 
         # Merge pricing_date + maturity into the simulation's special_dates
         # via replace() so the caller's PathSimulation is never mutated.
@@ -371,7 +380,7 @@ class OptionValuation:
 
         # Validate pricing_method
         if not isinstance(pricing_method, PricingMethod):
-            raise TypeError(
+            raise ConfigurationError(
                 f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
             )
 
@@ -379,7 +388,7 @@ class OptionValuation:
         if pricing_method == PricingMethod.MONTE_CARLO and not isinstance(
             underlying, PathSimulation
         ):
-            raise TypeError(
+            raise ConfigurationError(
                 "Monte Carlo pricing requires underlying to be a PathSimulation instance"
             )
 
@@ -390,7 +399,7 @@ class OptionValuation:
             PricingMethod.BSM,
             PricingMethod.PDE_FD,
         ) and isinstance(underlying, PathSimulation):
-            raise TypeError(
+            raise ConfigurationError(
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
                 "Pass an UnderlyingPricingData instance instead of PathSimulation."
             )
@@ -401,11 +410,11 @@ class OptionValuation:
             PricingMethod.MONTE_CARLO,
         ):
             if self.discount_curve.flat_rate is None:
-                raise NotImplementedError(
+                raise UnsupportedFeatureError(
                     "Time-varying discount curves are only supported for BSM, BINOMIAL, PDE_FD and MONTE_CARLO."
                 )
             if getattr(self.underlying, "dividend_curve", None) is not None:
-                raise NotImplementedError(
+                raise UnsupportedFeatureError(
                     "Time-varying dividend curves are only supported for BSM, BINOMIAL, PDE_FD, and MONTE_CARLO."
                 )
         # Dispatch to appropriate pricing method implementation
@@ -414,24 +423,24 @@ class OptionValuation:
                 spec.exercise_type is ExerciseType.AMERICAN
                 and pricing_method != PricingMethod.BINOMIAL
             ):
-                raise ValueError(
+                raise ValidationError(
                     "American Asian options are only supported with BINOMIAL (Hull tree)."
                 )
             impl_cls = _ASIAN_REGISTRY.get(pricing_method)
             if impl_cls is None:
-                raise ValueError(
+                raise ValidationError(
                     "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL pricing."
                 )
         else:
             impl_cls = _VANILLA_REGISTRY.get((pricing_method, spec.exercise_type))
             if impl_cls is None:
                 if pricing_method is PricingMethod.BSM:
-                    raise NotImplementedError(
+                    raise UnsupportedFeatureError(
                         "BSM is only applicable to European option valuation. "
                         "Select a different pricing method for American options such as Binomial, "
                         "PDE_FD or MONTE_CARLO."
                     )
-                raise ValueError(
+                raise ValidationError(
                     f"{pricing_method.name} does not support {spec.exercise_type.name} exercise."
                 )
         self._impl = impl_cls(self)
@@ -453,21 +462,23 @@ class OptionValuation:
 
         if pricing_method == PricingMethod.MONTE_CARLO:
             if not isinstance(params, MonteCarloParams):
-                raise TypeError("pricing_method=MONTE_CARLO requires params=MonteCarloParams")
+                raise ConfigurationError(
+                    "pricing_method=MONTE_CARLO requires params=MonteCarloParams"
+                )
             return params
 
         if pricing_method == PricingMethod.BINOMIAL:
             if not isinstance(params, BinomialParams):
-                raise TypeError("pricing_method=BINOMIAL requires params=BinomialParams")
+                raise ConfigurationError("pricing_method=BINOMIAL requires params=BinomialParams")
             return params
 
         if pricing_method == PricingMethod.PDE_FD:
             if not isinstance(params, PDEParams):
-                raise TypeError("pricing_method=PDE_FD requires params=PDEParams")
+                raise ConfigurationError("pricing_method=PDE_FD requires params=PDEParams")
             return params
 
         if params is not None:
-            raise TypeError(
+            raise ConfigurationError(
                 f"pricing_method={pricing_method.name} does not accept valuation params"
             )
         return None
@@ -506,17 +517,17 @@ class OptionValuation:
 
     def _apply_control_variate(self, base_pv: float) -> float:
         if self.exercise_type is not ExerciseType.AMERICAN:
-            raise ValueError("control_variate_european is only valid for American options.")
+            raise ValidationError("control_variate_european is only valid for American options.")
         if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "control_variate_european is only supported for BINOMIAL and PDE_FD pricing."
             )
         if not isinstance(self.spec, OptionSpec):
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "control_variate_european is only supported for vanilla option specs."
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "control_variate_european is only supported for vanilla CALL/PUT."
             )
 
@@ -559,7 +570,7 @@ class OptionValuation:
         """
         pv_pathwise = getattr(self._impl, "present_value_pathwise", None)
         if pv_pathwise is None:
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
         self._effective_params()
@@ -576,7 +587,7 @@ class OptionValuation:
             return self.pricing_method == PricingMethod.BSM
 
         if not isinstance(greek_calc_method, GreekCalculationMethod):
-            raise TypeError(
+            raise ConfigurationError(
                 f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
             )
 
@@ -584,7 +595,7 @@ class OptionValuation:
             greek_calc_method == GreekCalculationMethod.ANALYTICAL
             and self.pricing_method != PricingMethod.BSM
         ):
-            raise ValueError(error_message)
+            raise ValidationError(error_message)
 
         return greek_calc_method == GreekCalculationMethod.ANALYTICAL
 
@@ -895,7 +906,7 @@ class OptionValuation:
 
         # Numerical rho: bump risk-free rate up and down and reprice
         if self.discount_curve.flat_rate is None:
-            raise NotImplementedError("Numerical rho requires a flat discount curve.")
+            raise UnsupportedFeatureError("Numerical rho requires a flat discount curve.")
 
         rate_up = self.discount_curve.flat_rate + rate_bump / 2
         rate_down = self.discount_curve.flat_rate - rate_bump / 2

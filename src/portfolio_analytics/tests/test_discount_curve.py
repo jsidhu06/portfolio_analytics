@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from portfolio_analytics.exceptions import ValidationError
 from portfolio_analytics.rates import DiscountCurve
 
 
@@ -31,38 +32,38 @@ class TestDiscountCurveConstruction:
         assert float(curve.df(0.5)) == pytest.approx(1.0)
 
     def test_flat_curve_negative_end_time_raises(self):
-        with pytest.raises(ValueError, match="end_time must be positive"):
+        with pytest.raises(ValidationError, match="end_time must be positive"):
             DiscountCurve.flat("r", rate=0.05, end_time=-1.0)
 
     def test_flat_curve_zero_end_time_raises(self):
-        with pytest.raises(ValueError, match="end_time must be positive"):
+        with pytest.raises(ValidationError, match="end_time must be positive"):
             DiscountCurve.flat("r", rate=0.05, end_time=0.0)
 
     def test_flat_curve_zero_steps_raises(self):
-        with pytest.raises(ValueError, match="steps must be >= 1"):
+        with pytest.raises(ValidationError, match="steps must be >= 1"):
             DiscountCurve.flat("r", rate=0.05, end_time=1.0, steps=0)
 
     def test_non_increasing_times_raises(self):
-        with pytest.raises(ValueError, match="strictly increasing"):
+        with pytest.raises(ValidationError, match="strictly increasing"):
             DiscountCurve(
                 name="bad", times=np.array([0.0, 0.5, 0.5]), dfs=np.array([1.0, 0.98, 0.96])
             )
 
     def test_negative_df_raises(self):
-        with pytest.raises(ValueError, match="discount factors must be in"):
+        with pytest.raises(ValidationError, match="discount factors must be in"):
             DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0, -0.5]))
 
     def test_df_greater_than_one_raises(self):
-        with pytest.raises(ValueError, match="discount factors must be in"):
+        with pytest.raises(ValidationError, match="discount factors must be in"):
             DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0, 1.5]))
 
     def test_mismatched_arrays_raises(self):
-        with pytest.raises(ValueError, match="same length"):
+        with pytest.raises(ValidationError, match="same length"):
             DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0]))
 
     def test_inconsistent_flat_rate_raises(self):
         """flat_rate provided but dfs don't match exp(-r*t)."""
-        with pytest.raises(ValueError, match="flat_rate is only allowed"):
+        with pytest.raises(ValidationError, match="flat_rate is only allowed"):
             DiscountCurve(
                 name="bad",
                 times=np.array([0.0, 1.0]),
@@ -146,7 +147,7 @@ class TestDiscountCurveForwardRate:
 
     def test_forward_rate_t1_le_t0_raises(self):
         curve = DiscountCurve.flat("r", rate=0.05, end_time=1.0)
-        with pytest.raises(ValueError, match="Need t1 > t0"):
+        with pytest.raises(ValidationError, match="Need t1 > t0"):
             curve.forward_rate(0.5, 0.5)
 
     def test_forward_rate_consistency_with_dfs(self):
@@ -172,7 +173,7 @@ class TestDiscountCurveForwardRate:
 
     def test_step_forward_rates_non_increasing_raises(self):
         curve = DiscountCurve.flat("r", rate=0.05, end_time=1.0)
-        with pytest.raises(ValueError, match="strictly increasing"):
+        with pytest.raises(ValidationError, match="strictly increasing"):
             curve.step_forward_rates(np.array([0.0, 0.5, 0.5]))
 
     def test_step_forward_rates_non_flat(self):

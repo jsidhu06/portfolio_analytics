@@ -3,6 +3,11 @@
 import pytest
 import datetime as dt
 import numpy as np
+from portfolio_analytics.exceptions import (
+    ConfigurationError,
+    UnsupportedFeatureError,
+    ValidationError,
+)
 from portfolio_analytics.valuation import (
     OptionSpec,
     PayoffSpec,
@@ -56,7 +61,7 @@ class TestOptionSpec:
 
     def test_option_spec_with_none_strike(self):
         """Test that None strike is rejected for vanilla OptionSpec."""
-        with pytest.raises(ValueError, match="OptionSpec\\.strike must be provided"):
+        with pytest.raises(ValidationError, match="OptionSpec\\.strike must be provided"):
             OptionSpec(
                 option_type=OptionType.CALL,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -67,7 +72,7 @@ class TestOptionSpec:
 
     def test_option_spec_invalid_option_type(self):
         """Test that invalid option_type raises TypeError."""
-        with pytest.raises(TypeError, match="option_type must be OptionType enum"):
+        with pytest.raises(ConfigurationError, match="option_type must be OptionType enum"):
             OptionSpec(
                 option_type="CALL",  # Invalid: string instead of enum
                 exercise_type=ExerciseType.EUROPEAN,
@@ -78,7 +83,7 @@ class TestOptionSpec:
 
     def test_option_spec_invalid_exercise_type(self):
         """Test that invalid exercise_type raises TypeError."""
-        with pytest.raises(TypeError, match="exercise_type must be ExerciseType enum"):
+        with pytest.raises(ConfigurationError, match="exercise_type must be ExerciseType enum"):
             OptionSpec(
                 option_type=OptionType.PUT,
                 exercise_type="EUROPEAN",  # Invalid: string instead of enum
@@ -141,7 +146,7 @@ class TestCondorSpec:
         assert np.allclose(spec.terminal_payoff(spots), leg_payoff)
 
     def test_invalid_strike_order_raises(self):
-        with pytest.raises(ValueError, match="K1 < K2"):
+        with pytest.raises(ValidationError, match="K1 < K2"):
             CondorSpec(
                 exercise_type=ExerciseType.EUROPEAN,
                 strikes=(90.0, 50.0, 110.0, 150.0),
@@ -356,7 +361,7 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        with pytest.raises(ValueError, match="Option maturity must be after pricing_date"):
+        with pytest.raises(ValidationError, match="Option maturity must be after pricing_date"):
             OptionValuation(
                 name="INVALID",
                 underlying=ud,
@@ -380,7 +385,9 @@ class TestOptionValuation:
             currency="EUR",
         )
 
-        with pytest.raises(NotImplementedError, match="Cross-currency valuation is not supported"):
+        with pytest.raises(
+            UnsupportedFeatureError, match="Cross-currency valuation is not supported"
+        ):
             OptionValuation(
                 name="CALL_EUR",
                 underlying=ud,
@@ -751,7 +758,7 @@ class TestOptionValuation:
             market_data=self.market_data,
         )
 
-        with pytest.raises(TypeError, match="pricing_method must be PricingMethod enum"):
+        with pytest.raises(ConfigurationError, match="pricing_method must be PricingMethod enum"):
             OptionValuation(
                 name="INVALID",
                 underlying=ud,
@@ -768,7 +775,8 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            TypeError, match="Monte Carlo pricing requires underlying to be a PathSimulation"
+            ConfigurationError,
+            match="Monte Carlo pricing requires underlying to be a PathSimulation",
         ):
             OptionValuation(
                 name="INVALID",
@@ -779,7 +787,7 @@ class TestOptionValuation:
 
     def test_underlying_pricing_data_rejects_mixed_dividends(self):
         """Continuous dividend_curve and discrete_dividends should be mutually exclusive."""
-        with pytest.raises(ValueError, match="either dividend_curve or discrete_dividends"):
+        with pytest.raises(ValidationError, match="either dividend_curve or discrete_dividends"):
             UnderlyingPricingData(
                 initial_value=100.0,
                 volatility=0.2,
@@ -802,7 +810,7 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            TypeError, match="BINOMIAL pricing does not use stochastic path simulation"
+            ConfigurationError, match="BINOMIAL pricing does not use stochastic path simulation"
         ):
             OptionValuation(
                 name="INVALID",
@@ -824,7 +832,9 @@ class TestOptionValuation:
             ),
         )
 
-        with pytest.raises(TypeError, match="BSM pricing does not use stochastic path simulation"):
+        with pytest.raises(
+            ConfigurationError, match="BSM pricing does not use stochastic path simulation"
+        ):
             OptionValuation(
                 name="INVALID",
                 underlying=process,
@@ -846,7 +856,7 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            TypeError, match="PDE_FD pricing does not use stochastic path simulation"
+            ConfigurationError, match="PDE_FD pricing does not use stochastic path simulation"
         ):
             OptionValuation(
                 name="INVALID",
@@ -872,7 +882,7 @@ class TestOptionValuation:
         )
 
         # Error is raised during initialization, not present_value
-        with pytest.raises(NotImplementedError, match="BSM is only applicable to European"):
+        with pytest.raises(UnsupportedFeatureError, match="BSM is only applicable to European"):
             OptionValuation(
                 name="CALL_AMERICAN_BSM",
                 underlying=ud,

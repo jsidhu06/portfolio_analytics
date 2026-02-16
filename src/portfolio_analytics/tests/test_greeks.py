@@ -5,6 +5,7 @@ import datetime as dt
 import numpy as np
 import pytest
 
+from portfolio_analytics.exceptions import ConfigurationError, ValidationError
 from portfolio_analytics.enums import (
     ExerciseType,
     GreekCalculationMethod,
@@ -592,7 +593,7 @@ class TestGreekErrorHandling(TestGreeksSetup):
 
         valuation = self._make_val("call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL)
 
-        with pytest.raises(ValueError, match="Analytical greeks are only available for BSM"):
+        with pytest.raises(ValidationError, match="Analytical greeks are only available for BSM"):
             valuation.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
 
     def test_invalid_greek_calc_method_type_raises_error(self):
@@ -601,7 +602,7 @@ class TestGreekErrorHandling(TestGreeksSetup):
         valuation = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
 
         with pytest.raises(
-            TypeError, match="greek_calc_method must be GreekCalculationMethod enum"
+            ConfigurationError, match="greek_calc_method must be GreekCalculationMethod enum"
         ):
             valuation.delta(greek_calc_method="analytical")  # type: ignore[arg-type]
 

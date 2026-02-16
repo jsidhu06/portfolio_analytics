@@ -12,6 +12,7 @@ from .market_environment import MarketData, CorrelationContext
 from .enums import DayCountConvention
 from .utils import calculate_year_fraction
 from .rates import DiscountCurve
+from .exceptions import ConfigurationError, ValidationError
 
 
 @dataclass(frozen=True)
@@ -42,10 +43,10 @@ class SimulationConfig:
 
     def __post_init__(self) -> None:
         if self.paths is None or int(self.paths) <= 0:
-            raise ValueError("SimulationConfig.paths must be a positive integer")
+            raise ValidationError("SimulationConfig.paths must be a positive integer")
 
         if not isinstance(self.day_count_convention, DayCountConvention):
-            raise TypeError(
+            raise ConfigurationError(
                 f"day_count_convention must be a DayCountConvention enum, "
                 f"got {type(self.day_count_convention).__name__}"
             )
@@ -58,33 +59,35 @@ class SimulationConfig:
         # Explicit grid mode
         if has_time_grid:
             if has_end_date or has_frequency or has_num_steps:
-                raise ValueError(
+                raise ValidationError(
                     "When time_grid is provided, end_date, frequency, and num_steps must be omitted."
                 )
             if len(self.time_grid) == 0:
-                raise ValueError("SimulationConfig.time_grid must be non-empty when provided")
+                raise ValidationError("SimulationConfig.time_grid must be non-empty when provided")
             return
 
         # Otherwise we require an end_date and one discretization knob.
         if not has_end_date:
-            raise ValueError("SimulationConfig.end_date must be provided when time_grid is not set")
+            raise ValidationError(
+                "SimulationConfig.end_date must be provided when time_grid is not set"
+            )
 
         if has_frequency == has_num_steps:
-            raise ValueError(
+            raise ValidationError(
                 "SimulationConfig requires exactly one of frequency or num_steps when end_date is provided."
             )
 
         if has_frequency:
             if not isinstance(self.frequency, str) or not self.frequency.strip():
-                raise ValueError("SimulationConfig.frequency must be a non-empty string")
+                raise ValidationError("SimulationConfig.frequency must be a non-empty string")
 
         if has_num_steps:
             try:
                 steps = int(self.num_steps)
             except (TypeError, ValueError) as exc:
-                raise TypeError("SimulationConfig.num_steps must be an integer") from exc
+                raise ConfigurationError("SimulationConfig.num_steps must be an integer") from exc
             if steps <= 0:
-                raise ValueError("SimulationConfig.num_steps must be a positive integer")
+                raise ValidationError("SimulationConfig.num_steps must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -96,22 +99,22 @@ class GBMParams:
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
-            raise ValueError("GBMParams requires initial_value to be not None")
+            raise ValidationError("GBMParams requires initial_value to be not None")
         if self.volatility is None:
-            raise ValueError("GBMParams requires volatility to be not None")
+            raise ValidationError("GBMParams requires volatility to be not None")
         if not np.isfinite(float(self.initial_value)):
-            raise ValueError("GBMParams requires initial_value to be finite")
+            raise ValidationError("GBMParams requires initial_value to be finite")
         if not np.isfinite(float(self.volatility)):
-            raise ValueError("GBMParams requires volatility to be finite")
+            raise ValidationError("GBMParams requires volatility to be finite")
         if float(self.volatility) < 0.0:
-            raise ValueError("GBMParams requires volatility to be >= 0")
+            raise ValidationError("GBMParams requires volatility to be >= 0")
         object.__setattr__(
             self,
             "discrete_dividends",
             tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
         )
         if self.dividend_curve is not None and self.discrete_dividends:
-            raise ValueError(
+            raise ValidationError(
                 "Provide either dividend_curve or discrete_dividends in GBMParams, not both"
             )
 
@@ -128,36 +131,36 @@ class JDParams:
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
-            raise ValueError("JDParams requires initial_value to be not None")
+            raise ValidationError("JDParams requires initial_value to be not None")
         if self.volatility is None:
-            raise ValueError("JDParams requires volatility to be not None")
+            raise ValidationError("JDParams requires volatility to be not None")
         if not np.isfinite(float(self.initial_value)):
-            raise ValueError("JDParams requires initial_value to be finite")
+            raise ValidationError("JDParams requires initial_value to be finite")
         if not np.isfinite(float(self.volatility)):
-            raise ValueError("JDParams requires volatility to be finite")
+            raise ValidationError("JDParams requires volatility to be finite")
         if float(self.volatility) < 0.0:
-            raise ValueError("JDParams requires volatility to be >= 0")
+            raise ValidationError("JDParams requires volatility to be >= 0")
 
         if self.lambd is None or self.mu is None or self.delta is None:
-            raise ValueError("JDParams requires lambd, mu, and delta to be not None")
+            raise ValidationError("JDParams requires lambd, mu, and delta to be not None")
 
         if not np.isfinite(float(self.lambd)):
-            raise ValueError("JDParams requires lambd to be finite")
+            raise ValidationError("JDParams requires lambd to be finite")
         if not np.isfinite(float(self.mu)):
-            raise ValueError("JDParams requires mu to be finite")
+            raise ValidationError("JDParams requires mu to be finite")
         if not np.isfinite(float(self.delta)):
-            raise ValueError("JDParams requires delta to be finite")
+            raise ValidationError("JDParams requires delta to be finite")
         if float(self.lambd) < 0.0:
-            raise ValueError("JDParams requires lambd to be >= 0")
+            raise ValidationError("JDParams requires lambd to be >= 0")
         if float(self.delta) < 0.0:
-            raise ValueError("JDParams requires delta to be >= 0")
+            raise ValidationError("JDParams requires delta to be >= 0")
         object.__setattr__(
             self,
             "discrete_dividends",
             tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
         )
         if self.dividend_curve is not None and self.discrete_dividends:
-            raise ValueError(
+            raise ValidationError(
                 "Provide either dividend_curve or discrete_dividends in JDParams, not both"
             )
 
@@ -171,27 +174,27 @@ class SRDParams:
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
-            raise ValueError("SRDParams requires initial_value to be not None")
+            raise ValidationError("SRDParams requires initial_value to be not None")
         if self.volatility is None:
-            raise ValueError("SRDParams requires volatility to be not None")
+            raise ValidationError("SRDParams requires volatility to be not None")
         if not np.isfinite(float(self.initial_value)):
-            raise ValueError("SRDParams requires initial_value to be finite")
+            raise ValidationError("SRDParams requires initial_value to be finite")
         if not np.isfinite(float(self.volatility)):
-            raise ValueError("SRDParams requires volatility to be finite")
+            raise ValidationError("SRDParams requires volatility to be finite")
         if float(self.volatility) < 0.0:
-            raise ValueError("SRDParams requires volatility to be >= 0")
+            raise ValidationError("SRDParams requires volatility to be >= 0")
 
         if self.kappa is None or self.theta is None:
-            raise ValueError("SRDParams requires kappa and theta to be not None")
+            raise ValidationError("SRDParams requires kappa and theta to be not None")
 
         if not np.isfinite(float(self.kappa)):
-            raise ValueError("SRDParams requires kappa to be finite")
+            raise ValidationError("SRDParams requires kappa to be finite")
         if not np.isfinite(float(self.theta)):
-            raise ValueError("SRDParams requires theta to be finite")
+            raise ValidationError("SRDParams requires theta to be finite")
         if float(self.kappa) < 0.0:
-            raise ValueError("SRDParams requires kappa to be >= 0")
+            raise ValidationError("SRDParams requires kappa to be >= 0")
         if float(self.theta) < 0.0:
-            raise ValueError("SRDParams requires theta to be >= 0")
+            raise ValidationError("SRDParams requires theta to be >= 0")
 
 
 class PathSimulation(ABC):
@@ -406,7 +409,7 @@ class PathSimulation(ABC):
         }
         unknown = set(kwargs).difference(allowed_fields)
         if unknown:
-            raise ValueError(
+            raise ValidationError(
                 f"replace() only supports overriding {sorted(allowed_fields)}; "
                 f"unknown: {sorted(unknown)}"
             )
@@ -428,7 +431,7 @@ class PathSimulation(ABC):
             for key in ("initial_value", "volatility", "dividend_curve", "discrete_dividends"):
                 if key in kwargs:
                     if not hasattr(cloned._process_params, key):
-                        raise ValueError(
+                        raise ValidationError(
                             f"{key} is not supported for {type(cloned._process_params).__name__}"
                         )
                     param_updates[key] = kwargs[key]

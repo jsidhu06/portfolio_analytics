@@ -11,6 +11,7 @@ import time
 import numpy as np
 
 from .enums import DayCountConvention, OptionType
+from .exceptions import ArbitrageViolationError, ValidationError
 
 if TYPE_CHECKING:
     from .rates import DiscountCurve
@@ -100,7 +101,7 @@ def calculate_year_fraction(
     elif day_count_convention is DayCountConvention.ACT_365F:
         denom = 365.0
     else:
-        raise ValueError(f"Unsupported day_count_convention: {day_count_convention}")
+        raise ValidationError(f"Unsupported day_count_convention: {day_count_convention}")
 
     delta_days = (end_date - start_date).total_seconds() / SECONDS_IN_DAY
     year_fraction = delta_days / denom
@@ -178,20 +179,20 @@ def forward_price(
     Supports either continuous dividend curve or discrete dividends (not both).
     """
     if dividend_curve is not None and discrete_dividends:
-        raise ValueError(
+        raise ValidationError(
             "Provide either a continuous dividend_curve or discrete_dividends, not both."
         )
 
     t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
     if t <= 0:
-        raise ValueError("maturity must be after pricing_date")
+        raise ValidationError("maturity must be after pricing_date")
 
     spot = float(spot)
     short_rate = float(short_rate)
 
     if discrete_dividends:
         if discount_curve is None:
-            raise ValueError("discount_curve is required for discrete_dividends.")
+            raise ValidationError("discount_curve is required for discrete_dividends.")
         pv_divs = pv_discrete_dividends(
             discrete_dividends,
             curve_date=pricing_date,
@@ -224,7 +225,7 @@ def put_call_parity_rhs(
     """
     t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
     if t <= 0:
-        raise ValueError("maturity must be after pricing_date")
+        raise ValidationError("maturity must be after pricing_date")
 
     fwd = forward_price(
         spot=spot,
@@ -281,11 +282,11 @@ def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:
         Success probability in [0, 1].
     """
     if n < 0:
-        raise ValueError("n must be >= 0")
+        raise ValidationError("n must be >= 0")
 
     p = float(p)
     if not (0.0 <= p <= 1.0):
-        raise ValueError("p must be in [0, 1]")
+        raise ValidationError("p must be in [0, 1]")
 
     k_arr = np.asarray(k, dtype=int)
     out = np.zeros_like(k_arr, dtype=float)
@@ -311,16 +312,16 @@ def expected_binomial(
     $\sum_{k=0}^n \binom{n}{k} p^k (1-p)^{n-k} f(k)$.
     """
     if n < 0:
-        raise ValueError("n must be >= 0")
+        raise ValidationError("n must be >= 0")
     p = float(p)
     if not (0.0 <= p <= 1.0):
-        raise ValueError("p must be in [0, 1]")
+        raise ValidationError("p must be in [0, 1]")
 
     ks = np.arange(n + 1)
     pmf = binomial_pmf(ks, n=n, p=p)
     vals = np.asarray(f(ks), dtype=float)
     if vals.shape != ks.shape:
-        raise ValueError("f(k) must return an array with same shape as k")
+        raise ValidationError("f(k) must return an array with same shape as k")
     return float(np.dot(pmf, vals))
 
 
@@ -360,12 +361,12 @@ def expected_binomial_payoff(
     This function returns the expected terminal payoff (not discounted).
     """
     if option_type not in (OptionType.CALL, OptionType.PUT):
-        raise ValueError("option_type must be OptionType.CALL or OptionType.PUT")
+        raise ValidationError("option_type must be OptionType.CALL or OptionType.PUT")
 
     if n < 1:
-        raise ValueError("n must be >= 1")
+        raise ValidationError("n must be >= 1")
     if T <= 0:
-        raise ValueError("T must be positive")
+        raise ValidationError("T must be positive")
 
     S0 = float(S0)
     K = float(K)
@@ -373,10 +374,10 @@ def expected_binomial_payoff(
     q = float(q)
 
     if u is None:
-        raise ValueError("u must be provided")
+        raise ValidationError("u must be provided")
     u = float(u)
     if u <= 0:
-        raise ValueError("u must be positive")
+        raise ValidationError("u must be positive")
     d = 1.0 / u
 
     def payoff_from_k(ks: np.ndarray) -> np.ndarray:
@@ -388,6 +389,6 @@ def expected_binomial_payoff(
     delta_t = T / n
     p = (np.exp((r - q) * delta_t) - d) / (u - d)
     if not (0.0 <= p <= 1.0):
-        raise ValueError("risk-neutral probability p must be in [0, 1]")
+        raise ArbitrageViolationError("risk-neutral probability p must be in [0, 1]")
 
     return expected_binomial(n=n, p=p, f=payoff_from_k)
