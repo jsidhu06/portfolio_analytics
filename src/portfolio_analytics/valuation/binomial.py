@@ -22,6 +22,9 @@ class _BinomialValuationBase:
 
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
+        if not isinstance(parent.params, BinomialParams):
+            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
+        self.binom_params: BinomialParams = parent.params
 
     def _setup_binomial_parameters(
         self, num_steps: int
@@ -163,10 +166,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
     def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree."""
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        num_steps = int(params.num_steps)
+        num_steps = int(self.binom_params.num_steps)
         logger.debug("Binomial European num_steps=%d", num_steps)
         discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -185,10 +185,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
     def present_value(self) -> float:
         """Return PV using binomial tree method."""
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        with log_timing(logger, "Binomial European present_value", params.log_timings):
+        with log_timing(logger, "Binomial European present_value", self.binom_params.log_timings):
             option_value_matrix = self.solve()
         pv = option_value_matrix[0, 0]
 
@@ -200,10 +197,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
     def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree with early exercise."""
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        num_steps = int(params.num_steps)
+        num_steps = int(self.binom_params.num_steps)
         logger.debug("Binomial American num_steps=%d", num_steps)
         discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -223,10 +217,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
     def present_value(self) -> float:
         """Return PV using binomial tree method with American early exercise."""
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        with log_timing(logger, "Binomial American present_value", params.log_timings):
+        with log_timing(logger, "Binomial American present_value", self.binom_params.log_timings):
             option_value_matrix = self.solve()
         pv = option_value_matrix[0, 0]
 
@@ -237,18 +228,17 @@ class _BinomialAsianValuation(_BinomialValuationBase):
     """Asian option valuation using binomial MC sampling or Hull's representative averages."""
 
     def _solve_mc(self) -> np.ndarray:
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        num_steps = int(params.num_steps)
-        logger.debug("Binomial Asian MC num_steps=%d paths=%s", num_steps, params.mc_paths)
+        num_steps = int(self.binom_params.num_steps)
+        logger.debug(
+            "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
+        )
         discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
-        if params.mc_paths is None:
+        if self.binom_params.mc_paths is None:
             raise ValueError("BinomialParams.mc_paths must be set for Asian binomial MC")
 
-        mc_paths = int(params.mc_paths)
-        rng = np.random.default_rng(params.random_seed)
+        mc_paths = int(self.binom_params.mc_paths)
+        rng = np.random.default_rng(self.binom_params.random_seed)
 
         K = self.parent.strike
         if K is None:
@@ -344,14 +334,11 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             values : shape (k, num_steps+1, num_steps+1) — option values per average bucket
             avg_grid : shape (k, num_steps+1, num_steps+1) — representative averages
         """
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        num_steps = int(params.num_steps)
+        num_steps = int(self.binom_params.num_steps)
         logger.debug(
             "Binomial Asian Hull num_steps=%d averages=%s",
             num_steps,
-            params.asian_tree_averages,
+            self.binom_params.asian_tree_averages,
         )
         discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
 
@@ -359,7 +346,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
             raise ValueError("Unsupported Asian averaging type for Hull binomial valuation.")
 
-        if params.asian_tree_averages is None:
+        if self.binom_params.asian_tree_averages is None:
             raise ValueError(
                 "BinomialParams.asian_tree_averages must be set for Hull binomial Asian valuation"
             )
@@ -368,7 +355,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         if averaging_start is not None and averaging_start != self.parent.pricing_date:
             raise ValueError("Hull binomial Asian valuation requires averaging_start=pricing_date.")
 
-        k = int(params.asian_tree_averages)
+        k = int(self.binom_params.asian_tree_averages)
         if averaging is AsianAveraging.GEOMETRIC:
             if np.any(spot_lattice <= 0.0):
                 raise ValueError(
@@ -434,11 +421,8 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         return values, avg_grid
 
     def present_value(self) -> float:
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        with log_timing(logger, "Binomial Asian present_value", params.log_timings):
-            if params.mc_paths is not None:
+        with log_timing(logger, "Binomial Asian present_value", self.binom_params.log_timings):
+            if self.binom_params.mc_paths is not None:
                 pv_pathwise = self._solve_mc()
                 return float(np.mean(pv_pathwise))
 
@@ -451,9 +435,6 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             return float(root_value)
 
     def solve(self) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-        params = self.parent.params
-        if not isinstance(params, BinomialParams):
-            raise TypeError("Binomial valuation requires BinomialParams on OptionValuation")
-        if params.mc_paths is not None:
+        if self.binom_params.mc_paths is not None:
             return self._solve_mc()
         return self._solve_hull()

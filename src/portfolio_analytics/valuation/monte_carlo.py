@@ -77,13 +77,13 @@ class _MCEuropeanValuation:
 
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
+        if not isinstance(parent.params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+        self.mc_params: MonteCarloParams = parent.params
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-        paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
+        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
         time_grid = self.parent.underlying.time_grid
 
         time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
@@ -102,10 +102,7 @@ class _MCEuropeanValuation:
 
     def present_value(self) -> float:
         """Return the scalar present value."""
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-        with log_timing(logger, "MC European present_value", params.log_timings):
+        with log_timing(logger, "MC European present_value", self.mc_params.log_timings):
             pv_pathwise = self.present_value_pathwise()
             pv = float(np.mean(pv_pathwise))
         logger.debug(
@@ -116,7 +113,7 @@ class _MCEuropeanValuation:
         _warn_if_high_std_error(
             pv_pathwise=pv_pathwise,
             pv_mean=pv,
-            params=params,
+            params=self.mc_params,
             label="European",
         )
         return pv
@@ -134,6 +131,9 @@ class _MCAmericanValuation:
 
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
+        if not isinstance(parent.params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+        self.mc_params: MonteCarloParams = parent.params
 
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
@@ -147,10 +147,7 @@ class _MCAmericanValuation:
         =======
         tuple of (instrument_values, payoff, time_index_start, time_index_end)
         """
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-        paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
+        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
         time_grid = self.parent.underlying.time_grid
         time_index_start = _find_time_index(time_grid, self.parent.pricing_date, "Pricing date")
         time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
@@ -170,22 +167,19 @@ class _MCAmericanValuation:
 
     def present_value(self) -> float:
         """Calculate PV using Longstaff-Schwartz regression method."""
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-        with log_timing(logger, "MC American present_value", params.log_timings):
+        with log_timing(logger, "MC American present_value", self.mc_params.log_timings):
             pv_pathwise = self.present_value_pathwise()
             pv = float(np.mean(pv_pathwise))
         logger.debug(
             "MC American paths=%d time_steps=%d deg=%d",
             pv_pathwise.size,
             len(self.parent.underlying.time_grid) - 1,
-            params.deg,
+            self.mc_params.deg,
         )
         _warn_if_high_std_error(
             pv_pathwise=pv_pathwise,
             pv_mean=pv,
-            params=params,
+            params=self.mc_params,
             label="American",
         )
         return pv
@@ -199,10 +193,6 @@ class _MCAmericanValuation:
         values = np.zeros_like(intrinsic_values)
         values[-1] = intrinsic_values[-1]
 
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-
         for t in range(len(time_list) - 2, 0, -1):
             df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic_values[t] > 0
@@ -211,7 +201,7 @@ class _MCAmericanValuation:
             if np.any(itm):
                 S_itm = instrument_values[t][itm]
                 V_itm = df_step * values[t + 1][itm]
-                poly = np.polynomial.Polynomial.fit(S_itm, V_itm, deg=params.deg)
+                poly = np.polynomial.Polynomial.fit(S_itm, V_itm, deg=self.mc_params.deg)
                 continuation[itm] = poly(instrument_values[t][itm])
 
             values[t] = np.where(
@@ -233,6 +223,9 @@ class _MCAsianValuation:
 
     def __init__(self, parent: "OptionValuation") -> None:
         self.parent = parent
+        if not isinstance(parent.params, MonteCarloParams):
+            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
+        self.mc_params: MonteCarloParams = parent.params
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
@@ -242,10 +235,7 @@ class _MCAsianValuation:
         np.ndarray
             Payoff for each path based on the average spot price
         """
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-        paths = self.parent.underlying.get_instrument_values(random_seed=params.random_seed)
+        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
         time_grid = self.parent.underlying.time_grid
 
         # Determine averaging period
@@ -294,10 +284,7 @@ class _MCAsianValuation:
 
     def present_value(self) -> float:
         """Return the scalar present value."""
-        params = self.parent.params
-        if not isinstance(params, MonteCarloParams):
-            raise TypeError("Monte Carlo valuation requires MonteCarloParams on OptionValuation")
-        with log_timing(logger, "MC Asian present_value", params.log_timings):
+        with log_timing(logger, "MC Asian present_value", self.mc_params.log_timings):
             pv_pathwise = self.present_value_pathwise()
             pv = float(np.mean(pv_pathwise))
         logger.debug(
@@ -308,7 +295,7 @@ class _MCAsianValuation:
         _warn_if_high_std_error(
             pv_pathwise=pv_pathwise,
             pv_mean=pv,
-            params=params,
+            params=self.mc_params,
             label="Asian",
         )
         return pv

@@ -1,5 +1,7 @@
 """Path simulation classes for stochastic processes used in pricing."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace as dc_replace
 import copy
@@ -84,7 +86,7 @@ class GBMParams:
     initial_value: float
     volatility: float
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None
-    dividend_curve: object | None = None
+    dividend_curve: DiscountCurve | None = None
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
@@ -116,7 +118,7 @@ class JDParams:
     mu: float  # mu_J (mean of log jump size)
     delta: float  # delta_J (std of log jump size)
     discrete_dividends: list[tuple[dt.datetime, float]] | None = None
-    dividend_curve: object | None = None
+    dividend_curve: DiscountCurve | None = None
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
