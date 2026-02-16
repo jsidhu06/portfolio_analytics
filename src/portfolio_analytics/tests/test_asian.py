@@ -98,9 +98,10 @@ def _asian_spec(
     maturity: dt.datetime,
     call_put: OptionType,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
+    averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
 ) -> AsianOptionSpec:
     return AsianOptionSpec(
-        averaging=AsianAveraging.ARITHMETIC,
+        averaging=averaging,
         call_put=call_put,
         strike=strike,
         maturity=maturity,
@@ -355,3 +356,174 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
     ).present_value()
 
     assert amer_pv >= euro_pv - 1e-8
+
+
+# ---------------------------------------------------------------------------
+# Geometric Averaging Tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "spot,strike,vol,short_rate,days,call_put",
+    [
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
+        (110.0, 100.0, 0.25, 0.01, 270, OptionType.CALL),
+        (95.0, 90.0, 0.3, 0.05, 540, OptionType.CALL),
+        (105.0, 110.0, 0.18, 0.02, 180, OptionType.PUT),
+    ],
+)
+def test_geometric_asian_mc_positive_value(spot, strike, vol, short_rate, days, call_put):
+    """Geometric Asian options should produce positive option values."""
+    maturity = PRICING_DATE + dt.timedelta(days=days)
+    spec = _asian_spec(
+        strike=strike,
+        maturity=maturity,
+        call_put=call_put,
+        averaging=AsianAveraging.GEOMETRIC,
+    )
+
+    mc_underlying = _gbm_underlying(
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        maturity=maturity,
+        paths=MC_PATHS,
+        num_steps=NUM_STEPS,
+    )
+    pv = OptionValuation(
+        "asian_geom_mc",
+        mc_underlying,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=MC_SEED),
+    ).present_value()
+
+    assert pv > 0.0
+
+
+@pytest.mark.parametrize(
+    "spot,strike,vol,short_rate,days,call_put",
+    [
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
+        (110.0, 100.0, 0.25, 0.01, 270, OptionType.CALL),
+    ],
+)
+def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, call_put):
+    """Geometric average ≤ arithmetic average ⟹ geometric call ≤ arithmetic call
+    (and geometric put ≥ arithmetic put for the same strike).
+
+    For calls: geometric payoff ≤ arithmetic payoff (AM-GM inequality).
+    For puts:  geometric payoff ≥ arithmetic payoff.
+
+    In expectation (hence PV), the same ordering holds.
+    """
+    maturity = PRICING_DATE + dt.timedelta(days=days)
+
+    arith_spec = _asian_spec(
+        strike=strike,
+        maturity=maturity,
+        call_put=call_put,
+        averaging=AsianAveraging.ARITHMETIC,
+    )
+    geom_spec = _asian_spec(
+        strike=strike,
+        maturity=maturity,
+        call_put=call_put,
+        averaging=AsianAveraging.GEOMETRIC,
+    )
+
+    mc_underlying = _gbm_underlying(
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        maturity=maturity,
+        paths=MC_PATHS,
+        num_steps=NUM_STEPS,
+    )
+
+    arith_pv = OptionValuation(
+        "asian_arith_mc",
+        mc_underlying,
+        arith_spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=MC_SEED),
+    ).present_value()
+
+    geom_pv = OptionValuation(
+        "asian_geom_mc",
+        mc_underlying,
+        geom_spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=MC_SEED),
+    ).present_value()
+
+    if call_put is OptionType.CALL:
+        # Geometric call ≤ arithmetic call (AM-GM)
+        assert geom_pv <= arith_pv + 1e-8
+    else:
+        # Geometric put ≥ arithmetic put (AM-GM)
+        assert geom_pv >= arith_pv - 1e-8
+
+
+@pytest.mark.parametrize(
+    "spot,strike,vol,short_rate,days,call_put",
+    [
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
+        (110.0, 100.0, 0.25, 0.01, 270, OptionType.CALL),
+        (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
+    ],
+)
+def test_geometric_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate, days, call_put):
+    """Binomial Hull tree with geometric averaging should match MC geometric."""
+    maturity = PRICING_DATE + dt.timedelta(days=days)
+    spec = _asian_spec(
+        strike=strike,
+        maturity=maturity,
+        call_put=call_put,
+        averaging=AsianAveraging.GEOMETRIC,
+    )
+
+    mc_underlying = _gbm_underlying(
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        maturity=maturity,
+        paths=MC_PATHS,
+        num_steps=NUM_STEPS,
+    )
+    mc_pv = OptionValuation(
+        "asian_geom_mc",
+        mc_underlying,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=MC_SEED),
+    ).present_value()
+
+    binom_underlying = _binomial_underlying(
+        spot=spot,
+        vol=vol,
+        short_rate=short_rate,
+        maturity=maturity,
+    )
+    hull_pv = OptionValuation(
+        "asian_geom_hull",
+        binom_underlying,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(
+            num_steps=NUM_STEPS,
+            asian_tree_averages=ASIAN_TREE_AVERAGES,
+        ),
+    ).present_value()
+
+    logger.info(
+        "Geometric Asian %s S=%.2f K=%.2f | MC=%.6f Hull=%.6f",
+        call_put.value,
+        spot,
+        strike,
+        mc_pv,
+        hull_pv,
+    )
+    assert np.isclose(mc_pv, hull_pv, rtol=0.03)

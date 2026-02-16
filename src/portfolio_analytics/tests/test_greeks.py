@@ -1,4 +1,4 @@
-"""Comprehensive tests for greek calculations (delta, gamma, vega)."""
+"""Comprehensive tests for greek calculations (delta, gamma, vega, theta, rho)."""
 
 import datetime as dt
 
@@ -287,6 +287,130 @@ class TestVegaBasicProperties(TestGreeksSetup):
         assert vega > 0
 
 
+class TestThetaBasicProperties(TestGreeksSetup):
+    """Test basic properties of theta values."""
+
+    def test_call_theta_negative(self):
+        """ATM European call theta should be negative (time decay)."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
+        assert valuation.theta() < 0
+
+    def test_put_theta_negative(self):
+        """ATM European put theta should be negative (no dividends, moderate rate)."""
+        spec = self._make_spec(option_type=OptionType.PUT)
+        ud = self._make_ud()
+        valuation = self._make_val("put_atm", ud, spec, PricingMethod.BSM)
+        assert valuation.theta() < 0
+
+    def test_theta_magnitude_increases_near_expiry(self):
+        """ATM theta should become more negative (larger magnitude) closer to expiry."""
+        maturity_short = dt.datetime(2025, 2, 1)
+        spec_short = self._make_spec(option_type=OptionType.CALL, maturity=maturity_short)
+        ud_short = self._make_ud()
+        val_short = self._make_val("call_short", ud_short, spec_short, PricingMethod.BSM)
+        theta_short = val_short.theta()
+
+        spec_long = self._make_spec(option_type=OptionType.CALL, maturity=self.maturity)
+        ud_long = self._make_ud()
+        val_long = self._make_val("call_long", ud_long, spec_long, PricingMethod.BSM)
+        theta_long = val_long.theta()
+
+        # Shorter maturity → larger magnitude theta (more negative)
+        assert theta_short < theta_long < 0
+
+    def test_theta_atm_highest_magnitude(self):
+        """ATM options have the largest theta magnitude."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+
+        ud_atm = self._make_ud(spot=self.spot)
+        val_atm = self._make_val("call_atm", ud_atm, spec, PricingMethod.BSM)
+        theta_atm = val_atm.theta()
+
+        ud_otm = self._make_ud(spot=70.0)
+        val_otm = self._make_val("call_otm", ud_otm, spec, PricingMethod.BSM)
+        theta_otm = val_otm.theta()
+
+        # ATM theta more negative than OTM theta
+        assert theta_atm < theta_otm
+
+    def test_theta_with_dividends_call(self):
+        """Continuous dividend yield affects call theta."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+
+        val_no_div = self._make_val(
+            "call_no_div",
+            self._make_ud(dividend_curve=None),
+            spec,
+            PricingMethod.BSM,
+        )
+        theta_no_div = val_no_div.theta()
+
+        val_with_div = self._make_val(
+            "call_with_div",
+            self._make_ud(dividend_curve=self._make_q_curve(0.03)),
+            spec,
+            PricingMethod.BSM,
+        )
+        theta_with_div = val_with_div.theta()
+
+        # Both negative, values differ due to dividend
+        assert theta_no_div < 0
+        assert theta_with_div < 0
+        assert theta_no_div != pytest.approx(theta_with_div)
+
+    def test_theta_near_expiry_large_magnitude(self):
+        """Theta magnitude should be very large for near-expiry ATM options."""
+        maturity_near = self.pricing_date + dt.timedelta(days=2)
+        spec = self._make_spec(option_type=OptionType.CALL, maturity=maturity_near)
+        ud = self._make_ud()
+        valuation = self._make_val("call_near_expiry", ud, spec, PricingMethod.BSM)
+        theta = valuation.theta()
+        # Near-expiry ATM call has very large negative theta
+        assert theta < -0.05
+
+    def test_bsm_analytical_vs_numerical_theta(self):
+        """Analytical BSM theta should closely match numerical theta."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
+
+        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
+
+    def test_bsm_analytical_vs_numerical_theta_put(self):
+        """Analytical BSM put theta should closely match numerical theta."""
+        spec = self._make_spec(option_type=OptionType.PUT)
+        ud = self._make_ud()
+        valuation = self._make_val("put", ud, spec, PricingMethod.BSM)
+
+        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
+
+    def test_theta_consistency_bsm_binomial(self):
+        """BSM and binomial theta should approximately agree for European options."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+
+        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
+        theta_bsm = bsm_val.theta()
+
+        binomial_val = self._make_val(
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
+        )
+        theta_binomial = binomial_val.theta()
+
+        assert np.isclose(theta_bsm, theta_binomial, atol=0.005)
+
+
 class TestGreekCalculationMethods(TestGreeksSetup):
     """Test analytical vs numerical greek calculation methods."""
 
@@ -329,6 +453,16 @@ class TestGreekCalculationMethods(TestGreeksSetup):
         rho_numerical = valuation.rho(greek_calc_method=GreekCalculationMethod.NUMERICAL)
 
         assert np.isclose(rho_analytical, rho_numerical, rtol=1e-3)
+
+    def test_bsm_analytical_vs_numerical_theta(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
+
+        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
 
 
 class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
