@@ -31,6 +31,12 @@ class DiscountCurve:
             raise ValueError("discount factors must be in (0, 1]")
         if self.flat_rate is not None and not np.isfinite(float(self.flat_rate)):
             raise ValueError("flat_rate must be finite when provided")
+        if self.flat_rate is not None:
+            implied = np.exp(-float(self.flat_rate) * t)
+            if not np.allclose(df, implied, rtol=1e-10, atol=1e-12):
+                raise ValueError(
+                    "flat_rate is only allowed when consistent with the provided discount factors"
+                )
         object.__setattr__(self, "times", t)
         object.__setattr__(self, "dfs", df)
 
