@@ -50,12 +50,13 @@ class TestDiscountCurveConstruction:
             )
 
     def test_negative_df_raises(self):
-        with pytest.raises(ValidationError, match="discount factors must be in"):
+        with pytest.raises(ValidationError, match="discount factors must be positive"):
             DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0, -0.5]))
 
-    def test_df_greater_than_one_raises(self):
-        with pytest.raises(ValidationError, match="discount factors must be in"):
-            DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0, 1.5]))
+    def test_df_greater_than_one_warns(self):
+        """Discount factors > 1 (negative rates) are allowed but warn."""
+        with pytest.warns(match="Discount factors > 1 detected"):
+            DiscountCurve(name="neg_rate", times=np.array([0.0, 1.0]), dfs=np.array([1.0, 1.5]))
 
     def test_mismatched_arrays_raises(self):
         with pytest.raises(ValidationError, match="same length"):

@@ -1,6 +1,8 @@
 """Interest-rate and discount-curve utilities."""
 
+import warnings
 from dataclasses import dataclass
+
 import numpy as np
 
 from .exceptions import ValidationError
@@ -11,7 +13,8 @@ class DiscountCurve:
     """Deterministic discount curve with log-linear interpolation.
 
     times are year fractions and must be strictly increasing.
-    dfs are discount factors in (0, 1], typically with df(0)=1.
+    dfs are positive discount factors, typically with df(0)=1.
+    Values > 1 are permitted (negative rates) but trigger a warning.
     """
 
     name: str
@@ -26,8 +29,13 @@ class DiscountCurve:
             raise ValidationError("times and dfs must be 1D arrays of the same length")
         if np.any(np.diff(t) <= 0.0):
             raise ValidationError("times must be strictly increasing")
-        if np.any(df <= 0.0) or np.any(df > 1.0 + 1e-12):
-            raise ValidationError("discount factors must be in (0, 1]")
+        if np.any(df <= 0.0):
+            raise ValidationError("discount factors must be positive")
+        if np.any(df > 1.0 + 1e-12):
+            warnings.warn(
+                f"Discount factors > 1 detected (negative rates) on curve {self.name!r}",
+                stacklevel=2,
+            )
         if self.flat_rate is not None and not np.isfinite(float(self.flat_rate)):
             raise ValidationError("flat_rate must be finite when provided")
         if self.flat_rate is not None:
