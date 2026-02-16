@@ -240,8 +240,19 @@ class UnderlyingPricingData:
         UnderlyingPricingData
             New instance with specified fields replaced
         """
-        if set(kwargs).difference(self.__dict__.keys()):
-            raise ValueError(f"replace() only supports overriding {list(self.__dict__.keys())}")
+        allowed_fields = {
+            "initial_value",
+            "volatility",
+            "market_data",
+            "discrete_dividends",
+            "dividend_curve",
+        }
+        unknown = set(kwargs).difference(allowed_fields)
+        if unknown:
+            raise ValueError(
+                f"replace() only supports overriding {sorted(allowed_fields)}; "
+                f"unknown: {sorted(unknown)}"
+            )
 
         return UnderlyingPricingData(
             initial_value=kwargs.get("initial_value", self.initial_value),
