@@ -162,8 +162,8 @@ def _build_log_grid(
     time_steps: int,
 ) -> tuple[np.ndarray, np.ndarray, float]:
     """Build log-spot grid using Hull's dz heuristic when possible."""
-    dt = time_to_maturity / time_steps
-    dz_hull = volatility * np.sqrt(3.0 * dt)
+    d_tau = time_to_maturity / time_steps
+    dz_hull = volatility * np.sqrt(3.0 * d_tau)
 
     smax = float(smax_mult * max(spot, strike))
     smin = float(max(max(spot, strike) / smax_mult, 1.0e-8))
@@ -231,11 +231,11 @@ def _scaled_operator_coeffs(
     gamma: np.ndarray | float,
     beta: np.ndarray | float,
     alpha: np.ndarray | float,
-    dt: float,
+    d_tau: float,
 ) -> tuple[np.ndarray | float, np.ndarray | float, np.ndarray | float]:
-    a = -dt * gamma
-    b = -dt * beta
-    c = -dt * alpha
+    a = -d_tau * gamma
+    b = -d_tau * beta
+    c = -d_tau * alpha
     return a, b, c
 
 
@@ -362,7 +362,7 @@ def _vanilla_fd_core(
     psor_not_converged = 0
 
     for n in range(1, tau_grid.size):
-        dt = tau_grid[n] - tau_grid[n - 1]
+        d_tau = tau_grid[n] - tau_grid[n - 1]
         tau = float(tau_grid[n])
         t_prev = time_to_maturity - float(tau_grid[n - 1])
         t_curr = time_to_maturity - float(tau_grid[n])
@@ -409,7 +409,7 @@ def _vanilla_fd_core(
 
         V_old = V.copy()
 
-        a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, dt=dt)
+        a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, d_tau=d_tau)
 
         if method is PDEMethod.EXPLICIT:
             V_new = V_old.copy()
