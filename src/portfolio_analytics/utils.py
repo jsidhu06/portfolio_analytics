@@ -123,41 +123,29 @@ def get_year_deltas(
 
 def pv_discrete_dividends(
     dividends: list[tuple[datetime, float]],
-    pricing_date: datetime,
-    maturity: datetime,
-    short_rate: float | None = None,
-    discount_curve: ForwardCurve | None = None,
+    curve_date: datetime,
+    end_date: datetime,
+    discount_curve: ForwardCurve,
     start_date: datetime | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
-    """Present value of discrete cash dividends between pricing_date and maturity.
+    """Present value of discrete cash dividends between start_date and end_date.
 
-    Only dividends with start_date < ex_date <= maturity are included.
+    Only dividends with start_date < ex_date <= end_date are included.
     """
     if not dividends:
         return 0.0
 
-    if discount_curve is None and short_rate is None:
-        raise ValueError("Provide either short_rate or discount_curve for dividend PV.")
-    if discount_curve is not None and short_rate is not None:
-        raise ValueError("Provide only one of short_rate or discount_curve.")
-
-    start_date = pricing_date if start_date is None else start_date
-    t_start = calculate_year_fraction(pricing_date, start_date, day_count_convention)
-
-    df_start = 1.0
-    if discount_curve is not None:
-        df_start = float(discount_curve.df(t_start))
+    start_date = curve_date if start_date is None else start_date
+    t_start = calculate_year_fraction(curve_date, start_date, day_count_convention)
+    df_start = float(discount_curve.df(t_start))
 
     pv = 0.0
     for ex_date, amount in dividends:
-        if start_date < ex_date <= maturity:
-            t_ex = calculate_year_fraction(pricing_date, ex_date, day_count_convention)
-            if discount_curve is not None:
-                df_ex = float(discount_curve.df(t_ex))
-                df = df_ex / df_start
-            else:
-                df = np.exp(-float(short_rate) * (t_ex - t_start))
+        if start_date < ex_date <= end_date:
+            t_ex = calculate_year_fraction(curve_date, ex_date, day_count_convention)
+            df_ex = float(discount_curve.df(t_ex))
+            df = df_ex / df_start
             pv += float(amount) * df
     return float(pv)
 
@@ -168,6 +156,7 @@ def forward_price(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
+    discount_curve: ForwardCurve | None = None,
     dividend_curve: ForwardCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
@@ -189,11 +178,13 @@ def forward_price(
     short_rate = float(short_rate)
 
     if discrete_dividends:
+        if discount_curve is None:
+            raise ValueError("discount_curve is required for discrete_dividends.")
         pv_divs = pv_discrete_dividends(
             discrete_dividends,
-            pricing_date,
-            maturity,
-            short_rate,
+            curve_date=pricing_date,
+            end_date=maturity,
+            discount_curve=discount_curve,
             day_count_convention=day_count_convention,
         )
         prepaid_forward = spot - pv_divs
@@ -210,6 +201,7 @@ def put_call_parity_rhs(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
+    discount_curve: ForwardCurve | None = None,
     dividend_curve: ForwardCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
@@ -227,6 +219,7 @@ def put_call_parity_rhs(
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=short_rate,
+        discount_curve=discount_curve,
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,
@@ -243,6 +236,7 @@ def put_call_parity_gap(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
+    discount_curve: ForwardCurve | None = None,
     dividend_curve: ForwardCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
@@ -254,6 +248,7 @@ def put_call_parity_gap(
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=short_rate,
+        discount_curve=discount_curve,
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,

@@ -47,14 +47,11 @@ def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, f
             day_count_convention=DayCountConvention.ACT_365F,
         )
         return spot, float(dividend_curve.df(time_to_maturity))
-    if valuation.discount_curve.flat_rate is None:
-        raise NotImplementedError("Discrete dividend adjustments require a flat curve.")
-
     pv_divs = pv_discrete_dividends(
         discrete_dividends,
-        valuation.pricing_date,
-        valuation.maturity,
-        float(valuation.discount_curve.flat_rate),
+        curve_date=valuation.pricing_date,
+        end_date=valuation.maturity,
+        discount_curve=valuation.discount_curve,
     )
     if dividend_curve is None:
         df_q = 1.0

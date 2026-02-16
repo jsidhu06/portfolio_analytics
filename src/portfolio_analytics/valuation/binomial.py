@@ -101,8 +101,8 @@ class _BinomialValuationBase:
         if discrete_dividends:
             pv_all = pv_discrete_dividends(
                 discrete_dividends,
-                time_intervals[0],
-                time_intervals[-1],
+                curve_date=time_intervals[0],
+                end_date=time_intervals[-1],
                 discount_curve=discount_curve,
             )
             spot = max(spot - pv_all, 0.0)
@@ -116,8 +116,8 @@ class _BinomialValuationBase:
             [
                 pv_discrete_dividends(
                     discrete_dividends,
-                    time_intervals[0],
-                    time_intervals[-1],
+                    curve_date=time_intervals[0],
+                    end_date=time_intervals[-1],
                     discount_curve=discount_curve,
                     start_date=t,
                 )

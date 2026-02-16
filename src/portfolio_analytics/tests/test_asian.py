@@ -269,9 +269,9 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
 
     pv_divs = pv_discrete_dividends(
         dividends=divs,
-        pricing_date=PRICING_DATE,
-        maturity=maturity,
-        short_rate=short_rate,
+        curve_date=PRICING_DATE,
+        end_date=maturity,
+        discount_curve=binom_underlying.discount_curve,
     )
     vol_multiplier = spot / (spot - pv_divs)
     adjusted_underlying = binom_underlying.replace(

@@ -79,8 +79,8 @@ class _BSMValuationBase:
             return spot
         pv_divs = pv_discrete_dividends(
             discrete_dividends,
-            self.parent.pricing_date,
-            self.parent.maturity,
+            curve_date=self.parent.pricing_date,
+            end_date=self.parent.maturity,
             discount_curve=self.parent.discount_curve,
         )
         return max(spot - pv_divs, 0.0)

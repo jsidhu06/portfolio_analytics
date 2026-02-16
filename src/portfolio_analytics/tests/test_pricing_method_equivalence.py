@@ -230,8 +230,8 @@ def test_discrete_dividend_equivalence_across_methods(r_curve):
 
     pv_divs = pv_discrete_dividends(
         dividends=divs,
-        pricing_date=ud.pricing_date,
-        maturity=spec_eu.maturity,
+        curve_date=ud.pricing_date,
+        end_date=spec_eu.maturity,
         discount_curve=r_curve,
     )
     vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)

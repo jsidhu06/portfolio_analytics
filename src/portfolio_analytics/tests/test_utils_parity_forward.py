@@ -43,12 +43,14 @@ def test_forward_price_discrete_dividends():
     spot = 100.0
     r = 0.05
     dividends = [(dt.datetime(2025, 7, 1), 0.5)]
+    curve = flat_curve(pricing_date, maturity, r)
 
     fwd = forward_price(
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=r,
+        discount_curve=curve,
         discrete_dividends=dividends,
     )
 

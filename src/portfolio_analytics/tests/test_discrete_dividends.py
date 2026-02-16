@@ -99,9 +99,9 @@ def test_discrete_dividend_engine_consistency():
     # Volatility-adjusted BSM/Binomial should be closer to MC/PDE
     pv_divs = pv_discrete_dividends(
         dividends=divs,
-        pricing_date=market_data.pricing_date,
-        maturity=spec.maturity,
-        short_rate=float(market_data.discount_curve.flat_rate),
+        curve_date=market_data.pricing_date,
+        end_date=spec.maturity,
+        discount_curve=market_data.discount_curve,
     )
     vol_multiplier = underlying.initial_value / (underlying.initial_value - pv_divs)
     adjusted_underlying = underlying.replace(volatility=underlying.volatility * vol_multiplier)
