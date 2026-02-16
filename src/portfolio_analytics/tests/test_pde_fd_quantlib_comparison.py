@@ -211,6 +211,68 @@ def _quantlib_american_curves(
     return float(option.NPV())
 
 
+def _quantlib_american_curves_with_divs(
+    *,
+    spot: float,
+    strike: float,
+    option_type: OptionType,
+    r_times: np.ndarray,
+    r_dfs: np.ndarray,
+    q_times: np.ndarray,
+    q_dfs: np.ndarray,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+    grid_points: int = 200,
+    time_steps: int = 400,
+) -> float:
+    ql.Settings.instance().evaluationDate = ql.Date(
+        PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
+    )
+
+    ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
+
+    spot_handle = ql.QuoteHandle(ql.SimpleQuote(float(spot)))
+    rf_curve = _ql_curve_from_times(times=r_times, dfs=r_dfs)
+    div_curve = _ql_curve_from_times(times=q_times, dfs=q_dfs)
+    vol_handle = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(
+            ql.Settings.instance().evaluationDate,
+            ql.TARGET(),
+            float(VOL),
+            ql.Actual365Fixed(),
+        )
+    )
+
+    if option_type is OptionType.PUT:
+        payoff = ql.PlainVanillaPayoff(ql.Option.Put, float(strike))
+    else:
+        payoff = ql.PlainVanillaPayoff(ql.Option.Call, float(strike))
+
+    exercise = ql.AmericanExercise(ql.Settings.instance().evaluationDate, ql_maturity)
+    option = ql.VanillaOption(payoff, exercise)
+
+    if discrete_dividends:
+        div_dates = []
+        dividends = []
+        for ex_date, amount in discrete_dividends:
+            if PRICING_DATE < ex_date < MATURITY:
+                div_dates.append(ql.Date(ex_date.day, ex_date.month, ex_date.year))
+                dividends.append(float(amount))
+        dividend_schedule = ql.DividendVector(div_dates, dividends)
+    else:
+        dividend_schedule = ql.DividendVector([], [])
+
+    process = ql.BlackScholesMertonProcess(spot_handle, div_curve, rf_curve, vol_handle)
+
+    engine = ql.FdBlackScholesVanillaEngine(
+        process,
+        dividend_schedule,
+        int(grid_points),
+        int(time_steps),
+    )
+    option.setPricingEngine(engine)
+    return float(option.NPV())
+
+
 def _pde_fd_american(
     *,
     spot: float,
@@ -245,6 +307,26 @@ def _pde_fd_american_curves(
         market_data=md,
         dividend_curve=q_curve,
         discrete_dividends=None,
+    )
+    spec = _spec(strike=strike, option_type=option_type)
+    return OptionValuation("pde_am", ud, spec, PricingMethod.PDE_FD, PDE_CFG).present_value()
+
+
+def _pde_fd_american_discrete_curves(
+    *,
+    spot: float,
+    strike: float,
+    option_type: OptionType,
+    r_curve: DiscountCurve,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+) -> float:
+    md = MarketData(PRICING_DATE, r_curve, currency=CURRENCY)
+    ud = UnderlyingPricingData(
+        initial_value=spot,
+        volatility=VOL,
+        market_data=md,
+        dividend_curve=None,
+        discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type)
     return OptionValuation("pde_am", ud, spec, PricingMethod.PDE_FD, PDE_CFG).present_value()
@@ -431,7 +513,9 @@ def test_american_fd_vs_quantlib_dividend_curve_only(spot, strike, option_type):
     assert np.isclose(pde, ql_price, rtol=0.01)
 
 
-@pytest.mark.parametrize("spot,strike,option_type", [(52.0, 50.0, OptionType.PUT)])
+@pytest.mark.parametrize(
+    "spot,strike,option_type", [(52.0, 50.0, OptionType.PUT), (52.0, 50.0, OptionType.CALL)]
+)
 def test_american_fd_vs_quantlib_forward_and_dividend_curves(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
@@ -460,6 +544,52 @@ def test_american_fd_vs_quantlib_forward_and_dividend_curves(spot, strike, optio
 
     logger.info(
         "Forward+dividend curves American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde,
+        ql_price,
+    )
+
+    assert np.isclose(pde, ql_price, rtol=0.01)
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type", [(52.0, 50.0, OptionType.PUT), (52.0, 50.0, OptionType.CALL)]
+)
+def test_american_fd_vs_quantlib_forward_curve_discrete_divs(spot, strike, option_type):
+    r_times = np.array([0.0, 0.25, 0.5, 1.0])
+    r_forwards = np.array([0.03, 0.05, 0.04])
+    r_curve = _build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+
+    q_times = np.array([0.0, 1.0])
+    q_dfs = np.array([1.0, 1.0])
+
+    divs = [
+        (PRICING_DATE + dt.timedelta(days=90), 0.5),
+        (PRICING_DATE + dt.timedelta(days=270), 0.5),
+    ]
+
+    pde = _pde_fd_american_discrete_curves(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_curve=r_curve,
+        discrete_dividends=divs,
+    )
+    ql_price = _quantlib_american_curves_with_divs(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        r_times=r_curve.times,
+        r_dfs=r_curve.dfs,
+        q_times=q_times,
+        q_dfs=q_dfs,
+        discrete_dividends=divs,
+    )
+
+    logger.info(
+        "Forward-curve + discrete-div American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
         option_type.value,
         spot,
         strike,

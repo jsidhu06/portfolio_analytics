@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import logging
 import math
+import datetime as dt
 
 import numpy as np
 
@@ -93,9 +94,9 @@ def _build_tau_grid(
 
 def _dividend_tau_schedule(
     *,
-    discrete_dividends: list[tuple],
-    pricing_date,
-    maturity,
+    discrete_dividends: list[tuple[dt.datetime, float]],
+    pricing_date: dt.datetime,
+    maturity: dt.datetime,
 ) -> list[tuple[float, float]]:
     """Return list of (tau, amount) for dividends strictly before maturity."""
     if not discrete_dividends:
@@ -282,6 +283,8 @@ def _vanilla_fd_core(
         raise ValueError("time_steps must be >= 1")
     if volatility <= 0:
         raise ValueError("volatility must be positive")
+    if discount_curve is None:
+        raise ValueError("discount_curve is required for PDE valuation")
     if early_exercise and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
         if omega is None or tol is None or max_iter is None:
             raise ValueError("PSOR params (omega/tol/max_iter) are required for early exercise")
@@ -320,9 +323,6 @@ def _vanilla_fd_core(
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
     if method is PDEMethod.EXPLICIT and space_grid is PDESpaceGrid.SPOT:
-        if discount_curve is None:
-            raise ValueError("discount_curve is required for explicit PDE stability checks")
-
         t_prev = time_to_maturity - tau_grid[:-1]
         t_next = time_to_maturity - tau_grid[1:]
         r_steps = np.array(
@@ -357,9 +357,6 @@ def _vanilla_fd_core(
                 )
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
-    if discount_curve is None:
-        raise ValueError("discount_curve is required for PDE valuation")
-
     df_0T = float(discount_curve.df(time_to_maturity))  # P(0,T)
     if dividend_curve is not None:
         dq_0T = float(dividend_curve.df(time_to_maturity))  # Dq(0,T)

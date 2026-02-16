@@ -43,6 +43,10 @@ def _market_data() -> MarketData:
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
+def _market_data_curve(curve: DiscountCurve) -> MarketData:
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+
+
 def _build_curve_from_forwards(
     *,
     name: str,
@@ -68,6 +72,12 @@ def _build_curve_from_forwards(
     return DiscountCurve(name=name, times=times, dfs=dfs)
 
 
+def _nonflat_r_curve() -> DiscountCurve:
+    times = np.array([0.0, 0.25, 0.5, 1.0])
+    forwards = np.array([0.03, 0.05, 0.04])
+    return _build_curve_from_forwards(name="r_curve_nonflat", times=times, forwards=forwards)
+
+
 def _underlying(
     *,
     spot: float,
@@ -79,6 +89,21 @@ def _underlying(
         volatility=VOL,
         market_data=_market_data(),
         dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
+    )
+
+
+def _underlying_with_curve(
+    *,
+    spot: float,
+    r_curve: DiscountCurve,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+) -> UnderlyingPricingData:
+    return UnderlyingPricingData(
+        initial_value=spot,
+        volatility=VOL,
+        market_data=_market_data_curve(r_curve),
+        dividend_curve=None,
         discrete_dividends=discrete_dividends,
     )
 
@@ -103,6 +128,30 @@ def _gbm(
         discrete_dividends=discrete_dividends,
     )
     return GeometricBrownianMotion("gbm", _market_data(), gbm_params, sim_config)
+
+
+def _gbm_with_curve(
+    *,
+    spot: float,
+    r_curve: DiscountCurve,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    paths: int = 200_000,
+) -> GeometricBrownianMotion:
+    sim_config = SimulationConfig(
+        paths=paths,
+        day_count_convention=DayCountConvention.ACT_365F,
+        frequency="W",
+        end_date=MATURITY,
+    )
+    gbm_params = GBMParams(
+        initial_value=spot,
+        volatility=VOL,
+        dividend_curve=None,
+        discrete_dividends=discrete_dividends,
+    )
+    return GeometricBrownianMotion(
+        "gbm_curve_div", _market_data_curve(r_curve), gbm_params, sim_config
+    )
 
 
 def _gbm_curves(
@@ -201,7 +250,15 @@ def test_pde_fd_american_close_to_mc(spot, strike, option_type, dividend_yield):
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
 
 
-def test_discrete_dividend_equivalence_across_methods():
+@pytest.mark.parametrize(
+    "r_curve",
+    [
+        flat_curve(PRICING_DATE, MATURITY, RISK_FREE),
+        _nonflat_r_curve(),
+    ],
+    ids=["flat", "nonflat"],
+)
+def test_discrete_dividend_equivalence_across_methods(r_curve):
     """Discrete divs: PDE/MC align; BSM/Binomial align; vol-adjusted BSM/Binomial near PDE/MC."""
     spot = 52.0
     strike = 50.0
@@ -210,8 +267,8 @@ def test_discrete_dividend_equivalence_across_methods():
         (PRICING_DATE + dt.timedelta(days=270), 0.5),
     ]
 
-    ud = _underlying(spot=spot, discrete_dividends=divs)
-    gbm = _gbm(spot=spot, discrete_dividends=divs, paths=200_000)
+    ud = _underlying_with_curve(spot=spot, r_curve=r_curve, discrete_dividends=divs)
+    gbm = _gbm_with_curve(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=200_000)
 
     spec_eu = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.EUROPEAN)
 
@@ -239,7 +296,7 @@ def test_discrete_dividend_equivalence_across_methods():
         dividends=divs,
         pricing_date=ud.pricing_date,
         maturity=spec_eu.maturity,
-        short_rate=float(ud.discount_curve.flat_rate),
+        discount_curve=r_curve,
     )
     vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)
     adjusted_ud = ud.replace(volatility=ud.volatility * vol_multiplier)
@@ -265,14 +322,22 @@ def test_discrete_dividend_equivalence_across_methods():
         (110.0, 100.0),
     ],
 )
-def test_discrete_dividend_american_matches_mc(spot, strike):
+@pytest.mark.parametrize(
+    "r_curve",
+    [
+        flat_curve(PRICING_DATE, MATURITY, RISK_FREE),
+        _nonflat_r_curve(),
+    ],
+    ids=["flat", "nonflat"],
+)
+def test_discrete_dividend_american_matches_mc(spot, strike, r_curve):
     """American discrete dividend: PDE FD should align with MC."""
     divs = [
         (PRICING_DATE + dt.timedelta(days=120), 0.6),
         (PRICING_DATE + dt.timedelta(days=240), 0.6),
     ]
-    ud = _underlying(spot=spot, discrete_dividends=divs)
-    gbm = _gbm(spot=spot, discrete_dividends=divs, paths=60_000)
+    ud = _underlying_with_curve(spot=spot, r_curve=r_curve, discrete_dividends=divs)
+    gbm = _gbm_with_curve(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=60_000)
     spec_am = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
     pde_pv = OptionValuation(
