@@ -139,7 +139,9 @@ class PDEParams:
                Default: 1e-6
         max_iter: Maximum PSOR iterations per time step (American only).
                    Default: 20000
-        method: Time-stepping scheme for the FD solver.
+        method: Time-stepping scheme for the FD solver. Options are IMPLICIT, EXPLICIT,
+                EXPLICIT_HULL (Hull's explicit scheme with implicit discounting),
+                and CRANK_NICOLSON.
         rannacher_steps:
             Number of Crank-Nicolson intervals (starting from maturity) that
             are replaced by two implicit (backward Euler) half-steps each

@@ -208,11 +208,18 @@ def _spot_operator_coeffs(
     risk_free_rate: float,
     dividend_rate: float,
     volatility: float,
+    hull_discounting: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Spatial operator coefficients on the spot grid.
+
+    When *hull_discounting* is True (Hull's explicit scheme), the rV
+    term is excluded from beta and instead applied as an implicit
+    divisor ``1 / (1 + r * dt)`` in the time-step function.
+    """
     diffusion = (volatility**2) * (spot_values**2) / (dS**2)
     drift = (risk_free_rate - dividend_rate) * spot_values / dS
     gamma = 0.5 * (diffusion - drift)
-    beta = -(diffusion + risk_free_rate)
+    beta = -diffusion if hull_discounting else -(diffusion + risk_free_rate)
     alpha = 0.5 * (diffusion + drift)
     return gamma, beta, alpha
 
@@ -223,12 +230,18 @@ def _log_operator_coeffs(
     risk_free_rate: float,
     dividend_rate: float,
     volatility: float,
+    hull_discounting: bool = False,
 ) -> tuple[float, float, float]:
+    """Spatial operator coefficients on the log-spot grid.
+
+    When *hull_discounting* is True (Hull's explicit scheme), r is
+    excluded from beta.
+    """
     mu = risk_free_rate - dividend_rate - 0.5 * volatility**2
     diffusion = (volatility**2) / (dz**2)
     drift = mu / dz
     gamma = 0.5 * (diffusion - drift)
-    beta = -(diffusion + risk_free_rate)
+    beta = -diffusion if hull_discounting else -(diffusion + risk_free_rate)
     alpha = 0.5 * (diffusion + drift)
     return gamma, beta, alpha
 
@@ -266,10 +279,18 @@ def _explicit_step(
     left: float,
     right: float,
     intrinsic: np.ndarray | None,
+    *,
+    r_dt: float = 0.0,
 ) -> np.ndarray:
-    """Explicit (forward-Euler) time step."""
+    """Explicit (forward-Euler) time step.
+
+    When *r_dt* > 0 (Hull's explicit scheme), the interior update is
+    divided by ``(1 + r_dt)`` to apply implicit discounting of the rV
+    term.
+    """
     V_new = V_old.copy()
-    V_new[j] = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
+    interior = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
+    V_new[j] = interior / (1.0 + r_dt)
     V_new[0] = left
     V_new[-1] = right
     if intrinsic is not None:
@@ -419,7 +440,9 @@ def _vanilla_fd_core(
             raise ValidationError(
                 "PSOR params (omega/tol/max_iter) are required for early exercise"
             )
-    if method is PDEMethod.EXPLICIT and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
+    if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL) and (
+        american_solver is PDEEarlyExercise.GAUSS_SEIDEL
+    ):
         raise UnsupportedFeatureError("GAUSS_SEIDEL is not supported with explicit time stepping")
 
     smax = float(smax_mult * max(spot, strike))
@@ -453,7 +476,7 @@ def _vanilla_fd_core(
     tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
-    if method is PDEMethod.EXPLICIT and space_grid is PDESpaceGrid.SPOT:
+    if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL) and space_grid is PDESpaceGrid.SPOT:
         t_prev = time_to_maturity - tau_grid[:-1]
         t_next = time_to_maturity - tau_grid[1:]
         r_steps = np.array(
@@ -527,6 +550,8 @@ def _vanilla_fd_core(
         else:
             q = 0.0
 
+        hull_discounting = method_used is PDEMethod.EXPLICIT_HULL
+
         if space_grid is PDESpaceGrid.SPOT:
             gamma, beta, alpha = _spot_operator_coeffs(
                 spot_values=S[1:-1],
@@ -534,6 +559,7 @@ def _vanilla_fd_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
+                hull_discounting=hull_discounting,
             )
         else:
             gamma, beta, alpha = _log_operator_coeffs(
@@ -541,6 +567,7 @@ def _vanilla_fd_core(
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
+                hull_discounting=hull_discounting,
             )
 
         df_0t = float(discount_curve.df(t_curr))
@@ -566,8 +593,18 @@ def _vanilla_fd_core(
 
         intrinsic_for_step = intrinsic if early_exercise else None
 
-        if method_used is PDEMethod.EXPLICIT:
-            V = _explicit_step(V_old, j, a, b, c, left, right, intrinsic_for_step)
+        if method_used in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL):
+            V = _explicit_step(
+                V_old,
+                j,
+                a,
+                b,
+                c,
+                left,
+                right,
+                intrinsic_for_step,
+                r_dt=r * d_tau if hull_discounting else 0.0,
+            )
         else:
             V, psor_iters = _implicit_cn_step(
                 V_old,

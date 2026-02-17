@@ -282,7 +282,12 @@ def test_pde_fd_grid_method_equivalence_european():
         "pde_base", ud, spec, PricingMethod.PDE_FD, params=base_params
     ).present_value()
 
-    for method in (PDEMethod.IMPLICIT, PDEMethod.EXPLICIT, PDEMethod.CRANK_NICOLSON):
+    for method in (
+        PDEMethod.IMPLICIT,
+        PDEMethod.EXPLICIT,
+        PDEMethod.EXPLICIT_HULL,
+        PDEMethod.CRANK_NICOLSON,
+    ):
         for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
             params = PDEParams(
                 spot_steps=160,
@@ -292,7 +297,10 @@ def test_pde_fd_grid_method_equivalence_european():
                 american_solver=PDEEarlyExercise.INTRINSIC,
             )
 
-            if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
+            if (
+                method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
+                and grid is PDESpaceGrid.SPOT
+            ):
                 with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
                     OptionValuation(
                         "pde_var", ud, spec, PricingMethod.PDE_FD, params=params
@@ -318,7 +326,12 @@ def test_pde_fd_grid_method_equivalence_american():
         "pde_base_am", ud, spec, PricingMethod.PDE_FD, params=base_params
     ).present_value()
 
-    for method in (PDEMethod.IMPLICIT, PDEMethod.EXPLICIT, PDEMethod.CRANK_NICOLSON):
+    for method in (
+        PDEMethod.IMPLICIT,
+        PDEMethod.EXPLICIT,
+        PDEMethod.EXPLICIT_HULL,
+        PDEMethod.CRANK_NICOLSON,
+    ):
         for grid in (PDESpaceGrid.SPOT, PDESpaceGrid.LOG_SPOT):
             for solver in (PDEEarlyExercise.INTRINSIC, PDEEarlyExercise.GAUSS_SEIDEL):
                 params = PDEParams(
@@ -330,7 +343,10 @@ def test_pde_fd_grid_method_equivalence_american():
                     max_iter=20_000,
                 )
 
-                if method is PDEMethod.EXPLICIT and solver is PDEEarlyExercise.GAUSS_SEIDEL:
+                if (
+                    method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
+                    and solver is PDEEarlyExercise.GAUSS_SEIDEL
+                ):
                     with pytest.raises(
                         UnsupportedFeatureError, match="GAUSS_SEIDEL is not supported"
                     ):
@@ -339,7 +355,10 @@ def test_pde_fd_grid_method_equivalence_american():
                         ).present_value()
                     continue
 
-                if method is PDEMethod.EXPLICIT and grid is PDESpaceGrid.SPOT:
+                if (
+                    method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
+                    and grid is PDESpaceGrid.SPOT
+                ):
                     with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
                         OptionValuation(
                             "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params

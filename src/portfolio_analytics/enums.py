@@ -58,6 +58,7 @@ class ImpliedVolMethod(Enum):
 class PDEMethod(Enum):
     IMPLICIT = "implicit"
     EXPLICIT = "explicit"
+    EXPLICIT_HULL = "explicit_hull"
     CRANK_NICOLSON = "crank_nicolson"
 
 
