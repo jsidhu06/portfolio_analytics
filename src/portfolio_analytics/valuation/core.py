@@ -18,6 +18,7 @@ from .binomial import (
     _BinomialAsianValuation,
 )
 from .bsm import _BSMEuropeanValuation
+from .asian import _AnalyticalAsianValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
 from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction
@@ -40,6 +41,7 @@ _VANILLA_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
 _ASIAN_REGISTRY: dict[PricingMethod, type] = {
     PricingMethod.MONTE_CARLO: _MCAsianValuation,
     PricingMethod.BINOMIAL: _BinomialAsianValuation,
+    PricingMethod.BSM: _AnalyticalAsianValuation,
 }
 
 
@@ -141,6 +143,10 @@ class AsianOptionSpec:
         Currency denomination
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
+    num_observations : int, optional
+        Number of equally spaced observation dates within the averaging window.
+        Required for analytical (BSM) pricing.  For Monte Carlo and Binomial the
+        observation count is determined by the simulation/tree time grid.
     exercise_type : ExerciseType
         Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
@@ -161,6 +167,7 @@ class AsianOptionSpec:
     maturity: dt.datetime
     currency: str
     averaging_start: dt.datetime | None = None
+    num_observations: int | None = None
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
 
@@ -195,6 +202,10 @@ class AsianOptionSpec:
         if strike < 0.0:
             raise ValidationError("AsianOptionSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
+
+        if self.num_observations is not None:
+            if not isinstance(self.num_observations, int) or self.num_observations < 1:
+                raise ValidationError("num_observations must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,7 +440,7 @@ class OptionValuation:
             impl_cls = _ASIAN_REGISTRY.get(pricing_method)
             if impl_cls is None:
                 raise ValidationError(
-                    "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL pricing."
+                    "Asian options require MONTE_CARLO, BINOMIAL, or BSM (geometric only) pricing."
                 )
         else:
             impl_cls = _VANILLA_REGISTRY.get((pricing_method, spec.exercise_type))
