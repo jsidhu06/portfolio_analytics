@@ -1,5 +1,6 @@
 """Equivalence tests across pricing methods (PDE FD, BSM, Binomial, MC)."""
 
+from typing import Sequence
 import datetime as dt
 
 import numpy as np
@@ -55,7 +56,7 @@ def _underlying(
     spot: float,
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingPricingData:
     return UnderlyingPricingData(
         initial_value=spot,
@@ -71,7 +72,7 @@ def _gbm(
     spot: float,
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     paths: int = 200_000,
     name: str = "gbm",
 ) -> GeometricBrownianMotion:

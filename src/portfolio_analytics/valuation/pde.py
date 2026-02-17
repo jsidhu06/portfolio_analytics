@@ -13,7 +13,7 @@ PDE via finite differences for vanilla European and American call/put:
 - American handling: intrinsic projection or Gauss-Seidel/PSOR
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import logging
 import math
@@ -94,7 +94,7 @@ def _build_tau_grid(
 
 def _dividend_tau_schedule(
     *,
-    discrete_dividends: list[tuple[dt.datetime, float]],
+    discrete_dividends: Sequence[tuple[dt.datetime, float]],
     pricing_date: dt.datetime,
     maturity: dt.datetime,
 ) -> list[tuple[float, float]]:

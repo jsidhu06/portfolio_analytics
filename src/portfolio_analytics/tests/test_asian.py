@@ -2,6 +2,7 @@
 
 import datetime as dt
 import logging
+from typing import Sequence
 
 import numpy as np
 import pytest
@@ -49,7 +50,7 @@ def _gbm_underlying(
     vol: float,
     short_rate: float,
     dividend_curve: DiscountCurve | None = None,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     maturity: dt.datetime,
     paths: int,
     num_steps: int,
@@ -80,7 +81,7 @@ def _binomial_underlying(
     vol: float,
     short_rate: float,
     dividend_curve: DiscountCurve | None = None,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     maturity: dt.datetime,
 ) -> UnderlyingPricingData:
     return UnderlyingPricingData(

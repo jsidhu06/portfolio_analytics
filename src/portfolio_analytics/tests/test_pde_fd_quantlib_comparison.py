@@ -2,7 +2,7 @@
 
 import datetime as dt
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 import numpy as np
 import pytest
@@ -66,7 +66,7 @@ def _spec(*, strike: float, option_type: OptionType) -> OptionSpec:
 
 
 def _quantlib_dividend_schedule(
-    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
 ) -> "ql_typing.DividendVector":
     if discrete_dividends:
         div_dates = []
@@ -86,7 +86,7 @@ def _quantlib_american_with_curves(
     option_type: OptionType,
     rf_curve: "ql_typing.YieldTermStructureHandle",
     div_curve: "ql_typing.YieldTermStructureHandle",
-    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
     grid_points: int = 200,
     time_steps: int = 400,
 ) -> float:
@@ -134,7 +134,7 @@ def _quantlib_american(
     strike: float,
     option_type: OptionType,
     dividend_yield: float,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
     grid_points: int = 200,
     time_steps: int = 400,
 ) -> float:
@@ -176,7 +176,7 @@ def _quantlib_american_curves(
     r_dfs: np.ndarray,
     q_times: np.ndarray,
     q_dfs: np.ndarray,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     grid_points: int = 200,
     time_steps: int = 400,
 ) -> float:
@@ -201,7 +201,7 @@ def _pde_fd_american(
     option_type: OptionType,
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
-    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> float:
     ud = UnderlyingPricingData(
         initial_value=spot,
