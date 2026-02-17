@@ -15,7 +15,7 @@ from .rates import DiscountCurve
 from .exceptions import ConfigurationError, ValidationError
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SimulationConfig:
     """Configuration for a path simulation run.
 

@@ -1,5 +1,9 @@
 """Top-level exports for common portfolio_analytics types."""
 
+from importlib.metadata import version
+
+__version__ = version("portfolio_analytics")
+
 from .exceptions import (
     DerivativesAnalyticsError,
     ValidationError,

@@ -84,7 +84,7 @@ def _pv(
 class TestZeroVolatility:
     """σ = 0 ⇒ deterministic world; option value = discounted intrinsic."""
 
-    # --- BSM: IEEE inf arithmetic gives correct pricing accidentally ---
+    # --- BSM: zero-vol guard returns ±inf for d1/d2, yielding intrinsic ---
 
     @pytest.mark.parametrize(
         "option_type,strike,expected_positive",

@@ -334,7 +334,7 @@ def expected_binomial_payoff(
     K: float,
     r: float,
     q: float,
-    u: float | None = None,
+    u: float,
 ) -> float:
     """Expected vanilla payoff under a binomial terminal distribution.
 
@@ -373,8 +373,6 @@ def expected_binomial_payoff(
     r = float(r)
     q = float(q)
 
-    if u is None:
-        raise ValidationError("u must be provided")
     u = float(u)
     if u <= 0:
         raise ValidationError("u must be positive")

@@ -64,9 +64,21 @@ class _BSMValuationBase:
             raise ValidationError("time_to_maturity must be positive")
 
         forward = spot * df_q / df_r
-        numerator = np.log(forward / strike) + 0.5 * volatility**2 * time_to_maturity
         denominator = volatility * np.sqrt(time_to_maturity)
 
+        if denominator < 1e-300:
+            # Zero (or near-zero) vol: deterministic limit.
+            # d1 = d2 = +inf when forward > strike  →  N(d) = 1
+            # d1 = d2 = -inf when forward < strike  →  N(d) = 0
+            # d1 = d2 = 0    when forward == strike →  N(d) = 0.5
+            if forward > strike:
+                return np.inf, np.inf
+            elif forward < strike:
+                return -np.inf, -np.inf
+            else:
+                return 0.0, 0.0
+
+        numerator = np.log(forward / strike) + 0.5 * volatility**2 * time_to_maturity
         d1 = numerator / denominator
         d2 = d1 - denominator
 
