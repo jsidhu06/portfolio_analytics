@@ -143,11 +143,6 @@ class _MCAmericanValuation:
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
 
-        Parameters
-        ==========
-        random_seed: int, optional
-            random seed for path generation
-
         Returns
         =======
         tuple of (instrument_values, payoff, time_index_start, time_index_end)

@@ -379,10 +379,10 @@ def implied_volatility(
         elif method == ImpliedVolMethod.BISECTION:
             result = _bisection(f=f, low=low, high=high, tol=tol, max_iter=max_iter)
         elif method == ImpliedVolMethod.BRENTQ:
-            implied = optimize.brentq(f, low, high, xtol=tol, maxiter=max_iter)
+            implied, r = optimize.brentq(f, low, high, xtol=tol, maxiter=max_iter, full_output=True)
             result = ImpliedVolResult(
                 implied_vol=float(implied),
-                iterations=max_iter,
+                iterations=r.iterations,
                 converged=True,
             )
         else:
