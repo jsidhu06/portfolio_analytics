@@ -141,8 +141,12 @@ class PDEParams:
                    Default: 20000
         method: Time-stepping scheme for the FD solver.
         rannacher_steps:
-            Number of implicit substeps used to smooth the initial condition
-            when method is CRANK_NICOLSON. Typical: 2. Set 0 to disable.
+            Number of Crank-Nicolson intervals (starting from maturity) that
+            are replaced by two implicit (backward Euler) half-steps each
+            (Pooley-Vetzal-Forsyth 2003).  With the default of 2, the first
+            two CN intervals become four implicit half-step solves, which is
+            sufficient to damp oscillations from payoff non-smoothness while
+            preserving second-order convergence.  Set 0 to disable.
         space_grid: Spatial discretization grid in spot or log-spot space.
         american_solver: Early exercise handling for American options.
         control_variate_european:

@@ -500,18 +500,21 @@ def _vanilla_fd_core(
     psor_not_converged = 0
 
     # Build step schedule: (tau_start, tau_end, method_for_step)
-    # Rannacher smoothing subdivides the first tau interval into implicit sub-steps.
+    #
+    # Rannacher smoothing (half-step substitution, Pooley-Vetzal-Forsyth 2003):
+    # each of the first `rannacher_steps` Crank-Nicolson intervals is replaced
+    # by two implicit (backward Euler) half-steps of size d_tau/2.  This damps
+    # payoff non-smoothness while preserving the overall time-grid structure.
     steps: list[tuple[float, float, PDEMethod]] = []
-    if method is PDEMethod.CRANK_NICOLSON and rannacher_steps > 0 and tau_grid.size > 1:
-        tau0, tau1 = float(tau_grid[0]), float(tau_grid[1])
-        d_tau_sub = (tau1 - tau0) / rannacher_steps
-        for k in range(rannacher_steps):
-            steps.append((tau0 + k * d_tau_sub, tau0 + (k + 1) * d_tau_sub, PDEMethod.IMPLICIT))
-        for n in range(2, tau_grid.size):
-            steps.append((float(tau_grid[n - 1]), float(tau_grid[n]), method))
-    else:
-        for n in range(1, tau_grid.size):
-            steps.append((float(tau_grid[n - 1]), float(tau_grid[n]), method))
+    for n in range(1, tau_grid.size):
+        tau_start = float(tau_grid[n - 1])
+        tau_end = float(tau_grid[n])
+        if method is PDEMethod.CRANK_NICOLSON and rannacher_steps > 0 and n <= rannacher_steps:
+            tau_mid = 0.5 * (tau_start + tau_end)
+            steps.append((tau_start, tau_mid, PDEMethod.IMPLICIT))
+            steps.append((tau_mid, tau_end, PDEMethod.IMPLICIT))
+        else:
+            steps.append((tau_start, tau_end, method))
 
     for tau_prev, tau_curr, method_used in steps:
         d_tau = tau_curr - tau_prev
