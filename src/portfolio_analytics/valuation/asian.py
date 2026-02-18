@@ -49,17 +49,17 @@ def _asian_geometric_analytical(
     risk_free_rate: float,
     dividend_yield: float,
     option_type: OptionType,
-    num_observations: int,
+    num_steps: int,
     averaging_start: float = 0.0,
 ) -> float:
     """Kemna-Vorst closed-form price for a geometric average-price Asian option.
 
     The geometric average G = (∏ S(tᵢ))^(1/M) of GBM prices is lognormal.
-    Given ``num_observations = N`` equally spaced *intervals*, the average is
-    taken over M = N + 1 prices at tᵢ = t_s + i·Δ  (i = 0, 1, …, N)
-    where Δ = (T − t_s)/N.  The observation at t₀ = t_s includes the
-    current spot price S₀, matching the convention used by the binomial
-    and Monte Carlo engines.
+    Given ``num_steps = N`` equally spaced time steps, ``delta_t = T/N``,
+    the average is taken over M = N + 1 prices at tᵢ = t_s + i·Δ
+    (i = 0, 1, …, N) where Δ = (T − t_s)/N.  The observation at
+    t₀ = t_s includes the current spot price S₀, matching the convention
+    used by the binomial and Monte Carlo engines.
 
         E[ln G] = ln S₀ + (r − q − σ²/2) · t̄
         Var[ln G] = σ² · [t_s + Δ·N·(2N+1) / (6·M)]
@@ -85,8 +85,8 @@ def _asian_geometric_analytical(
         Continuously compounded dividend yield q
     option_type : OptionType
         CALL or PUT
-    num_observations : int
-        Number of equally spaced averaging *intervals* N (≥ 1).
+    num_steps : int
+        Number of equally spaced time steps N (≥ 1).  ``delta_t = T/N``.
         The average is taken over N + 1 prices (including S₀ at t_s)
     averaging_start : float
         Year fraction from pricing date to the start of the averaging window
@@ -101,8 +101,8 @@ def _asian_geometric_analytical(
         raise ValidationError("time_to_maturity must be positive")
     if volatility <= 0:
         raise ValidationError("volatility must be positive")
-    if num_observations < 1:
-        raise ValidationError("num_observations must be >= 1")
+    if num_steps < 1:
+        raise ValidationError("num_steps must be >= 1")
     if strike < 0:
         raise ValidationError("strike must be >= 0")
     if averaging_start < 0:
@@ -111,7 +111,7 @@ def _asian_geometric_analytical(
         raise ValidationError("averaging_start must be < time_to_maturity")
 
     T = time_to_maturity
-    N = num_observations  # number of intervals
+    N = num_steps  # number of time steps
     M = N + 1  # total observation prices (including S₀ at t_s)
     sigma = volatility
     r = risk_free_rate
@@ -166,9 +166,9 @@ class _AnalyticalAsianValuation:
                 "Analytical (BSM) pricing is only available for geometric Asian options. "
                 "Use MONTE_CARLO or BINOMIAL for arithmetic Asian options."
             )
-        if spec.num_observations is None:
+        if spec.num_steps is None:
             raise ValidationError(
-                "num_observations is required on AsianOptionSpec for analytical (BSM) pricing."
+                "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
             )
 
     def _extract_rates(self, time_to_maturity: float) -> tuple[float, float]:
@@ -220,6 +220,6 @@ class _AnalyticalAsianValuation:
             risk_free_rate=r,
             dividend_yield=q,
             option_type=self.parent.option_type,
-            num_observations=spec.num_observations,
+            num_steps=spec.num_steps,
             averaging_start=averaging_start_frac,
         )

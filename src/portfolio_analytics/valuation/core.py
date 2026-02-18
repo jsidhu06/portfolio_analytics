@@ -143,10 +143,10 @@ class AsianOptionSpec:
         Currency denomination
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
-    num_observations : int, optional
-        Number of equally spaced observation dates within the averaging window.
+    num_steps : int, optional
+        Number of equally spaced time steps within the averaging window.
         Required for analytical (BSM) pricing.  For Monte Carlo and Binomial the
-        observation count is determined by the simulation/tree time grid.
+        step count is determined by the simulation/tree time grid.
     exercise_type : ExerciseType
         Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
@@ -167,7 +167,7 @@ class AsianOptionSpec:
     maturity: dt.datetime
     currency: str
     averaging_start: dt.datetime | None = None
-    num_observations: int | None = None
+    num_steps: int | None = None
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
 
@@ -203,9 +203,9 @@ class AsianOptionSpec:
             raise ValidationError("AsianOptionSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
-        if self.num_observations is not None:
-            if not isinstance(self.num_observations, int) or self.num_observations < 1:
-                raise ValidationError("num_observations must be a positive integer")
+        if self.num_steps is not None:
+            if not isinstance(self.num_steps, int) or self.num_steps < 1:
+                raise ValidationError("num_steps must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
