@@ -404,7 +404,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             else:
                 s_up = spot_lattice[rows, t + 1]
                 s_down = spot_lattice[rows + 1, t + 1]
-            grid_here = avg_grid[:, rows, t]
+            grid_here = avg_grid[:, rows, t]  # shape (k,t+1)
 
             avg_up = ((t + 1) * grid_here + s_up) / (t + 2)
             avg_down = ((t + 1) * grid_here + s_down) / (t + 2)
@@ -436,13 +436,8 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 pv_pathwise = self._solve_mc()
                 return float(np.mean(pv_pathwise))
 
-            values, avg_grid = self._solve_hull()
-            if self.parent.spec.averaging is AsianAveraging.GEOMETRIC:
-                root_avg = float(np.log(self.parent.underlying.initial_value))
-            else:
-                root_avg = float(self.parent.underlying.initial_value)
-            root_value = self._interp_value(root_avg, avg_grid[:, 0, 0], values[:, 0, 0])
-            return float(root_value)
+            values, _ = self._solve_hull()
+            return float(values[0, 0, 0])
 
     def solve(self) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         if self.binom_params.mc_paths is not None:
