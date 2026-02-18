@@ -700,24 +700,57 @@ class OptionValuation:
         self,
         greek_calc_method: GreekCalculationMethod | None,
         *,
-        error_message: str,
-    ) -> bool:
-        """Return True for analytical greeks, validating method compatibility."""
-        if greek_calc_method is None:
-            return self.pricing_method == PricingMethod.BSM
+        tree_capable: bool = False,
+    ) -> GreekCalculationMethod:
+        """Resolve the effective greek calculation method, validating compatibility.
 
-        if not isinstance(greek_calc_method, GreekCalculationMethod):
+        Parameters
+        ----------
+        tree_capable : bool
+            Whether tree extraction is available for this greek (delta, gamma,
+            theta — not vega or rho).
+
+        Returns
+        -------
+        GreekCalculationMethod
+            The resolved method: ANALYTICAL, TREE, or NUMERICAL.
+        """
+        if greek_calc_method is not None and not isinstance(
+            greek_calc_method, GreekCalculationMethod
+        ):
             raise ConfigurationError(
-                f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
+                f"greek_calc_method must be GreekCalculationMethod enum, "
+                f"got {type(greek_calc_method).__name__}"
             )
 
+        # --- resolve default (None) ---
+        if greek_calc_method is None:
+            if self.pricing_method == PricingMethod.BSM:
+                return GreekCalculationMethod.ANALYTICAL
+            if tree_capable and self.pricing_method == PricingMethod.BINOMIAL:
+                return GreekCalculationMethod.TREE
+            return GreekCalculationMethod.NUMERICAL
+
+        # --- validate explicit choice ---
         if (
             greek_calc_method == GreekCalculationMethod.ANALYTICAL
             and self.pricing_method != PricingMethod.BSM
         ):
-            raise ValidationError(error_message)
+            raise ValidationError(
+                "Analytical greeks are only available for BSM pricing method. "
+                "Use GreekCalculationMethod.NUMERICAL (or .TREE for binomial delta/gamma/theta)."
+            )
 
-        return greek_calc_method == GreekCalculationMethod.ANALYTICAL
+        if greek_calc_method == GreekCalculationMethod.TREE:
+            if self.pricing_method != PricingMethod.BINOMIAL:
+                raise ValidationError("Tree greeks are only available for BINOMIAL pricing method.")
+            if not tree_capable:
+                raise ValidationError(
+                    "Tree extraction is not available for this greek. "
+                    "Only delta, gamma, and theta support GreekCalculationMethod.TREE."
+                )
+
+        return greek_calc_method
 
     def _build_valuation(self, *, name_suffix: str, underlying) -> "OptionValuation":
         """Create a sibling valuation with a modified underlying for bump-and-revalue."""
@@ -740,33 +773,31 @@ class OptionValuation:
         - Uses analytical closed-form formula by default
         - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
 
+        For BINOMIAL pricing method:
+        - Extracts delta directly from the CRR lattice by default (Hull Ch. 13)
+        - Uses numerical bump-and-revalue if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
         For other pricing methods:
-        - Only support numerical central difference approximation (greek_calc_method analytical
-            raises ValueError)
+        - Only support numerical central difference approximation
 
         Parameters
         ==========
         epsilon: float, optional
             Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
         greek_calc_method: GreekCalculationMethod, optional
-            Method for calculating delta. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
-            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
-            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+            Method for calculating delta.
+            - None (default): ANALYTICAL for BSM, TREE for BINOMIAL, NUMERICAL for others
+            - GreekCalculationMethod.ANALYTICAL: Closed-form formula (BSM only)
+            - GreekCalculationMethod.TREE: CRR lattice extraction (BINOMIAL only)
+            - GreekCalculationMethod.NUMERICAL: Central difference approximation
         Returns
         =======
         float
             option delta
         """
-        use_analytical = self._resolve_greek_method(
-            greek_calc_method,
-            error_message=(
-                "Analytical greeks are only available for BSM pricing method. "
-                "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-            ),
-        )
+        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
 
-        # Use analytical formula for BSM if specified
-        if use_analytical:
+        if method != GreekCalculationMethod.NUMERICAL:
             return self._impl.delta()
 
         # Otherwise use numerical approximation via bump-and-revalue
@@ -802,32 +833,31 @@ class OptionValuation:
         - Uses analytical closed-form formula by default
         - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
 
+        For BINOMIAL pricing method:
+        - Extracts gamma directly from the CRR lattice by default (Hull Ch. 13)
+        - Uses numerical bump-and-revalue if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
         For other pricing methods:
-        - Always uses numerical central difference approximation (greek_calc_method ignored)
+        - Always uses numerical central difference approximation
 
         Parameters
         ==========
         epsilon: float, optional
             Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
         greek_calc_method: GreekCalculationMethod, optional
-            Method for calculating gamma. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
-            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
-            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+            Method for calculating gamma.
+            - None (default): ANALYTICAL for BSM, TREE for BINOMIAL, NUMERICAL for others
+            - GreekCalculationMethod.ANALYTICAL: Closed-form formula (BSM only)
+            - GreekCalculationMethod.TREE: CRR lattice extraction (BINOMIAL only)
+            - GreekCalculationMethod.NUMERICAL: Central difference approximation
         Returns
         =======
         float
             option gamma
         """
-        use_analytical = self._resolve_greek_method(
-            greek_calc_method,
-            error_message=(
-                "Analytical greeks are only available for BSM pricing method. "
-                "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-            ),
-        )
+        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
 
-        # Use analytical formula for BSM if specified
-        if use_analytical:
+        if method != GreekCalculationMethod.NUMERICAL:
             return self._impl.gamma()
 
         # Otherwise use numerical approximation via bump-and-revalue
@@ -885,16 +915,9 @@ class OptionValuation:
         Vega is returned per 1% point change in volatility. The implied-vol solver
         scales this back to per-1.0 volatility when computing Newton steps.
         """
-        use_analytical = self._resolve_greek_method(
-            greek_calc_method,
-            error_message=(
-                "Analytical greeks are only available for BSM pricing method. "
-                "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-            ),
-        )
+        method = self._resolve_greek_method(greek_calc_method)
 
-        # Use analytical formula for BSM if specified
-        if use_analytical:
+        if method == GreekCalculationMethod.ANALYTICAL:
             return self._impl.vega()
 
         # Otherwise use numerical approximation via bump-and-revalue
@@ -920,16 +943,18 @@ class OptionValuation:
         """Calculate theta (time decay) of the option.
 
         Theta measures the rate of change of option value with respect to time.
-        For the BSM method, closed-form analytical formulas are available (default).
+        For BSM, closed-form analytical formulas are used by default.
+        For BINOMIAL, tree theta is extracted from the CRR lattice by default (Hull Ch. 13).
         For other methods, a numerical finite-difference approach is used.
 
         Parameters
         ==========
         greek_calc_method : GreekCalculationMethod | None, optional
-            Method to use for greek calculation (analytical or numerical)
-            - None (default): Uses analytical for BSM, numerical for others
-            - GreekCalculationMethod.ANALYTICAL: Uses closed-form formulas (BSM only)
-            - GreekCalculationMethod.NUMERICAL: Uses bump-and-revalue finite-difference
+            Method to use for greek calculation.
+            - None (default): ANALYTICAL for BSM, TREE for BINOMIAL, NUMERICAL for others
+            - GreekCalculationMethod.ANALYTICAL: Closed-form formula (BSM only)
+            - GreekCalculationMethod.TREE: CRR lattice extraction (BINOMIAL only)
+            - GreekCalculationMethod.NUMERICAL: Bump-and-revalue finite-difference
         time_bump_days : float, optional
             Time bump size in days for numerical calculation (default: 1.0)
             This is the number of days to advance the pricing date
@@ -948,14 +973,11 @@ class OptionValuation:
         Raises
         ======
         ValueError
-            if analytical method requested for non-BSM pricing method
+            if analytical method requested for unsupported pricing method
         """
-        use_analytical = self._resolve_greek_method(
-            greek_calc_method,
-            error_message="Analytical theta calculation only available for BSM method",
-        )
+        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
 
-        if use_analytical:
+        if method != GreekCalculationMethod.NUMERICAL:
             return self._impl.theta()
 
         # Numerical theta: bump pricing date forward by time_bump_days and reprice
@@ -1016,12 +1038,9 @@ class OptionValuation:
         ValueError
             if analytical method requested for non-BSM pricing method
         """
-        use_analytical = self._resolve_greek_method(
-            greek_calc_method,
-            error_message="Analytical rho calculation only available for BSM method",
-        )
+        method = self._resolve_greek_method(greek_calc_method)
 
-        if use_analytical:
+        if method == GreekCalculationMethod.ANALYTICAL:
             return self._impl.rho()
 
         # Numerical rho: bump risk-free rate up and down and reprice

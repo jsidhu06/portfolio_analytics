@@ -46,6 +46,7 @@ class PricingMethod(Enum):
 
 class GreekCalculationMethod(Enum):
     ANALYTICAL = "analytical"
+    TREE = "tree"
     NUMERICAL = "numerical"
 
 

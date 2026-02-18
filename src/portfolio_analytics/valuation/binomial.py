@@ -12,6 +12,7 @@ from ..exceptions import (
     ArbitrageViolationError,
     ConfigurationError,
     NumericalError,
+    UnsupportedFeatureError,
     ValidationError,
 )
 from .params import BinomialParams
@@ -167,6 +168,78 @@ class _BinomialValuationBase:
 
         payoff_fn = self.parent.spec.payoff
         return payoff_fn(instrument_values)
+
+    # ------------------------------------------------------------------
+    # Tree Greeks (Hull Ch. 13)
+    # ------------------------------------------------------------------
+
+    def _tree_greeks_data(self) -> tuple[np.ndarray, np.ndarray, float]:
+        """Return (option_lattice, spot_lattice, delta_t) for tree Greek extraction.
+
+        Raises UnsupportedFeatureError for Asian or other non-vanilla specs
+        whose ``solve()`` does not return a 2-D option lattice.
+        """
+        num_steps = int(self.binom_params.num_steps)
+        _, _, spot_lattice = self._setup_binomial_parameters(num_steps)
+        option_lattice = self.solve()
+        if not isinstance(option_lattice, np.ndarray) or option_lattice.ndim != 2:
+            raise UnsupportedFeatureError(
+                "Tree Greeks are only available for vanilla binomial options, "
+                "not Asian or other path-dependent specs."
+            )
+        T = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+        dt = T / num_steps
+        return option_lattice, spot_lattice, dt
+
+    def delta(self) -> float:
+        """Extract delta from the binomial tree (Hull Ch. 13).
+
+        .. math::
+
+            \\Delta = \\frac{f_u - f_d}{S_u - S_d}
+
+        where :math:`f_u, f_d` are the option values and :math:`S_u, S_d`
+        the spot prices at step 1.
+        """
+        f, S, _ = self._tree_greeks_data()
+        return float((f[0, 1] - f[1, 1]) / (S[0, 1] - S[1, 1]))
+
+    def gamma(self) -> float:
+        """Extract gamma from the binomial tree (Hull Ch. 13).
+
+        Uses the three nodes at step 2:
+
+        .. math::
+
+            \\Gamma = \\frac{\\Delta_+ - \\Delta_-}{h}
+
+        where :math:`\\Delta_+ = (f_{uu}-f_{ud})/(S_{uu}-S_{ud})`,
+        :math:`\\Delta_- = (f_{ud}-f_{dd})/(S_{ud}-S_{dd})`,
+        and :math:`h = (S_{uu}-S_{dd})/2`.
+        """
+        if self.binom_params.num_steps < 2:
+            raise ValidationError("Tree gamma requires num_steps >= 2.")
+        f, S, _ = self._tree_greeks_data()
+        delta_up = (f[0, 2] - f[1, 2]) / (S[0, 2] - S[1, 2])
+        delta_down = (f[1, 2] - f[2, 2]) / (S[1, 2] - S[2, 2])
+        h = (S[0, 2] - S[2, 2]) / 2.0
+        return float((delta_up - delta_down) / h)
+
+    def theta(self) -> float:
+        """Extract theta from the binomial tree (Hull Ch. 13).
+
+        .. math::
+
+            \\Theta = \\frac{f_{ud} - f_0}{2\\Delta t}
+
+        where :math:`f_{ud}` is the central node at step 2 and :math:`f_0`
+        the root value.  Returned per **calendar day** (divided by 365).
+        """
+        if self.binom_params.num_steps < 2:
+            raise ValidationError("Tree theta requires num_steps >= 2.")
+        f, _, dt = self._tree_greeks_data()
+        theta_per_year = (f[1, 2] - f[0, 0]) / (2.0 * dt)
+        return float(theta_per_year / 365.0)
 
 
 class _BinomialEuropeanValuation(_BinomialValuationBase):
