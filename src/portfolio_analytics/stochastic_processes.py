@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Sequence
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace as dc_replace
@@ -41,6 +42,8 @@ class SimulationConfig:
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
     special_dates: set[dt.datetime] = field(default_factory=set)
+    antithetic: bool = True
+    moment_matching: bool = True
 
     def __post_init__(self) -> None:
         if self.paths is None or int(self.paths) <= 0:
@@ -353,18 +356,26 @@ class PathSimulation(ABC):
     def _standard_normals(self, random_seed: int | None, steps: int, paths: int) -> np.ndarray:
         if self.correlation_context is None:
             rng = np.random.default_rng(random_seed)
-            # Use antithetic variates for variance reduction
-            # Generate (steps, paths/2) and concatenate with negative
-            half_paths = paths // 2
-            if paths % 2 == 0:
+
+            if self._sim.antithetic and paths % 2 == 0:
+                # Antithetic variates: generate half, mirror with negation
+                half_paths = paths // 2
                 ran = rng.standard_normal((steps, half_paths))
                 ran = np.concatenate((ran, -ran), axis=1)
             else:
-                # Fallback for odd paths
+                if self._sim.antithetic and paths % 2 != 0:
+                    warnings.warn(
+                        f"antithetic=True but paths={paths} is odd; "
+                        "antithetic variates require an even number of paths. "
+                        "Falling back to plain random sampling.",
+                        stacklevel=2,
+                    )
                 ran = rng.standard_normal((steps, paths))
 
-            # Simple moment matching (center and scale)
-            ran = (ran - np.mean(ran)) / np.std(ran)
+            if self._sim.moment_matching:
+                # Moment matching: centre and scale to N(0,1)
+                ran = (ran - np.mean(ran)) / np.std(ran)
+
             return ran
 
         corr = self.correlation_context

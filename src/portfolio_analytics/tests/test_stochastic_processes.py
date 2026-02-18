@@ -497,3 +497,101 @@ class TestSimulationConfig:
             num_steps=10,
         )
         assert config.num_steps == 10
+
+
+class TestVarianceReduction:
+    """Tests for configurable antithetic variates and moment matching."""
+
+    def setup_method(self):
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
+        self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
+
+    def _make_gbm(self, *, antithetic: bool, moment_matching: bool, paths: int = 10000):
+        sim = SimulationConfig(
+            paths=paths,
+            end_date=self.end_date,
+            num_steps=252,
+            antithetic=antithetic,
+            moment_matching=moment_matching,
+        )
+        return GeometricBrownianMotion(
+            "vr_test", self.market_data, self.process_params, sim, corr=None
+        )
+
+    def test_defaults_are_true(self):
+        """SimulationConfig defaults to antithetic=True, moment_matching=True."""
+        sim = SimulationConfig(paths=100, end_date=self.end_date, num_steps=10)
+        assert sim.antithetic is True
+        assert sim.moment_matching is True
+
+    def test_antithetic_produces_symmetric_randoms(self):
+        """With antithetic=True, random draws should come in negated pairs."""
+        gbm = self._make_gbm(antithetic=True, moment_matching=False, paths=1000)
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=1000)
+        half = z.shape[1] // 2
+        # Z[:, i] + Z[:, i + half] == 0 for all i
+        assert np.allclose(z[:, :half] + z[:, half:], 0.0, atol=1e-14)
+
+    def test_no_antithetic_no_symmetric_randoms(self):
+        """With antithetic=False, random draws should NOT cancel in pairs."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=1000)
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=1000)
+        half = z.shape[1] // 2
+        assert not np.allclose(z[:, :half] + z[:, half:], 0.0, atol=1e-6)
+
+    def test_moment_matching_normalises_randoms(self):
+        """With moment_matching=True, raw normals should have mean≈0 and std≈1."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=True, paths=10000)
+        # Access the internal normals directly
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=10000)
+        assert np.isclose(z.mean(), 0.0, atol=1e-14)
+        assert np.isclose(z.std(), 1.0, atol=1e-14)
+
+    def test_no_moment_matching_raw_stats(self):
+        """With moment_matching=False, raw normals have small but nonzero mean drift."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=500)
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=500)
+        # With only 500 paths the sample mean won't be exactly zero
+        assert not np.isclose(z.mean(), 0.0, atol=1e-14)
+
+    def test_antithetic_reduces_estimator_variance(self):
+        """Antithetic variates should reduce variance of a call payoff estimator.
+
+        We run many small batches and compare the variance of the batch means.
+        """
+        n_batches = 50
+        batch_paths = 500
+        strike = 100.0
+
+        means_av = []
+        means_plain = []
+        for seed in range(n_batches):
+            gbm_av = self._make_gbm(antithetic=True, moment_matching=False, paths=batch_paths)
+            terminal = gbm_av.generate_paths(random_seed=seed)[-1]
+            means_av.append(np.mean(np.maximum(terminal - strike, 0.0)))
+
+            gbm_plain = self._make_gbm(antithetic=False, moment_matching=False, paths=batch_paths)
+            terminal = gbm_plain.generate_paths(random_seed=seed + 10000)[-1]
+            means_plain.append(np.mean(np.maximum(terminal - strike, 0.0)))
+
+        # Variance of batch means should be lower with antithetic
+        assert np.var(means_av) < np.var(means_plain)
+
+    def test_both_off_still_produces_valid_paths(self):
+        """With both variance reduction techniques off, paths should still be valid GBM."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=1000)
+        paths = gbm.generate_paths(random_seed=42)
+
+        assert np.all(paths > 0)
+        assert paths[0, 0] == self.process_params.initial_value
+
+    def test_odd_paths_with_antithetic_warns_and_falls_back(self):
+        """Odd path count with antithetic=True should warn and fall back to plain sampling."""
+        gbm = self._make_gbm(antithetic=True, moment_matching=False, paths=999)
+        with pytest.warns(UserWarning, match="antithetic=True but paths=999 is odd"):
+            paths = gbm.generate_paths(random_seed=42)
+        assert paths.shape[1] == 999
+        assert np.all(paths > 0)
