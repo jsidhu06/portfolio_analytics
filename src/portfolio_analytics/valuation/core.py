@@ -443,7 +443,7 @@ class OptionValuation:
             impl_cls = _ASIAN_REGISTRY.get(pricing_method)
             if impl_cls is None:
                 raise ValidationError(
-                    "Asian options require MONTE_CARLO, BINOMIAL, or BSM (geometric only) pricing."
+                    "Asian options require MONTE_CARLO, BINOMIAL, or BSM pricing."
                 )
         else:
             impl_cls = _VANILLA_REGISTRY.get((pricing_method, spec.exercise_type))
@@ -597,10 +597,9 @@ class OptionValuation:
                 "Asian control_variate_european is only supported for BINOMIAL pricing."
             )
         spec = self.spec
-        if spec.averaging is not AsianAveraging.GEOMETRIC:
+        if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
-                "Asian control_variate_european requires GEOMETRIC averaging "
-                "(analytical Kemna-Vorst formula required as control)."
+                "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
             )
 
         params = self._effective_params()

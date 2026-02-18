@@ -1,4 +1,8 @@
-"""Tests for analytical geometric Asian option pricing (Kemna-Vorst)."""
+"""Tests for analytical Asian option pricing.
+
+- Geometric: Kemna-Vorst (1990) exact closed-form
+- Arithmetic: Turnbull-Wakeman (1991) moment-matching (Hull §26.13)
+"""
 
 import datetime as dt
 import logging
@@ -23,7 +27,10 @@ from portfolio_analytics.stochastic_processes import (
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionValuation, OptionSpec, UnderlyingPricingData
 from portfolio_analytics.valuation.core import AsianOptionSpec
-from portfolio_analytics.valuation.asian import _asian_geometric_analytical
+from portfolio_analytics.valuation.asian import (
+    _asian_geometric_analytical,
+    _asian_arithmetic_analytical,
+)
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
 
 logger = logging.getLogger(__name__)
@@ -503,24 +510,25 @@ class TestDividendYield:
 
 
 class TestValidation:
-    """Error handling for analytical geometric Asian pricing."""
+    """Error handling for analytical Asian pricing."""
 
-    def test_arithmetic_raises(self):
+    def test_arithmetic_bsm_returns_positive_price(self):
+        """Arithmetic averaging is now supported via Turnbull-Wakeman."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
-        with pytest.raises(Exception, match="geometric"):
-            OptionValuation(
-                "arith_bsm",
-                und,
-                _asian_spec(
-                    strike=100,
-                    maturity=maturity,
-                    call_put=OptionType.CALL,
-                    num_steps=12,
-                    averaging=AsianAveraging.ARITHMETIC,
-                ),
-                PricingMethod.BSM,
-            )
+        pv = OptionValuation(
+            "arith_bsm",
+            und,
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=12,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+        assert pv > 0.0
 
     def test_missing_num_steps_raises(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
@@ -813,3 +821,405 @@ def test_geometric_asian_four_method_comparison(
     mid = np.mean(prices)
     for label, pv in zip(["Analytical", "BinomMC", "Hull", "MC"], prices):
         assert np.isclose(pv, mid, rtol=0.02), f"{label}={pv:.6f} deviates from mean={mid:.6f}"
+
+
+# ===========================================================================
+# ARITHMETIC AVERAGE — Turnbull-Wakeman / Hull §26.13
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Hull Example 26.3 verification
+# ---------------------------------------------------------------------------
+
+
+class TestHullExample26_3:
+    """Verify against Hull Example 26.3 (pp. 626-627).
+
+    Hull's example uses observations at T/m, 2T/m, ..., T (i.e. does NOT
+    include S₀ at time 0).  Our convention includes S₀, so our "num_steps=m"
+    gives m+1 observations.  We test both the raw moments against Hull's
+    numbers (using his convention) and the pipeline with our S₀ convention.
+    """
+
+    def test_hull_continuous_moments(self):
+        """Verify M₁, M₂ formulas against Hull's continuous-average closed forms.
+
+        Hull continuous formulas (r=0.1, q=0, σ=0.4, T=1, S₀=50):
+            M₁ = [exp((r-q)T) - 1] / [(r-q)T] · S₀ = 52.59
+            M₂ = 2922.76 (from equation 26.4)
+        """
+        S0, r, q, sigma, T = 50.0, 0.1, 0.0, 0.4, 1.0
+
+        # Hull's continuous M₁
+        hull_M1 = (np.exp((r - q) * T) - 1) / ((r - q) * T) * S0
+
+        # Hull's continuous M₂ (equation 26.4)
+        hull_M2 = 2 * np.exp((2 * (r - q) + sigma**2) * T) * S0**2 / (
+            (r - q + sigma**2) * (2 * (r - q) + sigma**2) * T**2
+        ) + 2 * S0**2 / ((r - q) * T**2) * (
+            1 / (2 * (r - q) + sigma**2) - np.exp((r - q) * T) / (r - q + sigma**2)
+        )
+
+        assert np.isclose(hull_M1, 52.59, atol=0.01), f"M1={hull_M1}"
+        assert np.isclose(hull_M2, 2922.76, rtol=5e-4), f"M2={hull_M2}"
+
+        # Verify our discrete formula approaches the continuous limit
+        N_large = 10_000
+        M = N_large + 1
+        delta = T / N_large
+        t = np.arange(M, dtype=float) * delta
+        F = S0 * np.exp((r - q) * t)
+        our_M1 = np.mean(F)
+        F_cumrev = np.cumsum(F[::-1])[::-1]
+        our_M2 = np.sum(F * np.exp(sigma**2 * t) * (2 * F_cumrev - F)) / M**2
+
+        assert np.isclose(our_M1, hull_M1, rtol=1e-4), f"our M1={our_M1} vs hull {hull_M1}"
+        assert np.isclose(our_M2, hull_M2, rtol=1e-3), f"our M2={our_M2} vs hull {hull_M2}"
+
+    def test_hull_continuous_price(self):
+        """Hull continuous average price: 5.62 for a call."""
+        S0, K, r, q, sigma, T = 50.0, 50.0, 0.1, 0.0, 0.4, 1.0
+
+        # Large N approximates continuous average
+        price = _asian_arithmetic_analytical(
+            spot=S0,
+            strike=K,
+            time_to_maturity=T,
+            volatility=sigma,
+            risk_free_rate=r,
+            dividend_yield=q,
+            option_type=OptionType.CALL,
+            num_steps=10_000,
+        )
+        assert np.isclose(price, 5.62, atol=0.02), f"price={price:.4f} expected ~5.62"
+
+    def test_hull_discrete_observations(self):
+        """Hull's discrete prices: 12 obs → 6.00, 52 obs → 5.70, 250 obs → 5.63.
+
+        Hull uses observations at T/m, ..., T (no S₀).  We compute using
+        the raw moment formulas directly to match his convention.
+        """
+        S0, K, r, q, sigma, T = 50.0, 50.0, 0.1, 0.0, 0.4, 1.0
+
+        for m, hull_price in [(12, 6.00), (52, 5.70), (250, 5.63)]:
+            # Hull convention: m observations at T/m, 2T/m, ..., T
+            delta = T / m
+            t = np.arange(1, m + 1, dtype=float) * delta  # t[0]=T/m, t[-1]=T
+            F = S0 * np.exp((r - q) * t)
+            M1 = np.mean(F)
+            F_cumrev = np.cumsum(F[::-1])[::-1]
+            M2 = np.sum(F * np.exp(sigma**2 * t) * (2 * F_cumrev - F)) / m**2
+
+            sigma_a_sq = np.log(M2 / M1**2) / T
+            sigma_a = np.sqrt(sigma_a_sq)
+            d1 = (np.log(M1 / K) + 0.5 * sigma_a_sq * T) / (sigma_a * np.sqrt(T))
+            d2 = d1 - sigma_a * np.sqrt(T)
+            df = np.exp(-r * T)
+            price = df * (M1 * norm.cdf(d1) - K * norm.cdf(d2))
+
+            logger.info(
+                "Hull 26.3: m=%d M1=%.2f M2=%.2f sigma_a=%.4f price=%.4f (expected %.2f)",
+                m,
+                M1,
+                M2,
+                sigma_a,
+                price,
+                hull_price,
+            )
+            assert np.isclose(
+                price, hull_price, atol=0.02
+            ), f"m={m}: price={price:.4f} expected {hull_price:.2f}"
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic: put-call parity
+# ---------------------------------------------------------------------------
+
+
+class TestArithmeticPutCallParity:
+    """For European arithmetic Asians: C - P = e^{-rT}(M₁ - K)."""
+
+    @pytest.mark.parametrize(
+        "spot,strike,vol,r,q,days,num_steps",
+        [
+            (100, 100, 0.20, 0.05, 0.00, 365, 12),
+            (100, 100, 0.25, 0.05, 0.02, 365, 52),
+            (50, 50, 0.40, 0.10, 0.00, 365, 30),
+            (110, 90, 0.30, 0.03, 0.00, 180, 6),
+        ],
+    )
+    def test_put_call_parity(self, spot, strike, vol, r, q, days, num_steps):
+        maturity = PRICING_DATE + dt.timedelta(days=days)
+        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+
+        call_pv = OptionValuation(
+            "arith_call",
+            und,
+            _asian_spec(
+                strike=strike,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=num_steps,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        put_pv = OptionValuation(
+            "arith_put",
+            und,
+            _asian_spec(
+                strike=strike,
+                maturity=maturity,
+                call_put=OptionType.PUT,
+                num_steps=num_steps,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        # E[S_avg] = M₁ via forward prices
+        T = days / 365.0
+        N = num_steps
+        M = N + 1
+        delta = T / N
+        t = np.arange(M, dtype=float) * delta
+        F = spot * np.exp((r - q) * t)
+        M1 = np.mean(F)
+        df = np.exp(-r * T)
+
+        parity_rhs = df * (M1 - strike)
+        assert np.isclose(
+            call_pv - put_pv, parity_rhs, atol=1e-10
+        ), f"C-P={call_pv - put_pv:.10f} vs df*(M1-K)={parity_rhs:.10f}"
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic vs MC convergence
+# ---------------------------------------------------------------------------
+
+
+class TestArithmeticVsMC:
+    """Turnbull-Wakeman approximation should be close to MC arithmetic average."""
+
+    @pytest.mark.parametrize(
+        "spot,strike,vol,r,q,days,call_put",
+        [
+            (100, 100, 0.20, 0.05, 0.00, 365, OptionType.CALL),
+            (100, 100, 0.20, 0.05, 0.00, 365, OptionType.PUT),
+            (50, 50, 0.40, 0.10, 0.00, 365, OptionType.CALL),
+            (110, 100, 0.25, 0.03, 0.02, 270, OptionType.CALL),
+            (95, 90, 0.30, 0.05, 0.01, 540, OptionType.PUT),
+        ],
+    )
+    def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, call_put):
+        maturity = PRICING_DATE + dt.timedelta(days=days)
+        num_steps = 60
+
+        # Turnbull-Wakeman analytical
+        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+        analytical_pv = OptionValuation(
+            "arith_analytical",
+            und,
+            _asian_spec(
+                strike=strike,
+                maturity=maturity,
+                call_put=call_put,
+                num_steps=num_steps,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        # MC arithmetic
+        mc_und = _gbm_underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=r,
+            maturity=maturity,
+            paths=300_000,
+            num_steps=num_steps,
+            dividend_yield=q,
+        )
+        mc_pv = OptionValuation(
+            "arith_mc",
+            mc_und,
+            _asian_spec(
+                strike=strike,
+                maturity=maturity,
+                call_put=call_put,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
+        ).present_value()
+
+        logger.info(
+            "Arith Asian %s S=%.0f K=%.0f analytical=%.6f MC=%.6f",
+            call_put.value,
+            spot,
+            strike,
+            analytical_pv,
+            mc_pv,
+        )
+        # Turnbull-Wakeman is an approximation; allow slightly wider tolerance
+        assert np.isclose(
+            analytical_pv, mc_pv, rtol=0.03
+        ), f"analytical={analytical_pv:.6f} MC={mc_pv:.6f}"
+
+
+# ---------------------------------------------------------------------------
+# Arithmetic properties
+# ---------------------------------------------------------------------------
+
+
+class TestArithmeticProperties:
+    """Sanity checks on arithmetic analytical prices."""
+
+    def test_arithmetic_geq_geometric_call(self):
+        """Arithmetic call ≥ geometric call (AM-GM: E[arith avg] ≥ E[geom avg])."""
+        maturity = PRICING_DATE + dt.timedelta(days=365)
+        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+
+        arith_pv = OptionValuation(
+            "arith",
+            und,
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=52,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        geom_pv = OptionValuation(
+            "geom",
+            und,
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=52,
+                averaging=AsianAveraging.GEOMETRIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert arith_pv >= geom_pv - 1e-10, f"arith call={arith_pv:.6f} < geom call={geom_pv:.6f}"
+
+    def test_arithmetic_leq_geometric_put(self):
+        """Arithmetic put ≤ geometric put (AM-GM: higher avg lowers put value)."""
+        maturity = PRICING_DATE + dt.timedelta(days=365)
+        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+
+        arith_pv = OptionValuation(
+            "arith",
+            und,
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.PUT,
+                num_steps=52,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        geom_pv = OptionValuation(
+            "geom",
+            und,
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.PUT,
+                num_steps=52,
+                averaging=AsianAveraging.GEOMETRIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert arith_pv <= geom_pv + 1e-10, f"arith put={arith_pv:.6f} > geom put={geom_pv:.6f}"
+
+    def test_arithmetic_less_than_vanilla(self):
+        """Arithmetic Asian call < vanilla European call (averaging effect)."""
+        maturity = PRICING_DATE + dt.timedelta(days=365)
+        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+
+        arith_pv = OptionValuation(
+            "arith",
+            und,
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=52,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        vanilla_pv = OptionValuation(
+            "vanilla",
+            und,
+            OptionSpec(
+                option_type=OptionType.CALL,
+                exercise_type=ExerciseType.EUROPEAN,
+                strike=100,
+                maturity=maturity,
+                currency=CURRENCY,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert arith_pv < vanilla_pv
+
+    def test_positive_price(self):
+        maturity = PRICING_DATE + dt.timedelta(days=365)
+        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        for call_put in (OptionType.CALL, OptionType.PUT):
+            pv = OptionValuation(
+                "arith_pos",
+                und,
+                _asian_spec(
+                    strike=100,
+                    maturity=maturity,
+                    call_put=call_put,
+                    num_steps=12,
+                    averaging=AsianAveraging.ARITHMETIC,
+                ),
+                PricingMethod.BSM,
+            ).present_value()
+            assert pv > 0.0
+
+    def test_dividend_reduces_call(self):
+        maturity = PRICING_DATE + dt.timedelta(days=365)
+        pv_no_q = OptionValuation(
+            "arith_no_q",
+            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=12,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        pv_with_q = OptionValuation(
+            "arith_q",
+            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
+            _asian_spec(
+                strike=100,
+                maturity=maturity,
+                call_put=OptionType.CALL,
+                num_steps=12,
+                averaging=AsianAveraging.ARITHMETIC,
+            ),
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert pv_with_q < pv_no_q
