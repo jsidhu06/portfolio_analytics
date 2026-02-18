@@ -1,6 +1,7 @@
 from dataclasses import dataclass, replace as dc_replace
 from collections.abc import Callable, Sequence
 import datetime as dt
+import logging
 import numpy as np
 from ..stochastic_processes import PathSimulation
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
@@ -24,6 +25,8 @@ from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
+
+logger = logging.getLogger(__name__)
 
 # ── Implementation registries ───────────────────────────────────────
 # Maps (PricingMethod, ExerciseType) → implementation class for vanilla specs.
@@ -529,6 +532,10 @@ class OptionValuation:
     def _apply_control_variate(self, base_pv: float) -> float:
         if self.exercise_type is not ExerciseType.AMERICAN:
             raise ValidationError("control_variate_european is only valid for American options.")
+
+        if isinstance(self.spec, AsianOptionSpec):
+            return self._apply_asian_control_variate(base_pv)
+
         if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
             raise UnsupportedFeatureError(
                 "control_variate_european is only supported for BINOMIAL and PDE_FD pricing."
@@ -572,6 +579,70 @@ class OptionValuation:
         ).present_value()
 
         return base_pv + (euro_bsm - euro_num)
+
+    def _apply_asian_control_variate(self, base_pv: float) -> float:
+        """Apply control variate adjustment for American Asian options.
+
+        Uses the European geometric Asian analytical price (Kemna-Vorst) to
+        correct Hull binomial tree discretization error:
+
+            V_cv = V_american_tree + (V_european_analytical − V_european_tree)
+
+        The tree error for European and American exercises is highly correlated
+        (same lattice, same discretisation), so the correction largely cancels
+        the systematic bias observed in the Hull representative-averages method.
+        """
+        if self.pricing_method is not PricingMethod.BINOMIAL:
+            raise UnsupportedFeatureError(
+                "Asian control_variate_european is only supported for BINOMIAL pricing."
+            )
+        spec = self.spec
+        if spec.averaging is not AsianAveraging.GEOMETRIC:
+            raise UnsupportedFeatureError(
+                "Asian control_variate_european requires GEOMETRIC averaging "
+                "(analytical Kemna-Vorst formula required as control)."
+            )
+
+        params = self._effective_params()
+        if not isinstance(params, BinomialParams):
+            raise ConfigurationError("Expected BinomialParams for binomial pricing.")
+        if params.asian_tree_averages is None:
+            raise UnsupportedFeatureError(
+                "Asian control_variate_european requires Hull tree averages "
+                "(set asian_tree_averages on BinomialParams)."
+            )
+
+        cv_params = dc_replace(params, control_variate_european=False)
+
+        # European Asian — numerical (Hull tree, same parameters)
+        euro_spec = dc_replace(spec, exercise_type=ExerciseType.EUROPEAN)
+        euro_hull = OptionValuation(
+            name=f"{self.name}_cv_euro_hull",
+            underlying=self.underlying,
+            spec=euro_spec,
+            pricing_method=PricingMethod.BINOMIAL,
+            params=cv_params,
+        ).present_value()
+
+        # European Asian — analytical (Kemna-Vorst)
+        # num_steps must match the tree so the contract definitions align
+        bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)
+        euro_analytical = OptionValuation(
+            name=f"{self.name}_cv_euro_analytical",
+            underlying=self.underlying,
+            spec=bsm_spec,
+            pricing_method=PricingMethod.BSM,
+        ).present_value()
+
+        logger.debug(
+            "Asian CV: american_hull=%.6f euro_hull=%.6f euro_analytical=%.6f adj=%.6f",
+            base_pv,
+            euro_hull,
+            euro_analytical,
+            euro_analytical - euro_hull,
+        )
+
+        return base_pv + (euro_analytical - euro_hull)
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted pathwise present values.
