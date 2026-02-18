@@ -12,7 +12,12 @@ from ..enums import (
     PricingMethod,
     GreekCalculationMethod,
 )
-from .monte_carlo import _MCEuropeanValuation, _MCAmericanValuation, _MCAsianValuation
+from .monte_carlo import (
+    _MCEuropeanValuation,
+    _MCAmericanValuation,
+    _MCAsianValuation,
+    _MCAsianAmericanValuation,
+)
 from .binomial import (
     _BinomialEuropeanValuation,
     _BinomialAmericanValuation,
@@ -40,11 +45,13 @@ _VANILLA_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
     (PricingMethod.PDE_FD, ExerciseType.AMERICAN): _FDAmericanValuation,
 }
 
-# Maps PricingMethod → implementation class for Asian option specs.
-_ASIAN_REGISTRY: dict[PricingMethod, type] = {
-    PricingMethod.MONTE_CARLO: _MCAsianValuation,
-    PricingMethod.BINOMIAL: _BinomialAsianValuation,
-    PricingMethod.BSM: _AnalyticalAsianValuation,
+# Maps (PricingMethod, ExerciseType) → implementation class for Asian option specs.
+_ASIAN_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
+    (PricingMethod.MONTE_CARLO, ExerciseType.EUROPEAN): _MCAsianValuation,
+    (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCAsianAmericanValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialAsianValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.AMERICAN): _BinomialAsianValuation,
+    (PricingMethod.BSM, ExerciseType.EUROPEAN): _AnalyticalAsianValuation,
 }
 
 
@@ -433,17 +440,11 @@ class OptionValuation:
                 )
         # Dispatch to appropriate pricing method implementation
         if isinstance(spec, AsianOptionSpec):
-            if (
-                spec.exercise_type is ExerciseType.AMERICAN
-                and pricing_method != PricingMethod.BINOMIAL
-            ):
-                raise ValidationError(
-                    "American Asian options are only supported with BINOMIAL (Hull tree)."
-                )
-            impl_cls = _ASIAN_REGISTRY.get(pricing_method)
+            impl_cls = _ASIAN_REGISTRY.get((pricing_method, spec.exercise_type))
             if impl_cls is None:
                 raise ValidationError(
-                    "Asian options require MONTE_CARLO, BINOMIAL, or BSM pricing."
+                    f"Asian options with {spec.exercise_type.name} exercise "
+                    f"do not support {pricing_method.name} pricing."
                 )
         else:
             impl_cls = _VANILLA_REGISTRY.get((pricing_method, spec.exercise_type))
@@ -536,9 +537,14 @@ class OptionValuation:
         if isinstance(self.spec, AsianOptionSpec):
             return self._apply_asian_control_variate(base_pv)
 
-        if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.PDE_FD):
+        if self.pricing_method not in (
+            PricingMethod.BINOMIAL,
+            PricingMethod.PDE_FD,
+            PricingMethod.MONTE_CARLO,
+        ):
             raise UnsupportedFeatureError(
-                "control_variate_european is only supported for BINOMIAL and PDE_FD pricing."
+                "control_variate_european is only supported for BINOMIAL, PDE_FD, "
+                "and MONTE_CARLO pricing."
             )
         if not isinstance(self.spec, OptionSpec):
             raise UnsupportedFeatureError(
@@ -571,9 +577,22 @@ class OptionValuation:
             pricing_method=self.pricing_method,
             params=cv_params,
         ).present_value()
+
+        # BSM needs UnderlyingPricingData; extract from PathSimulation if needed
+        if isinstance(self.underlying, PathSimulation):
+            bsm_underlying = UnderlyingPricingData(
+                initial_value=self.underlying.initial_value,
+                volatility=self.underlying.volatility,
+                market_data=self.underlying.market_data,
+                dividend_curve=self.underlying.dividend_curve,
+                discrete_dividends=self.underlying.discrete_dividends or None,
+            )
+        else:
+            bsm_underlying = self.underlying
+
         euro_bsm = OptionValuation(
             name=f"{self.name}_cv_euro_bsm",
-            underlying=self.underlying,
+            underlying=bsm_underlying,
             spec=euro_spec,
             pricing_method=PricingMethod.BSM,
         ).present_value()
@@ -583,18 +602,20 @@ class OptionValuation:
     def _apply_asian_control_variate(self, base_pv: float) -> float:
         """Apply control variate adjustment for American Asian options.
 
-        Uses the European geometric Asian analytical price (Kemna-Vorst) to
-        correct Hull binomial tree discretization error:
+        Uses the European Asian analytical price (Kemna-Vorst for geometric,
+        Turnbull-Wakeman for arithmetic) to correct numerical discretisation
+        error:
 
-            V_cv = V_american_tree + (V_european_analytical − V_european_tree)
+            V_cv = V_american_numerical + (V_european_analytical − V_european_numerical)
 
-        The tree error for European and American exercises is highly correlated
-        (same lattice, same discretisation), so the correction largely cancels
-        the systematic bias observed in the Hull representative-averages method.
+        The numerical error for European and American exercises is highly
+        correlated (same lattice/paths, same discretisation), so the correction
+        largely cancels the systematic bias.
         """
-        if self.pricing_method is not PricingMethod.BINOMIAL:
+        if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.MONTE_CARLO):
             raise UnsupportedFeatureError(
-                "Asian control_variate_european is only supported for BINOMIAL pricing."
+                "Asian control_variate_european is only supported for "
+                "BINOMIAL and MONTE_CARLO pricing."
             )
         spec = self.spec
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
@@ -603,45 +624,63 @@ class OptionValuation:
             )
 
         params = self._effective_params()
-        if not isinstance(params, BinomialParams):
-            raise ConfigurationError("Expected BinomialParams for binomial pricing.")
-        if params.asian_tree_averages is None:
-            raise UnsupportedFeatureError(
-                "Asian control_variate_european requires Hull tree averages "
-                "(set asian_tree_averages on BinomialParams)."
-            )
+
+        # Method-specific validation
+        if self.pricing_method is PricingMethod.BINOMIAL:
+            if not isinstance(params, BinomialParams):
+                raise ConfigurationError("Expected BinomialParams for binomial pricing.")
+            if params.asian_tree_averages is None:
+                raise UnsupportedFeatureError(
+                    "Asian control_variate_european requires Hull tree averages "
+                    "(set asian_tree_averages on BinomialParams)."
+                )
 
         cv_params = dc_replace(params, control_variate_european=False)
 
-        # European Asian — numerical (Hull tree, same parameters)
+        # European Asian — numerical (same method, same parameters)
         euro_spec = dc_replace(spec, exercise_type=ExerciseType.EUROPEAN)
-        euro_hull = OptionValuation(
-            name=f"{self.name}_cv_euro_hull",
+        euro_num = OptionValuation(
+            name=f"{self.name}_cv_euro_num",
             underlying=self.underlying,
             spec=euro_spec,
-            pricing_method=PricingMethod.BINOMIAL,
+            pricing_method=self.pricing_method,
             params=cv_params,
         ).present_value()
 
-        # European Asian — analytical (Kemna-Vorst)
-        # num_steps must match the tree so the contract definitions align
-        bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)
+        # European Asian — analytical (Kemna-Vorst / Turnbull-Wakeman)
+        # BSM needs UnderlyingPricingData; extract from PathSimulation if needed
+        if isinstance(self.underlying, PathSimulation):
+            bsm_underlying = UnderlyingPricingData(
+                initial_value=self.underlying.initial_value,
+                volatility=self.underlying.volatility,
+                market_data=self.underlying.market_data,
+                dividend_curve=self.underlying.dividend_curve,
+                discrete_dividends=self.underlying.discrete_dividends or None,
+            )
+            # For BSM analytical, num_steps comes from the simulation time grid
+            n_obs = len(self.underlying.time_grid)
+            bsm_spec = dc_replace(euro_spec, num_steps=n_obs)
+        else:
+            bsm_underlying = self.underlying
+            # num_steps must match the tree so the contract definitions align
+            bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)
+
         euro_analytical = OptionValuation(
             name=f"{self.name}_cv_euro_analytical",
-            underlying=self.underlying,
+            underlying=bsm_underlying,
             spec=bsm_spec,
             pricing_method=PricingMethod.BSM,
         ).present_value()
 
         logger.debug(
-            "Asian CV: american_hull=%.6f euro_hull=%.6f euro_analytical=%.6f adj=%.6f",
+            "Asian CV: american=%.6f euro_num=%.6f euro_analytical=%.6f adj=%.6f",
             base_pv,
-            euro_hull,
+            euro_num,
             euro_analytical,
-            euro_analytical - euro_hull,
+            euro_analytical - euro_num,
         )
 
-        return base_pv + (euro_analytical - euro_hull)
+        return base_pv + (euro_analytical - euro_num)
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted pathwise present values.

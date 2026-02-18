@@ -12,7 +12,6 @@ from portfolio_analytics.enums import (
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.exceptions import UnsupportedFeatureError
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
@@ -353,24 +352,72 @@ class TestAsianControlVariate:
         # Confirm the tree has measurable bias (>0.1%)
         assert hull_bias > 0.001, f"Hull tree bias too small to test CV: {hull_bias:.6f}"
 
-    def test_cv_arithmetic_raises(self):
-        """CV with arithmetic averaging should raise (no analytical formula)."""
+    def test_cv_arithmetic_matches_manual_adjustment(self):
+        """CV with arithmetic averaging uses Turnbull-Wakeman analytical formula."""
         underlying = _build_underlying(100, 0.25, 0.05)
+        base_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
         cv_params = BinomialParams(
             num_steps=STEPS,
             asian_tree_averages=TREE_AVERAGES,
             control_variate_european=True,
         )
-        arith_spec = _asian_spec(
+        amer_spec = _asian_spec(
             call_put=OptionType.CALL,
             strike=100,
             averaging=AsianAveraging.ARITHMETIC,
         )
-        with pytest.raises(UnsupportedFeatureError, match="GEOMETRIC"):
-            OptionValuation(
-                "arith_cv",
-                underlying,
-                arith_spec,
-                PricingMethod.BINOMIAL,
-                params=cv_params,
-            ).present_value()
+
+        # Raw American Hull tree
+        american_raw = OptionValuation(
+            "arith_raw",
+            underlying,
+            amer_spec,
+            PricingMethod.BINOMIAL,
+            params=base_params,
+        ).present_value()
+
+        # European Hull tree (same lattice)
+        euro_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=100,
+            maturity=MATURITY,
+            currency=CURRENCY,
+            exercise_type=ExerciseType.EUROPEAN,
+        )
+        european_hull = OptionValuation(
+            "arith_euro_hull",
+            underlying,
+            euro_spec,
+            PricingMethod.BINOMIAL,
+            params=base_params,
+        ).present_value()
+
+        # European analytical (Turnbull-Wakeman)
+        bsm_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=100,
+            maturity=MATURITY,
+            currency=CURRENCY,
+            num_steps=STEPS,
+        )
+        european_analytical = OptionValuation(
+            "arith_euro_bsm",
+            underlying,
+            bsm_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        # CV-adjusted
+        american_cv = OptionValuation(
+            "arith_cv",
+            underlying,
+            amer_spec,
+            PricingMethod.BINOMIAL,
+            params=cv_params,
+        ).present_value()
+
+        expected = american_raw + (european_analytical - european_hull)
+        assert np.isclose(american_cv, expected, atol=1e-8)
+        assert american_cv > 0.0

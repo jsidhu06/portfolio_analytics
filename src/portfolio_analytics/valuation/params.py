@@ -27,12 +27,17 @@ class MonteCarloParams:
     std_error_warn_ratio:
         If set, emit a warning log when MC standard error exceeds
         std_error_warn_ratio * |PV|. Use None to disable.
+    control_variate_european:
+        Apply control variate adjustment for American options using the
+        analytical European price and the MC European price from the same
+        simulation.  Only applicable to American exercise pricing.
     """
 
     random_seed: int | None = None
     deg: int = 2
     log_timings: bool = False
     std_error_warn_ratio: float | None = 0.1
+    control_variate_european: bool = False
 
     def __post_init__(self) -> None:
         if self.deg is not None and self.deg < 1:

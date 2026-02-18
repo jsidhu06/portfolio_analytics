@@ -310,3 +310,197 @@ class _MCAsianValuation:
         ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
         discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
+
+
+def _running_averages(paths: np.ndarray, averaging: AsianAveraging) -> np.ndarray:
+    """Compute the running average at each time step along axis 0.
+
+    Parameters
+    ----------
+    paths : np.ndarray, shape (T, n_paths)
+        Spot prices at each observation date for every simulated path.
+    averaging : AsianAveraging
+        ARITHMETIC or GEOMETRIC.
+
+    Returns
+    -------
+    np.ndarray, shape (T, n_paths)
+        Running average at each observation date.
+    """
+    n_steps = paths.shape[0]
+    counts = np.arange(1, n_steps + 1, dtype=float).reshape(-1, 1)
+
+    if averaging is AsianAveraging.ARITHMETIC:
+        return np.cumsum(paths, axis=0) / counts
+
+    if averaging is AsianAveraging.GEOMETRIC:
+        if np.any(paths <= 0.0):
+            raise NumericalError("Geometric averaging requires strictly positive path prices.")
+        return np.exp(np.cumsum(np.log(paths), axis=0) / counts)
+
+    raise ValidationError(f"Unsupported averaging method: {averaging}")
+
+
+def _build_2d_design_matrix(s: np.ndarray, a: np.ndarray, deg: int) -> np.ndarray:
+    """Build a 2-D polynomial design matrix with cross-terms.
+
+    Includes all monomials :math:`s^i a^j` with :math:`i + j \\le deg`.
+    Both inputs are standardised (zero-mean, unit-variance) before
+    constructing the monomials for numerical stability.
+
+    Parameters
+    ----------
+    s, a : np.ndarray, shape (n,)
+        Spot prices and running averages for the ITM subset.
+    deg : int
+        Maximum total polynomial degree.
+
+    Returns
+    -------
+    np.ndarray, shape (n, k) where k = (deg+1)(deg+2)/2
+    """
+    s_n = (s - s.mean()) / max(float(s.std()), 1e-12)
+    a_n = (a - a.mean()) / max(float(a.std()), 1e-12)
+
+    cols: list[np.ndarray] = []
+    for total in range(deg + 1):
+        for j in range(total + 1):
+            i = total - j
+            cols.append(s_n**i * a_n**j)
+    return np.column_stack(cols)
+
+
+class _MCAsianAmericanValuation:
+    """American Asian option via Longstaff-Schwartz on the joint (S_t, A_t) state.
+
+    At each exercise opportunity *t* the holder can receive max(A_t − K, 0)
+    (call) or max(K − A_t, 0) (put), where A_t is the running average of
+    the spot observations from the averaging start up to *t*.
+
+    The continuation value is estimated by OLS regression on a 2-D polynomial
+    basis in (S_t, A_t) — the joint Markov state that fully summarises the
+    path history relevant to the Asian payoff.
+
+    Both arithmetic and geometric averaging are supported.
+    """
+
+    def __init__(self, parent: "OptionValuation") -> None:
+        self.parent = parent
+        if not isinstance(parent.params, MonteCarloParams):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
+            )
+        self.mc_params: MonteCarloParams = parent.params
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    def _asian_payoff(self, avg: np.ndarray) -> np.ndarray:
+        """Asian payoff given average prices."""
+        K = self.parent.strike
+        if self.parent.spec.call_put is OptionType.CALL:
+            return np.maximum(avg - K, 0.0)
+        return np.maximum(K - avg, 0.0)
+
+    def _get_averaging_data(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Simulate paths and compute running averages & intrinsic values.
+
+        Returns
+        -------
+        (averaging_paths, running_avg, intrinsic, time_list)
+            averaging_paths : (N_obs, n_paths) spot prices at observation dates
+            running_avg     : (N_obs, n_paths) running average at each date
+            intrinsic       : (N_obs, n_paths) intrinsic payoff at each date
+            time_list       : (N_obs,) datetime time grid for the averaging window
+        """
+        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
+        time_grid = self.parent.underlying.time_grid
+        spec = self.parent.spec
+        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
+
+        idx_start = _find_time_index(time_grid, averaging_start, "averaging_start")
+        idx_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+
+        averaging_paths = paths[idx_start : idx_end + 1]
+        running_avg = _running_averages(averaging_paths, spec.averaging)
+        intrinsic = self._asian_payoff(running_avg)
+        time_list = time_grid[idx_start : idx_end + 1]
+
+        return averaging_paths, running_avg, intrinsic, time_list
+
+    # ------------------------------------------------------------------
+    # public interface
+    # ------------------------------------------------------------------
+
+    def solve(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Generate path-level Asian option data.
+
+        Returns
+        -------
+        (averaging_paths, running_avg, intrinsic_values)
+            Each has shape (N_obs, n_paths).
+        """
+        averaging_paths, running_avg, intrinsic, _ = self._get_averaging_data()
+        return averaging_paths, running_avg, intrinsic
+
+    def present_value(self) -> float:
+        """Calculate PV using Longstaff-Schwartz with (S, A) regression."""
+        with log_timing(logger, "MC Asian American present_value", self.mc_params.log_timings):
+            pv_pathwise = self.present_value_pathwise()
+            pv = float(np.mean(pv_pathwise))
+        logger.debug(
+            "MC Asian American paths=%d time_steps=%d deg=%d",
+            pv_pathwise.size,
+            len(self.parent.underlying.time_grid) - 1,
+            self.mc_params.deg,
+        )
+        _warn_if_high_std_error(
+            pv_pathwise=pv_pathwise,
+            pv_mean=pv,
+            params=self.mc_params,
+            label="Asian American",
+        )
+        return pv
+
+    def present_value_pathwise(self) -> np.ndarray:
+        """Discounted PV for each path via LSM on (S_t, A_t)."""
+        averaging_paths, running_avg, intrinsic, time_list = self._get_averaging_data()
+
+        t_grid = _year_fractions(self.parent.pricing_date, time_list)
+        discount_factors = self.parent.discount_curve.df(t_grid)
+
+        n_obs = averaging_paths.shape[0]
+        n_paths = averaging_paths.shape[1]
+        deg = self.mc_params.deg
+
+        # Terminal payoff
+        values = np.zeros((n_obs, n_paths))
+        values[-1] = intrinsic[-1]
+
+        # Backward induction
+        for t in range(n_obs - 2, 0, -1):
+            df_step = discount_factors[t + 1] / discount_factors[t]
+            itm = intrinsic[t] > 0
+
+            continuation = np.zeros(n_paths)
+            if np.any(itm):
+                S_itm = averaging_paths[t][itm]
+                A_itm = running_avg[t][itm]
+                V_itm = df_step * values[t + 1][itm]
+
+                # 2-D polynomial regression on (S, A)
+                X = _build_2d_design_matrix(S_itm, A_itm, deg)
+                coefs, *_ = np.linalg.lstsq(X, V_itm, rcond=None)
+                continuation[itm] = X @ coefs
+
+            values[t] = np.where(
+                intrinsic[t] > continuation,
+                intrinsic[t],
+                df_step * values[t + 1],
+            )
+
+        df0 = discount_factors[1] / discount_factors[0]
+        return df0 * values[1]

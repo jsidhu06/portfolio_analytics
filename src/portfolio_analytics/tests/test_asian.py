@@ -14,6 +14,7 @@ from portfolio_analytics.enums import (
     OptionType,
     PricingMethod,
 )
+from portfolio_analytics.exceptions import ValidationError
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
@@ -528,3 +529,238 @@ def test_geometric_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate
         hull_pv,
     )
     assert np.isclose(mc_pv, hull_pv, rtol=0.03)
+
+
+# ---------------------------------------------------------------------------
+# American Asian MC (Longstaff-Schwartz) Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAmericanAsianMC:
+    """Tests for Longstaff-Schwartz American Asian option pricing."""
+
+    SPOT = 100.0
+    STRIKE = 100.0
+    VOL = 0.2
+    SHORT_RATE = 0.03
+    DAYS = 365
+    PATHS = 100_000
+    SEED = 42
+    NUM_STEPS = 60
+
+    @property
+    def maturity(self) -> dt.datetime:
+        return PRICING_DATE + dt.timedelta(days=self.DAYS)
+
+    def _mc_underlying(
+        self,
+        *,
+        spot: float | None = None,
+        vol: float | None = None,
+        short_rate: float | None = None,
+        maturity: dt.datetime | None = None,
+        paths: int | None = None,
+        dividend_curve: DiscountCurve | None = None,
+    ) -> GeometricBrownianMotion:
+        return _gbm_underlying(
+            spot=spot or self.SPOT,
+            vol=vol or self.VOL,
+            short_rate=short_rate or self.SHORT_RATE,
+            maturity=maturity or self.maturity,
+            paths=paths or self.PATHS,
+            num_steps=self.NUM_STEPS,
+            dividend_curve=dividend_curve,
+        )
+
+    def _price(
+        self,
+        call_put: OptionType,
+        exercise_type: ExerciseType,
+        averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
+        *,
+        spot: float | None = None,
+        strike: float | None = None,
+        vol: float | None = None,
+        short_rate: float | None = None,
+        maturity: dt.datetime | None = None,
+        paths: int | None = None,
+        seed: int | None = None,
+        dividend_curve: DiscountCurve | None = None,
+    ) -> float:
+        mat = maturity or self.maturity
+        spec = _asian_spec(
+            strike=strike or self.STRIKE,
+            maturity=mat,
+            call_put=call_put,
+            exercise_type=exercise_type,
+            averaging=averaging,
+        )
+        underlying = self._mc_underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=short_rate,
+            maturity=mat,
+            paths=paths,
+            dividend_curve=dividend_curve,
+        )
+        return OptionValuation(
+            "test_asian_amer",
+            underlying,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=seed or self.SEED),
+        ).present_value()
+
+    # -- American >= European for puts (early exercise premium) --
+
+    @pytest.mark.parametrize("call_put", [OptionType.PUT])
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    def test_american_geq_european_put(self, call_put, averaging):
+        """American Asian put >= European Asian put (early exercise premium)."""
+        euro = self._price(call_put, ExerciseType.EUROPEAN, averaging)
+        amer = self._price(call_put, ExerciseType.AMERICAN, averaging)
+        assert (
+            amer >= euro - 1e-6
+        ), f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {call_put.value}"
+
+    # -- American >= European for calls with dividends --
+
+    def test_american_geq_european_call_with_dividends(self):
+        """American Asian call >= European when dividends present."""
+        q_curve = flat_curve(PRICING_DATE, self.maturity, 0.04, name="q")
+        euro = self._price(OptionType.CALL, ExerciseType.EUROPEAN, dividend_curve=q_curve)
+        amer = self._price(OptionType.CALL, ExerciseType.AMERICAN, dividend_curve=q_curve)
+        assert amer >= euro - 1e-6
+
+    # -- Positive prices --
+
+    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    def test_positive_price(self, call_put, averaging):
+        pv = self._price(call_put, ExerciseType.AMERICAN, averaging)
+        assert pv > 0.0
+
+    # -- Price increases with volatility --
+
+    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
+    def test_price_increases_with_vol(self, call_put):
+        low = self._price(call_put, ExerciseType.AMERICAN, vol=0.15)
+        high = self._price(call_put, ExerciseType.AMERICAN, vol=0.35)
+        assert high > low
+
+    # -- MC American vs Binomial Hull American --
+
+    @pytest.mark.parametrize(
+        "call_put,averaging",
+        [
+            (OptionType.CALL, AsianAveraging.ARITHMETIC),
+            (OptionType.PUT, AsianAveraging.ARITHMETIC),
+            (OptionType.CALL, AsianAveraging.GEOMETRIC),
+            (OptionType.PUT, AsianAveraging.GEOMETRIC),
+        ],
+    )
+    def test_mc_american_close_to_hull_american(self, call_put, averaging):
+        """MC LSM American Asian should be close to Hull binomial American Asian."""
+        mat = self.maturity
+        spec = _asian_spec(
+            strike=self.STRIKE,
+            maturity=mat,
+            call_put=call_put,
+            exercise_type=ExerciseType.AMERICAN,
+            averaging=averaging,
+        )
+
+        # MC American
+        mc_underlying = self._mc_underlying()
+        mc_pv = OptionValuation(
+            "mc_amer",
+            mc_underlying,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=self.SEED),
+        ).present_value()
+
+        # Hull binomial American
+        binom_underlying = _binomial_underlying(
+            spot=self.SPOT,
+            vol=self.VOL,
+            short_rate=self.SHORT_RATE,
+            maturity=mat,
+        )
+        hull_pv = OptionValuation(
+            "hull_amer",
+            binom_underlying,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(
+                num_steps=NUM_STEPS,
+                asian_tree_averages=ASIAN_TREE_AVERAGES,
+            ),
+        ).present_value()
+
+        logger.info(
+            "American Asian %s %s | MC=%.6f Hull=%.6f",
+            averaging.value,
+            call_put.value,
+            mc_pv,
+            hull_pv,
+        )
+        assert np.isclose(
+            mc_pv, hull_pv, rtol=0.03
+        ), f"MC ({mc_pv:.6f}) vs Hull ({hull_pv:.6f}) too far apart"
+
+    # -- solve() returns expected shapes --
+
+    def test_solve_returns_correct_shapes(self):
+        mat = self.maturity
+        spec = _asian_spec(
+            strike=self.STRIKE,
+            maturity=mat,
+            call_put=OptionType.CALL,
+            exercise_type=ExerciseType.AMERICAN,
+        )
+        n_paths = 1000
+        underlying = _gbm_underlying(
+            spot=self.SPOT,
+            vol=self.VOL,
+            short_rate=self.SHORT_RATE,
+            maturity=mat,
+            paths=n_paths,
+            num_steps=self.NUM_STEPS,
+        )
+        ov = OptionValuation(
+            "test_solve",
+            underlying,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=self.SEED),
+        )
+        avg_paths, running_avg, intrinsic = ov.solve()
+        assert avg_paths.shape == running_avg.shape == intrinsic.shape
+        assert avg_paths.shape[1] == n_paths
+        # All intrinsic values should be non-negative
+        assert np.all(intrinsic >= 0.0)
+
+    # -- BSM American Asian raises --
+
+    def test_bsm_american_asian_raises(self):
+        """BSM does not support American exercise for Asian options."""
+        spec = _asian_spec(
+            strike=self.STRIKE,
+            maturity=self.maturity,
+            call_put=OptionType.CALL,
+            exercise_type=ExerciseType.AMERICAN,
+        )
+        binom_underlying = _binomial_underlying(
+            spot=self.SPOT,
+            vol=self.VOL,
+            short_rate=self.SHORT_RATE,
+            maturity=self.maturity,
+        )
+        with pytest.raises(ValidationError, match="AMERICAN.*BSM|BSM.*AMERICAN"):
+            OptionValuation(
+                "test_bsm_amer",
+                binom_underlying,
+                spec,
+                PricingMethod.BSM,
+            )
