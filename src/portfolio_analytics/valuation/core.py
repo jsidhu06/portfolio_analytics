@@ -424,20 +424,7 @@ class OptionValuation:
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
                 "Pass an UnderlyingPricingData instance instead of PathSimulation."
             )
-        if pricing_method not in (
-            PricingMethod.BSM,
-            PricingMethod.BINOMIAL,
-            PricingMethod.PDE_FD,
-            PricingMethod.MONTE_CARLO,
-        ):
-            if self.discount_curve.flat_rate is None:
-                raise UnsupportedFeatureError(
-                    "Time-varying discount curves are only supported for BSM, BINOMIAL, PDE_FD and MONTE_CARLO."
-                )
-            if getattr(self.underlying, "dividend_curve", None) is not None:
-                raise UnsupportedFeatureError(
-                    "Time-varying dividend curves are only supported for BSM, BINOMIAL, PDE_FD, and MONTE_CARLO."
-                )
+
         # Dispatch to appropriate pricing method implementation
         if isinstance(spec, AsianOptionSpec):
             impl_cls = _ASIAN_REGISTRY.get((pricing_method, spec.exercise_type))
@@ -548,21 +535,15 @@ class OptionValuation:
             )
         if not isinstance(self.spec, OptionSpec):
             raise UnsupportedFeatureError(
-                "control_variate_european is only supported for vanilla option specs."
+                "Vanilla control_variate_european requires spec to be of type OptionSpec. "
+                "PayoffSpec is not supported."
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
             raise UnsupportedFeatureError(
-                "control_variate_european is only supported for vanilla CALL/PUT."
+                "Vanilla control_variate_european requires a CALL or PUT option type."
             )
 
-        euro_spec = OptionSpec(
-            option_type=self.option_type,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency=self.currency,
-            contract_size=self.contract_size,
-        )
+        euro_spec = dc_replace(self.spec, exercise_type=ExerciseType.EUROPEAN)
 
         params = self._effective_params()
         cv_params = (
@@ -657,9 +638,10 @@ class OptionValuation:
                 dividend_curve=self.underlying.dividend_curve,
                 discrete_dividends=self.underlying.discrete_dividends or None,
             )
-            # For BSM analytical, num_steps comes from the simulation time grid
-            n_obs = len(self.underlying.time_grid)
-            bsm_spec = dc_replace(euro_spec, num_steps=n_obs)
+            # For BSM analytical, num_steps = number of steps (observations - 1)
+            # time_grid includes t₀, so len(time_grid) = M observations = N + 1
+            n_steps = len(self.underlying.time_grid) - 1
+            bsm_spec = dc_replace(euro_spec, num_steps=n_steps)
         else:
             bsm_underlying = self.underlying
             # num_steps must match the tree so the contract definitions align
