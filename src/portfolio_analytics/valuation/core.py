@@ -371,8 +371,14 @@ class OptionValuation:
                 "Option currency must match the underlying market currency."
             )
         self.exercise_type = spec.exercise_type
-        self.pricing_method = pricing_method
         self.contract_size = spec.contract_size
+
+        # Validate pricing_method early — comparisons below rely on enum identity
+        if not isinstance(pricing_method, PricingMethod):
+            raise ConfigurationError(
+                f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
+            )
+        self.pricing_method = pricing_method
 
         self.params: ValuationParams | None = self._validate_and_default_params(
             pricing_method=pricing_method, params=params
@@ -398,12 +404,6 @@ class OptionValuation:
             if merged != underlying.special_dates:
                 underlying = underlying.replace(special_dates=merged)
             self.underlying = underlying
-
-        # Validate pricing_method
-        if not isinstance(pricing_method, PricingMethod):
-            raise ConfigurationError(
-                f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
-            )
 
         # Validate that MC requires PathSimulation
         if pricing_method == PricingMethod.MONTE_CARLO and not isinstance(
