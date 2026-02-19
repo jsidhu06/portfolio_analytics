@@ -27,7 +27,7 @@ from portfolio_analytics.stochastic_processes import (
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionValuation, OptionSpec, UnderlyingPricingData
 from portfolio_analytics.valuation.core import AsianOptionSpec
-from portfolio_analytics.valuation.asian import (
+from portfolio_analytics.valuation.asian_analytical import (
     _asian_geometric_analytical,
     _asian_arithmetic_analytical,
 )

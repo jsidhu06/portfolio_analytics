@@ -24,7 +24,7 @@ from .binomial import (
     _BinomialAsianValuation,
 )
 from .bsm import _BSMEuropeanValuation
-from .asian import _AnalyticalAsianValuation
+from .asian_analytical import _AnalyticalAsianValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
 from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction
