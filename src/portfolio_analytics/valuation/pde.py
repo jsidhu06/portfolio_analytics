@@ -401,6 +401,121 @@ def _implicit_cn_step(
     return V, psor_iters
 
 
+def _validate_fd_inputs(
+    *,
+    option_type: OptionType,
+    time_to_maturity: float,
+    spot_steps: int,
+    time_steps: int,
+    volatility: float,
+    discount_curve: DiscountCurve,
+    early_exercise: bool,
+    method: PDEMethod,
+    american_solver: PDEEarlyExercise,
+    omega: float | None,
+    tol: float | None,
+    max_iter: int | None,
+) -> None:
+    """Validate FD PDE inputs before grid construction."""
+    if option_type not in (OptionType.CALL, OptionType.PUT):
+        raise UnsupportedFeatureError("FD PDE valuation supports only vanilla CALL/PUT.")
+    if time_to_maturity <= 0:
+        raise ValidationError("time_to_maturity must be positive")
+    if spot_steps < 3:
+        raise ValidationError("spot_steps must be >= 3")
+    if time_steps < 1:
+        raise ValidationError("time_steps must be >= 1")
+    if volatility <= 0:
+        raise ValidationError("volatility must be positive")
+    if discount_curve is None:
+        raise ValidationError("discount_curve is required for PDE valuation")
+    if early_exercise and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
+        if omega is None or tol is None or max_iter is None:
+            raise ValidationError(
+                "PSOR params (omega/tol/max_iter) are required for early exercise"
+            )
+    if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL) and (
+        american_solver is PDEEarlyExercise.GAUSS_SEIDEL
+    ):
+        raise UnsupportedFeatureError("GAUSS_SEIDEL is not supported with explicit time stepping")
+
+
+def _check_explicit_spot_stability(
+    *,
+    tau_grid: np.ndarray,
+    volatility: float,
+    smax: float,
+    dS: float,
+    time_to_maturity: float,
+    discount_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
+) -> None:
+    """Check CFL-type stability conditions for the explicit spot-grid scheme.
+
+    Raises StabilityError if the drift or time-step size violates the
+    stability bound for the forward-Euler discretisation on a uniform
+    spot grid.
+    """
+    t_prev = time_to_maturity - tau_grid[:-1]
+    t_next = time_to_maturity - tau_grid[1:]
+    r_steps = np.array(
+        [discount_curve.forward_rate(t1, t0) for t0, t1 in zip(t_prev, t_next)],
+        dtype=float,
+    )
+    if dividend_curve is not None:
+        q_steps = np.array(
+            [dividend_curve.forward_rate(t1, t0) for t0, t1 in zip(t_prev, t_next)],
+            dtype=float,
+        )
+    else:
+        q_steps = np.zeros_like(r_steps)
+
+    drift = float(np.max(np.abs(r_steps - q_steps)))
+    if drift > volatility**2:
+        raise StabilityError(
+            "Explicit spot-grid scheme unstable: max |r-q| must be <= sigma^2. "
+            "Use log-spot or implicit/CN."
+        )
+
+    denom = (volatility**2) * (smax**2) / (dS**2) + max(float(np.max(r_steps)), 0.0)
+    if denom > 0.0:
+        dt_max = 1.0 / denom
+        max_dt = float(np.max(np.diff(tau_grid)))
+        if max_dt > dt_max:
+            min_steps = int(math.ceil(time_to_maturity / dt_max))
+            raise StabilityError(
+                "Explicit spot-grid scheme unstable: time step too large. "
+                f"max_dt={max_dt:.4g} exceeds dt_max={dt_max:.4g}. "
+                f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
+            )
+
+
+def _build_time_step_schedule(
+    tau_grid: np.ndarray,
+    method: PDEMethod,
+    rannacher_steps: int,
+) -> list[tuple[float, float, PDEMethod]]:
+    """Build the time-step schedule from the tau grid.
+
+    For Crank-Nicolson with Rannacher smoothing (Pooley-Vetzal-Forsyth 2003),
+    the first *rannacher_steps* intervals are each replaced by two implicit
+    (backward Euler) half-steps of size d_tau/2.  This damps payoff
+    non-smoothness while preserving the overall time-grid structure.
+    For all other methods the schedule is a straightforward pass-through.
+    """
+    steps: list[tuple[float, float, PDEMethod]] = []
+    for n in range(1, tau_grid.size):
+        tau_start = float(tau_grid[n - 1])
+        tau_end = float(tau_grid[n])
+        if method is PDEMethod.CRANK_NICOLSON and rannacher_steps > 0 and n <= rannacher_steps:
+            tau_mid = 0.5 * (tau_start + tau_end)
+            steps.append((tau_start, tau_mid, PDEMethod.IMPLICIT))
+            steps.append((tau_mid, tau_end, PDEMethod.IMPLICIT))
+        else:
+            steps.append((tau_start, tau_end, method))
+    return steps
+
+
 def _vanilla_fd_core(
     *,
     spot: float,
@@ -423,27 +538,20 @@ def _vanilla_fd_core(
     tol: float | None = None,
     max_iter: int | None = None,
 ) -> tuple[float, np.ndarray, np.ndarray]:
-    if option_type not in (OptionType.CALL, OptionType.PUT):
-        raise UnsupportedFeatureError("FD PDE valuation supports only vanilla CALL/PUT.")
-    if time_to_maturity <= 0:
-        raise ValidationError("time_to_maturity must be positive")
-    if spot_steps < 3:
-        raise ValidationError("spot_steps must be >= 3")
-    if time_steps < 1:
-        raise ValidationError("time_steps must be >= 1")
-    if volatility <= 0:
-        raise ValidationError("volatility must be positive")
-    if discount_curve is None:
-        raise ValidationError("discount_curve is required for PDE valuation")
-    if early_exercise and american_solver is PDEEarlyExercise.GAUSS_SEIDEL:
-        if omega is None or tol is None or max_iter is None:
-            raise ValidationError(
-                "PSOR params (omega/tol/max_iter) are required for early exercise"
-            )
-    if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL) and (
-        american_solver is PDEEarlyExercise.GAUSS_SEIDEL
-    ):
-        raise UnsupportedFeatureError("GAUSS_SEIDEL is not supported with explicit time stepping")
+    _validate_fd_inputs(
+        option_type=option_type,
+        time_to_maturity=time_to_maturity,
+        spot_steps=spot_steps,
+        time_steps=time_steps,
+        volatility=volatility,
+        discount_curve=discount_curve,
+        early_exercise=early_exercise,
+        method=method,
+        american_solver=american_solver,
+        omega=omega,
+        tol=tol,
+        max_iter=max_iter,
+    )
 
     smax = float(smax_mult * max(spot, strike))
     if space_grid is PDESpaceGrid.SPOT:
@@ -477,38 +585,15 @@ def _vanilla_fd_core(
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
 
     if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL) and space_grid is PDESpaceGrid.SPOT:
-        t_prev = time_to_maturity - tau_grid[:-1]
-        t_next = time_to_maturity - tau_grid[1:]
-        r_steps = np.array(
-            [discount_curve.forward_rate(t1, t0) for t0, t1 in zip(t_prev, t_next)],
-            dtype=float,
+        _check_explicit_spot_stability(
+            tau_grid=tau_grid,
+            volatility=volatility,
+            smax=smax,
+            dS=dS,
+            time_to_maturity=time_to_maturity,
+            discount_curve=discount_curve,
+            dividend_curve=dividend_curve,
         )
-        if dividend_curve is not None:
-            q_steps = np.array(
-                [dividend_curve.forward_rate(t1, t0) for t0, t1 in zip(t_prev, t_next)],
-                dtype=float,
-            )
-        else:
-            q_steps = np.zeros_like(r_steps)
-
-        drift = float(np.max(np.abs(r_steps - q_steps)))
-        if drift > volatility**2:
-            raise StabilityError(
-                "Explicit spot-grid scheme unstable: max |r-q| must be <= sigma^2. "
-                "Use log-spot or implicit/CN."
-            )
-
-        denom = (volatility**2) * (smax**2) / (dS**2) + max(float(np.max(r_steps)), 0.0)
-        if denom > 0.0:
-            dt_max = 1.0 / denom
-            max_dt = float(np.max(np.diff(tau_grid)))
-            if max_dt > dt_max:
-                min_steps = int(math.ceil(time_to_maturity / dt_max))
-                raise StabilityError(
-                    "Explicit spot-grid scheme unstable: time step too large. "
-                    f"max_dt={max_dt:.4g} exceeds dt_max={dt_max:.4g}. "
-                    f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
-                )
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)
     df_0T = float(discount_curve.df(time_to_maturity))  # P(0,T)
@@ -522,22 +607,7 @@ def _vanilla_fd_core(
     psor_max_iters = 0
     psor_not_converged = 0
 
-    # Build step schedule: (tau_start, tau_end, method_for_step)
-    #
-    # Rannacher smoothing (half-step substitution, Pooley-Vetzal-Forsyth 2003):
-    # each of the first `rannacher_steps` Crank-Nicolson intervals is replaced
-    # by two implicit (backward Euler) half-steps of size d_tau/2.  This damps
-    # payoff non-smoothness while preserving the overall time-grid structure.
-    steps: list[tuple[float, float, PDEMethod]] = []
-    for n in range(1, tau_grid.size):
-        tau_start = float(tau_grid[n - 1])
-        tau_end = float(tau_grid[n])
-        if method is PDEMethod.CRANK_NICOLSON and rannacher_steps > 0 and n <= rannacher_steps:
-            tau_mid = 0.5 * (tau_start + tau_end)
-            steps.append((tau_start, tau_mid, PDEMethod.IMPLICIT))
-            steps.append((tau_mid, tau_end, PDEMethod.IMPLICIT))
-        else:
-            steps.append((tau_start, tau_end, method))
+    steps = _build_time_step_schedule(tau_grid, method, rannacher_steps)
 
     for tau_prev, tau_curr, method_used in steps:
         d_tau = tau_curr - tau_prev
