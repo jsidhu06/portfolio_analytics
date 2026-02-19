@@ -130,10 +130,10 @@ def _asian_geometric_analytical(
     S0 = spot
     K = strike
     t_s = averaging_start
-    delta = (T - t_s) / N
+    delta_t = (T - t_s) / N
 
     # Mean observation time: t̄ = t_s + N·Δ/2
-    t_bar = t_s + N * delta / 2.0
+    t_bar = t_s + N * delta_t / 2.0
 
     # First moment: E[ln G]
     M1 = np.log(S0) + (r - q - 0.5 * sigma**2) * t_bar
@@ -144,7 +144,7 @@ def _asian_geometric_analytical(
     #   = t_s + Δ·N·(2N+1) / (6·M)
     # Note: the i=0, j=0 term contributes t_s (not 0), which is why the
     # t_s summand persists even though min(0,0)=0 in the *index* sum.
-    M2 = sigma**2 * (t_s + delta * N * (2 * N + 1) / (6.0 * M))
+    M2 = sigma**2 * (t_s + delta_t * N * (2 * N + 1) / (6.0 * M))
 
     # Forward of geometric average: E[G] = exp(M₁ + M₂/2)
     F_G = np.exp(M1 + 0.5 * M2)
@@ -254,10 +254,10 @@ def _asian_arithmetic_analytical(
     S0 = spot
     K = strike
     t_s = averaging_start
-    delta = (T - t_s) / N
+    delta_t = (T - t_s) / N
 
     # Observation times and forward prices
-    t = t_s + np.arange(M, dtype=float) * delta  # t[i] = t_s + i·Δ
+    t = t_s + np.arange(M, dtype=float) * delta_t  # t[i] = t_s + i·Δ
     F = S0 * np.exp((r - q) * t)  # Fᵢ = S₀ exp((r-q) tᵢ)
 
     # ── First moment: M₁ = E[S_avg] = (1/M) Σ Fᵢ ──
