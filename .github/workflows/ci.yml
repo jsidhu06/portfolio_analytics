@@ -28,8 +28,8 @@ jobs:
 
       - name: Verify lockfile is up to date
         run: |
-          python -m piptools compile --no-strip-extras --extra dev pyproject.toml -o /tmp/dev.txt
-          diff -u requirements/dev.txt /tmp/dev.txt          
+          python -m piptools compile --no-strip-extras --extra dev pyproject.toml -o requirements/dev.txt
+          git diff --exit-code requirements/dev.txt
 
       - name: Ruff
         run: |
