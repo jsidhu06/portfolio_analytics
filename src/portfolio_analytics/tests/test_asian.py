@@ -619,9 +619,9 @@ class TestAmericanAsianMC:
         """American Asian put >= European Asian put (early exercise premium)."""
         euro = self._price(call_put, ExerciseType.EUROPEAN, averaging)
         amer = self._price(call_put, ExerciseType.AMERICAN, averaging)
-        assert (
-            amer >= euro - 1e-6
-        ), f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {call_put.value}"
+        assert amer >= euro - 1e-6, (
+            f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {call_put.value}"
+        )
 
     # -- American >= European for calls with dividends --
 
@@ -705,9 +705,9 @@ class TestAmericanAsianMC:
             mc_pv,
             hull_pv,
         )
-        assert np.isclose(
-            mc_pv, hull_pv, rtol=0.03
-        ), f"MC ({mc_pv:.6f}) vs Hull ({hull_pv:.6f}) too far apart"
+        assert np.isclose(mc_pv, hull_pv, rtol=0.03), (
+            f"MC ({mc_pv:.6f}) vs Hull ({hull_pv:.6f}) too far apart"
+        )
 
     # -- solve() returns expected shapes --
 

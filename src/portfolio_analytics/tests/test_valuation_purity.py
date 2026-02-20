@@ -117,9 +117,9 @@ class TestValuationPurityPresentValue:
             "call_tree", ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=2000)
         )
         _ = tree.present_value()
-        assert (
-            _snapshot_ud(ud) == baseline
-        ), "present_value() (Binomial) mutated UnderlyingPricingData"
+        assert _snapshot_ud(ud) == baseline, (
+            "present_value() (Binomial) mutated UnderlyingPricingData"
+        )
 
 
 class TestValuationPurityGreeks:
@@ -169,16 +169,16 @@ class TestValuationPurityGreeks:
         baseline = _snapshot_ud(ud)
 
         _ = val.delta()
-        assert (
-            _snapshot_ud(ud) == baseline
-        ), "Binomial delta() did not restore UnderlyingPricingData state"
+        assert _snapshot_ud(ud) == baseline, (
+            "Binomial delta() did not restore UnderlyingPricingData state"
+        )
 
         _ = val.gamma()
-        assert (
-            _snapshot_ud(ud) == baseline
-        ), "Binomial gamma() did not restore UnderlyingPricingData state"
+        assert _snapshot_ud(ud) == baseline, (
+            "Binomial gamma() did not restore UnderlyingPricingData state"
+        )
 
         _ = val.vega()
-        assert (
-            _snapshot_ud(ud) == baseline
-        ), "Binomial vega() did not restore UnderlyingPricingData state"
+        assert _snapshot_ud(ud) == baseline, (
+            "Binomial vega() did not restore UnderlyingPricingData state"
+        )

@@ -221,9 +221,9 @@ class TestGeometricAsianPutCallParity:
         df = np.exp(-r * T)
 
         parity_rhs = df * (F_G - strike)
-        assert np.isclose(
-            call_pv - put_pv, parity_rhs, atol=1e-10
-        ), f"C-P={call_pv - put_pv:.10f} vs df*(F_G-K)={parity_rhs:.10f}"
+        assert np.isclose(call_pv - put_pv, parity_rhs, atol=1e-10), (
+            f"C-P={call_pv - put_pv:.10f} vs df*(F_G-K)={parity_rhs:.10f}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -290,9 +290,9 @@ class TestAnalyticalVsMC:
         )
         # Both analytical and MC include S₀ in the average (N+1 prices).
         # Tolerance absorbs MC sampling noise.
-        assert np.isclose(
-            analytical_pv, mc_pv, rtol=0.02
-        ), f"analytical={analytical_pv:.6f} MC={mc_pv:.6f}"
+        assert np.isclose(analytical_pv, mc_pv, rtol=0.02), (
+            f"analytical={analytical_pv:.6f} MC={mc_pv:.6f}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -927,9 +927,9 @@ class TestHullExample26_3:
                 price,
                 hull_price,
             )
-            assert np.isclose(
-                price, hull_price, atol=0.02
-            ), f"m={m}: price={price:.4f} expected {hull_price:.2f}"
+            assert np.isclose(price, hull_price, atol=0.02), (
+                f"m={m}: price={price:.4f} expected {hull_price:.2f}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -990,9 +990,9 @@ class TestArithmeticPutCallParity:
         df = np.exp(-r * T)
 
         parity_rhs = df * (M1 - strike)
-        assert np.isclose(
-            call_pv - put_pv, parity_rhs, atol=1e-10
-        ), f"C-P={call_pv - put_pv:.10f} vs df*(M1-K)={parity_rhs:.10f}"
+        assert np.isclose(call_pv - put_pv, parity_rhs, atol=1e-10), (
+            f"C-P={call_pv - put_pv:.10f} vs df*(M1-K)={parity_rhs:.10f}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1064,9 +1064,9 @@ class TestArithmeticVsMC:
             mc_pv,
         )
         # Turnbull-Wakeman is an approximation; allow slightly wider tolerance
-        assert np.isclose(
-            analytical_pv, mc_pv, rtol=0.03
-        ), f"analytical={analytical_pv:.6f} MC={mc_pv:.6f}"
+        assert np.isclose(analytical_pv, mc_pv, rtol=0.03), (
+            f"analytical={analytical_pv:.6f} MC={mc_pv:.6f}"
+        )
 
 
 # ---------------------------------------------------------------------------

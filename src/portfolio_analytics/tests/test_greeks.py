@@ -717,12 +717,12 @@ class TestGreekImmutability(TestGreeksSetup):
         delta = valuation.delta()
 
         # Verify PathSimulation state is unchanged
-        assert (
-            process.initial_value == original_spot
-        ), "Delta calculation mutated PathSimulation.initial_value"
-        assert (
-            process.volatility == original_vol
-        ), "Delta calculation mutated PathSimulation.volatility"
+        assert process.initial_value == original_spot, (
+            "Delta calculation mutated PathSimulation.initial_value"
+        )
+        assert process.volatility == original_vol, (
+            "Delta calculation mutated PathSimulation.volatility"
+        )
         assert delta is not None  # sanity check
 
     def test_multiple_concurrent_greeks_with_shared_underlying(self):
