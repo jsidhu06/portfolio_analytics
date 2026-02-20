@@ -18,11 +18,12 @@ dependencies = [
 # Optional groups (e.g., dev, tests, docs)
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "black",
-    "ruff",
-    "mypy",
-    "pre-commit",
+    "pytest>=9,<10",
+    "black>=26,<27",
+    "ruff>=0.15,<0.16",
+    "mypy>=1.19,<2",
+    "pre-commit>=4.5,<5",
+    "pip-tools>=7.5,<8",
 ]
 
 [build-system]
