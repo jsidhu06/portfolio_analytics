@@ -1,15 +1,22 @@
-"""Comprehensive tests for valuation modules (BSM, Binomial, MCS)."""
+"""Comprehensive tests for valuation dispatcher, specs, and integration."""
 
 import pytest
 import datetime as dt
 import numpy as np
+from portfolio_analytics.exceptions import (
+    ConfigurationError,
+    UnsupportedFeatureError,
+    ValidationError,
+)
 from portfolio_analytics.valuation import (
     OptionSpec,
     PayoffSpec,
     UnderlyingPricingData,
     OptionValuation,
+    BinomialParams,
+    MonteCarloParams,
+    PDEParams,
 )
-from portfolio_analytics.portfolio_positions import UnderlyingConfig
 from portfolio_analytics.strategies import CondorSpec
 from portfolio_analytics.valuation.bsm import _BSMEuropeanValuation
 from portfolio_analytics.valuation.binomial import (
@@ -29,10 +36,9 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation.pde import _FDAmericanValuation
-from portfolio_analytics.valuation import BinomialParams, MonteCarloParams, PDEParams
-from portfolio_analytics.utils import calculate_year_fraction, expected_binomial_payoff
+from portfolio_analytics.tests.helpers import flat_curve
 
 
 class TestOptionSpec:
@@ -55,7 +61,7 @@ class TestOptionSpec:
 
     def test_option_spec_with_none_strike(self):
         """Test that None strike is rejected for vanilla OptionSpec."""
-        with pytest.raises(ValueError, match="OptionSpec\\.strike must be provided"):
+        with pytest.raises(ValidationError, match="OptionSpec\\.strike must be provided"):
             OptionSpec(
                 option_type=OptionType.CALL,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -66,7 +72,7 @@ class TestOptionSpec:
 
     def test_option_spec_invalid_option_type(self):
         """Test that invalid option_type raises TypeError."""
-        with pytest.raises(TypeError, match="option_type must be OptionType enum"):
+        with pytest.raises(ConfigurationError, match="option_type must be OptionType enum"):
             OptionSpec(
                 option_type="CALL",  # Invalid: string instead of enum
                 exercise_type=ExerciseType.EUROPEAN,
@@ -77,7 +83,7 @@ class TestOptionSpec:
 
     def test_option_spec_invalid_exercise_type(self):
         """Test that invalid exercise_type raises TypeError."""
-        with pytest.raises(TypeError, match="exercise_type must be ExerciseType enum"):
+        with pytest.raises(ConfigurationError, match="exercise_type must be ExerciseType enum"):
             OptionSpec(
                 option_type=OptionType.PUT,
                 exercise_type="EUROPEAN",  # Invalid: string instead of enum
@@ -140,7 +146,7 @@ class TestCondorSpec:
         assert np.allclose(spec.terminal_payoff(spots), leg_payoff)
 
     def test_invalid_strike_order_raises(self):
-        with pytest.raises(ValueError, match="K1 < K2"):
+        with pytest.raises(ValidationError, match="K1 < K2"):
             CondorSpec(
                 exercise_type=ExerciseType.EUROPEAN,
                 strikes=(90.0, 50.0, 110.0, 150.0),
@@ -149,110 +155,15 @@ class TestCondorSpec:
             )
 
 
-class TestUnderlyingConfig:
-    """Tests for UnderlyingConfig dataclass."""
-
-    def test_gbm_config_creation(self):
-        """Test UnderlyingConfig for GBM model."""
-        config = UnderlyingConfig(
-            name="STOCK",
-            model="gbm",
-            initial_value=100.0,
-            volatility=0.2,
-        )
-        assert config.name == "STOCK"
-        assert config.model == "gbm"
-        assert config.initial_value == 100.0
-        assert config.lambd is None
-        assert config.kappa is None
-
-    def test_jd_config_creation(self):
-        """Test UnderlyingConfig for Jump Diffusion model."""
-        config = UnderlyingConfig(
-            name="STOCK_JD",
-            model="jd",
-            initial_value=100.0,
-            volatility=0.2,
-            lambd=0.5,
-            mu=-0.1,
-            delta=0.3,
-        )
-        assert config.model == "jd"
-        assert config.lambd == 0.5
-        assert config.mu == -0.1
-        assert config.delta == 0.3
-
-    def test_srd_config_creation(self):
-        """Test UnderlyingConfig for Square Root Diffusion model."""
-        config = UnderlyingConfig(
-            name="RATE",
-            model="srd",
-            initial_value=0.03,
-            volatility=0.015,
-            kappa=0.2,
-            theta=0.05,
-        )
-        assert config.model == "srd"
-        assert config.kappa == 0.2
-        assert config.theta == 0.05
-
-
 class TestUnderlyingPricingData:
     """Tests for UnderlyingPricingData class."""
 
     def setup_method(self):
         """Set up market environment for tests."""
-        self.csr = ConstantShortRate("csr", 0.05)
         self.pricing_date = dt.datetime(2025, 1, 1)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
-
-
-def test_binomial_pv_matches_expected_binomial_payoff():
-    pricing_date = dt.datetime(2025, 1, 1)
-    maturity = dt.datetime(2026, 1, 1)
-    r = 0.05
-    spot = 100.0
-    strike = 100.0
-    vol = 0.2
-    dividend_yield = 0.0
-    n_steps = 250
-
-    market_data = MarketData(pricing_date, ConstantShortRate("csr", r), currency="USD")
-    underlying = UnderlyingPricingData(
-        initial_value=spot,
-        volatility=vol,
-        market_data=market_data,
-        dividend_yield=dividend_yield,
-    )
-    spec = OptionSpec(
-        option_type=OptionType.CALL,
-        exercise_type=ExerciseType.EUROPEAN,
-        strike=strike,
-        maturity=maturity,
-        currency="USD",
-    )
-    valuation = OptionValuation("call_binom", underlying, spec, PricingMethod.BINOMIAL)
-    pv_binom = valuation.present_value(params=BinomialParams(num_steps=n_steps))
-
-    T = calculate_year_fraction(
-        pricing_date, maturity, day_count_convention=DayCountConvention.ACT_365F
-    )
-    dt_step = T / n_steps
-    u = np.exp(vol * np.sqrt(dt_step))
-
-    expected_payoff = expected_binomial_payoff(
-        S0=spot,
-        n=n_steps,
-        T=T,
-        side="call",
-        K=strike,
-        r=r,
-        q=dividend_yield,
-        u=u,
-    )
-    pv_expected = np.exp(-r * T) * expected_payoff
-
-    assert np.isclose(pv_binom, pv_expected, rtol=1.0e-4)
+        self.maturity = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_underlying_data_creation(self):
         """Test successful creation of UnderlyingPricingData."""
@@ -265,16 +176,15 @@ def test_binomial_pv_matches_expected_binomial_payoff():
         assert ud.volatility == 0.2
         assert ud.pricing_date == self.pricing_date
 
-    def test_underlying_data_attributes_mutable(self):
-        """Test that UnderlyingPricingData attributes can be modified (unlike frozen dataclasses)."""
+    def test_underlying_data_is_frozen(self):
+        """Test that UnderlyingPricingData is frozen (immutable)."""
         ud = UnderlyingPricingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
         )
-        # Should be able to modify attributes
-        ud.initial_value = 105.0
-        assert ud.initial_value == 105.0
+        with pytest.raises(AttributeError):
+            ud.initial_value = 105.0
 
 
 class TestOptionValuation:
@@ -285,8 +195,8 @@ class TestOptionValuation:
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
         self.strike = 100.0
-        self.csr = ConstantShortRate("csr", 0.05)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
+        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         # Standard option spec
         self.call_spec = OptionSpec(
@@ -338,6 +248,28 @@ class TestOptionValuation:
             pricing_method=PricingMethod.BINOMIAL,
         )
         assert isinstance(valuation._impl, _BinomialEuropeanValuation)
+
+    def test_bsm_accepts_nonflat_discount_curve(self):
+        """BSM should accept time-varying discount curves."""
+        nonflat_curve = DiscountCurve(
+            name="nonflat",
+            times=np.array([0.0, 0.5, 1.0]),
+            dfs=np.array([1.0, np.exp(-0.03 * 0.5), np.exp(-0.06 * 1.0)]),
+        )
+        market_data = MarketData(self.pricing_date, nonflat_curve, currency="USD")
+        ud = UnderlyingPricingData(
+            initial_value=100.0,
+            volatility=0.2,
+            market_data=market_data,
+        )
+
+        valuation = OptionValuation(
+            name="CALL_BSM_NONFLAT",
+            underlying=ud,
+            spec=self.call_spec,
+            pricing_method=PricingMethod.BSM,
+        )
+        assert valuation.present_value() > 0.0
 
     def test_option_valuation_with_path_simulation_mcs(self):
         """Test OptionValuation creation with PathSimulation and MC pricing."""
@@ -398,16 +330,18 @@ class TestOptionValuation:
             underlying=gbm_no_div,
             spec=self.call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
         )
         val_div = OptionValuation(
             name="CALL_MCS_DIV",
             underlying=gbm_div,
             spec=self.call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
         )
 
-        pv_no_div = val_no_div.present_value(params=MonteCarloParams(random_seed=42))
-        pv_div = val_div.present_value(params=MonteCarloParams(random_seed=42))
+        pv_no_div = val_no_div.present_value()
+        pv_div = val_div.present_value()
 
         assert pv_div < pv_no_div
 
@@ -427,7 +361,7 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        with pytest.raises(ValueError, match="Option maturity must be after pricing_date"):
+        with pytest.raises(ValidationError, match="Option maturity must be after pricing_date"):
             OptionValuation(
                 name="INVALID",
                 underlying=ud,
@@ -451,7 +385,9 @@ class TestOptionValuation:
             currency="EUR",
         )
 
-        with pytest.raises(NotImplementedError, match="Cross-currency valuation is not supported"):
+        with pytest.raises(
+            UnsupportedFeatureError, match="Cross-currency valuation is not supported"
+        ):
             OptionValuation(
                 name="CALL_EUR",
                 underlying=ud,
@@ -465,7 +401,7 @@ class TestOptionValuation:
             initial_value=90.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
 
         strikes = (50.0, 90.0, 110.0, 150.0)
@@ -488,7 +424,8 @@ class TestOptionValuation:
             underlying=ud,
             spec=payoff_spec,
             pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(params=BinomialParams(num_steps=2000))
+            params=BinomialParams(num_steps=2000),
+        ).present_value()
 
         leg_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
@@ -504,8 +441,9 @@ class TestOptionValuation:
                 underlying=ud,
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
+                params=BinomialParams(num_steps=2000),
             )
-            leg_pv += w * leg_val.present_value(params=BinomialParams(num_steps=2000))
+            leg_pv += w * leg_val.present_value()
 
         assert np.isclose(payoff_pv, leg_pv, rtol=1e-3, atol=0)
 
@@ -541,7 +479,8 @@ class TestOptionValuation:
             underlying=gbm,
             spec=payoff_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(params=MonteCarloParams(random_seed=42))
+            params=MonteCarloParams(random_seed=42),
+        ).present_value()
 
         leg_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
@@ -557,8 +496,9 @@ class TestOptionValuation:
                 underlying=gbm,
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
+                params=MonteCarloParams(random_seed=42),
             )
-            leg_pv += w * leg_val.present_value(params=MonteCarloParams(random_seed=42))
+            leg_pv += w * leg_val.present_value()
 
         assert np.isclose(payoff_pv, leg_pv, rtol=0.02, atol=0)
 
@@ -570,7 +510,7 @@ class TestOptionValuation:
             initial_value=initial_value,
             volatility=volatility,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         simulation_config = SimulationConfig(
             paths=200_000,
@@ -599,12 +539,16 @@ class TestOptionValuation:
                 maturity=self.maturity,
                 currency="USD",
             )
-            binomial_pv += w * OptionValuation(
-                name=f"LEG_BINOM_{opt_type.value}_{k}",
-                underlying=ud,
-                spec=leg_spec,
-                pricing_method=PricingMethod.BINOMIAL,
-            ).present_value(params=BinomialParams(num_steps=2500))
+            binomial_pv += (
+                w
+                * OptionValuation(
+                    name=f"LEG_BINOM_{opt_type.value}_{k}",
+                    underlying=ud,
+                    spec=leg_spec,
+                    pricing_method=PricingMethod.BINOMIAL,
+                    params=BinomialParams(num_steps=2500),
+                ).present_value()
+            )
 
         mcs_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
@@ -615,12 +559,16 @@ class TestOptionValuation:
                 maturity=self.maturity,
                 currency="USD",
             )
-            mcs_pv += w * OptionValuation(
-                name=f"LEG_MCS_{opt_type.value}_{k}",
-                underlying=gbm,
-                spec=leg_spec,
-                pricing_method=PricingMethod.MONTE_CARLO,
-            ).present_value(params=MonteCarloParams(random_seed=42))
+            mcs_pv += (
+                w
+                * OptionValuation(
+                    name=f"LEG_MCS_{opt_type.value}_{k}",
+                    underlying=gbm,
+                    spec=leg_spec,
+                    pricing_method=PricingMethod.MONTE_CARLO,
+                    params=MonteCarloParams(random_seed=42),
+                ).present_value()
+            )
 
         assert np.isclose(binomial_pv, mcs_pv, rtol=0.01)
 
@@ -653,20 +601,22 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         pv_binom_am = OptionValuation(
             name="CUSTOM_AM_BINOM",
             underlying=ud,
             spec=spec_am,
             pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(params=BinomialParams(num_steps=500))
+            params=BinomialParams(num_steps=500),
+        ).present_value()
         pv_binom_eu = OptionValuation(
             name="CUSTOM_EU_BINOM",
             underlying=ud,
             spec=spec_eu,
             pricing_method=PricingMethod.BINOMIAL,
-        ).present_value(params=BinomialParams(num_steps=500))
+            params=BinomialParams(num_steps=500),
+        ).present_value()
 
         assert pv_binom_am >= pv_binom_eu
         assert 0.0 <= pv_binom_am <= 40.0 + 1e-8
@@ -680,13 +630,15 @@ class TestOptionValuation:
             underlying=gbm,
             spec=spec_am,
             pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(params=MonteCarloParams(random_seed=42, deg=3))
+            params=MonteCarloParams(random_seed=42, deg=3),
+        ).present_value()
         pv_mcs_eu = OptionValuation(
             name="CUSTOM_EU_MCS",
             underlying=gbm,
             spec=spec_eu,
             pricing_method=PricingMethod.MONTE_CARLO,
-        ).present_value(params=MonteCarloParams(random_seed=42))
+            params=MonteCarloParams(random_seed=42),
+        ).present_value()
 
         assert pv_mcs_am >= pv_mcs_eu
         assert 0.0 <= pv_mcs_am <= 40.0 + 1e-8
@@ -697,7 +649,7 @@ class TestOptionValuation:
             initial_value=90.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
 
         strikes = (50.0, 90.0, 110.0, 150.0)
@@ -737,8 +689,9 @@ class TestOptionValuation:
                 underlying=ud,
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
+                params=BinomialParams(num_steps=500),
             )
-            leg_pv += w * leg_val.present_value(params=BinomialParams(num_steps=500))
+            leg_pv += w * leg_val.present_value()
 
         assert np.isclose(condor_pv, leg_pv, rtol=1e-12, atol=0)
 
@@ -785,8 +738,9 @@ class TestOptionValuation:
                 underlying=gbm,
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
+                params=MonteCarloParams(random_seed=42, deg=3),
             )
-            leg_pv += w * leg_val.present_value(params=MonteCarloParams(random_seed=42, deg=3))
+            leg_pv += w * leg_val.present_value()
 
         condor_pv = condor_spec.present_value(
             name="CONDOR_STRATEGY_MCS",
@@ -804,7 +758,7 @@ class TestOptionValuation:
             market_data=self.market_data,
         )
 
-        with pytest.raises(TypeError, match="pricing_method must be PricingMethod enum"):
+        with pytest.raises(ConfigurationError, match="pricing_method must be PricingMethod enum"):
             OptionValuation(
                 name="INVALID",
                 underlying=ud,
@@ -821,7 +775,8 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            TypeError, match="Monte Carlo pricing requires underlying to be a PathSimulation"
+            ConfigurationError,
+            match="Monte Carlo pricing requires underlying to be a PathSimulation",
         ):
             OptionValuation(
                 name="INVALID",
@@ -831,15 +786,13 @@ class TestOptionValuation:
             )
 
     def test_underlying_pricing_data_rejects_mixed_dividends(self):
-        """Continuous dividend_yield and discrete_dividends should be mutually exclusive."""
-        with pytest.raises(
-            ValueError, match="either a continuous dividend_yield or discrete_dividends"
-        ):
+        """Continuous dividend_curve and discrete_dividends should be mutually exclusive."""
+        with pytest.raises(ValidationError, match="either dividend_curve or discrete_dividends"):
             UnderlyingPricingData(
                 initial_value=100.0,
                 volatility=0.2,
                 market_data=self.market_data,
-                dividend_yield=0.02,
+                dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.02, name="q"),
                 discrete_dividends=[(self.pricing_date + dt.timedelta(days=90), 1.0)],
             )
 
@@ -857,7 +810,7 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            TypeError, match="BINOMIAL pricing does not use stochastic path simulation"
+            ConfigurationError, match="BINOMIAL pricing does not use stochastic path simulation"
         ):
             OptionValuation(
                 name="INVALID",
@@ -879,7 +832,9 @@ class TestOptionValuation:
             ),
         )
 
-        with pytest.raises(TypeError, match="BSM pricing does not use stochastic path simulation"):
+        with pytest.raises(
+            ConfigurationError, match="BSM pricing does not use stochastic path simulation"
+        ):
             OptionValuation(
                 name="INVALID",
                 underlying=process,
@@ -901,7 +856,7 @@ class TestOptionValuation:
         )
 
         with pytest.raises(
-            TypeError, match="PDE_FD pricing does not use stochastic path simulation"
+            ConfigurationError, match="PDE_FD pricing does not use stochastic path simulation"
         ):
             OptionValuation(
                 name="INVALID",
@@ -927,7 +882,7 @@ class TestOptionValuation:
         )
 
         # Error is raised during initialization, not present_value
-        with pytest.raises(NotImplementedError, match="BSM is only applicable to European"):
+        with pytest.raises(UnsupportedFeatureError, match="BSM is only applicable to European"):
             OptionValuation(
                 name="CALL_AMERICAN_BSM",
                 underlying=ud,
@@ -940,7 +895,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec = OptionSpec(
             option_type=OptionType.PUT,
@@ -958,7 +913,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec = OptionSpec(
             option_type=OptionType.PUT,
@@ -968,13 +923,19 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        fd_val = OptionValuation("put_fd", ud, spec, PricingMethod.PDE_FD)
-        fd_pv = fd_val.present_value(
-            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        fd_val = OptionValuation(
+            "put_fd",
+            ud,
+            spec,
+            PricingMethod.PDE_FD,
+            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000),
         )
+        fd_pv = fd_val.present_value()
 
-        tree_val = OptionValuation("put_tree", ud, spec, PricingMethod.BINOMIAL)
-        tree_pv = tree_val.present_value(params=BinomialParams(num_steps=1200))
+        tree_val = OptionValuation(
+            "put_tree", ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1200)
+        )
+        tree_pv = tree_val.present_value()
 
         # Both are numerical approximations; keep tolerance modest for test stability.
         assert np.isclose(fd_pv, tree_pv, rtol=0.01)
@@ -984,7 +945,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.03,
+            dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.03, name="q"),
         )
         spec = OptionSpec(
             option_type=OptionType.CALL,
@@ -994,13 +955,19 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        fd_val = OptionValuation("call_fd", ud, spec, PricingMethod.PDE_FD)
-        fd_pv = fd_val.present_value(
-            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        fd_val = OptionValuation(
+            "call_fd",
+            ud,
+            spec,
+            PricingMethod.PDE_FD,
+            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000),
         )
+        fd_pv = fd_val.present_value()
 
-        tree_val = OptionValuation("call_tree", ud, spec, PricingMethod.BINOMIAL)
-        tree_pv = tree_val.present_value(params=BinomialParams(num_steps=1200))
+        tree_val = OptionValuation(
+            "call_tree", ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1200)
+        )
+        tree_pv = tree_val.present_value()
 
         # Both are numerical approximations; keep tolerance modest for test stability.
         assert np.isclose(fd_pv, tree_pv, rtol=0.01)
@@ -1015,7 +982,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec_am = OptionSpec(
             option_type=OptionType.CALL,
@@ -1034,11 +1001,11 @@ class TestOptionValuation:
 
         params = PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
 
-        am_val = OptionValuation("call_fd_am", ud, spec_am, PricingMethod.PDE_FD)
-        eu_val = OptionValuation("call_fd_eu", ud, spec_eu, PricingMethod.PDE_FD)
+        am_val = OptionValuation("call_fd_am", ud, spec_am, PricingMethod.PDE_FD, params=params)
+        eu_val = OptionValuation("call_fd_eu", ud, spec_eu, PricingMethod.PDE_FD, params=params)
 
-        am_pv = am_val.present_value(params=params)
-        eu_pv = eu_val.present_value(params=params)
+        am_pv = am_val.present_value()
+        eu_pv = eu_val.present_value()
 
         assert np.isclose(am_pv, eu_pv, rtol=1e-12, atol=1e-12)
 
@@ -1047,7 +1014,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
         )
         spec_am = OptionSpec(
             option_type=OptionType.CALL,
@@ -1064,10 +1031,14 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        fd_val = OptionValuation("call_fd", ud, spec_am, PricingMethod.PDE_FD)
-        fd_pv = fd_val.present_value(
-            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        fd_val = OptionValuation(
+            "call_fd",
+            ud,
+            spec_am,
+            PricingMethod.PDE_FD,
+            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000),
         )
+        fd_pv = fd_val.present_value()
 
         bsm_val = OptionValuation("call_bsm", ud, spec_eu, PricingMethod.BSM)
         bsm_pv = bsm_val.present_value()
@@ -1094,862 +1065,20 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_yield=0.0,
+            dividend_curve=None,
             discrete_dividends=discrete_divs,
         )
 
-        binom_val = OptionValuation("call_binom_div", ud, spec, PricingMethod.BINOMIAL)
+        binom_val = OptionValuation(
+            "call_binom_div",
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=1200),
+        )
         bsm_val = OptionValuation("call_bsm_div", ud, spec, PricingMethod.BSM)
 
-        binom_pv = binom_val.present_value(params=BinomialParams(num_steps=1200))
+        binom_pv = binom_val.present_value()
         bsm_pv = bsm_val.present_value()
 
         assert np.isclose(binom_pv, bsm_pv, rtol=0.02)
-
-
-class TestBSMValuation:
-    """Tests for Black-Scholes-Merton valuation implementation."""
-
-    def setup_method(self):
-        """Set up market environment for BSM tests."""
-        self.pricing_date = dt.datetime(2025, 1, 1)
-        self.maturity = dt.datetime(2026, 1, 1)  # 1 year
-        self.strike = 100.0
-        self.spot = 100.0
-        self.volatility = 0.2
-        self.rate = 0.05
-
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
-
-        underlying_params = {
-            "initial_value": self.spot,
-            "volatility": self.volatility,
-            "market_data": self.market_data,
-        }
-
-        self.ud = UnderlyingPricingData(**underlying_params)
-
-        self.ud_div = UnderlyingPricingData(**{**underlying_params, "dividend_yield": 0.03})
-
-    def test_bsm_call_option_atm(self):
-        """Test BSM pricing for ATM call option (basic sanity check)."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL_ATM",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        pv = valuation.present_value()
-
-        # ATM call should have positive value
-        assert pv > 0
-        # ATM call value should be approx 10.45 for these parameters
-        assert np.isclose(pv, 10.45, rtol=0.01)
-
-    def test_bsm_discrete_dividends_reduce_call_price(self):
-        """Discrete dividends should reduce European call price (all else equal)."""
-        spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        ud_no_div = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-            dividend_yield=0.0,
-            discrete_dividends=[],
-        )
-
-        ud_div = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-            dividend_yield=0.0,
-            discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
-        )
-
-        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BSM)
-        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BSM)
-
-        pv_no_div = val_no_div.present_value()
-        pv_div = val_div.present_value()
-
-        assert pv_div < pv_no_div
-
-    def test_bsm_put_option_atm(self):
-        """Test BSM pricing for ATM put option."""
-        put_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="PUT_ATM",
-            underlying=self.ud,
-            spec=put_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        pv = valuation.present_value()
-
-        # ATM put should have positive value
-        assert pv > 0
-
-        assert np.isclose(pv, 5.57, rtol=0.01)
-
-    def test_bsm_call_itm(self):
-        """Test BSM call option in-the-money."""
-        self.ud.initial_value = 110.0  # ITM
-
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL_ITM",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        pv = valuation.present_value()
-
-        # ITM call should be worth at least intrinsic value (discounted)
-        intrinsic = (self.ud.initial_value - self.strike) * np.exp(-self.rate * 1.0)
-        assert pv >= intrinsic * 0.95  # allow small tolerance for numerical issues
-
-    def test_bsm_put_otm(self):
-        """Test BSM put option out-of-the-money."""
-        self.ud.initial_value = 110.0  # OTM for put
-
-        put_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="PUT_OTM",
-            underlying=self.ud,
-            spec=put_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        pv = valuation.present_value()
-
-        # OTM put should have some value due to time value
-        assert pv > 0
-        # For OTM put, intrinsic is 0 (spot > strike), so time value should be small
-        # Put value for OTM should be less than the case when ITM
-        assert pv < 5.0
-
-    def test_bsm_with_dividend_yield(self):
-        """Test BSM pricing with dividend yield."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="ZERO_DIVIDEND",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        valuation_div = OptionValuation(
-            name="POSITIVE_DIVIDEND",
-            underlying=self.ud_div,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        pv_no_div = valuation.present_value()
-        pv_with_div = valuation_div.present_value()
-
-        # Call value should decrease with dividend yield
-        assert pv_with_div < pv_no_div
-
-    def test_bsm_call_put_parity(self):
-        """Test BSM call-put parity: C - P = S*exp(-q*T) - K*exp(-r*T)."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        put_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        call_val = OptionValuation(
-            name="CALL",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        # Create new underlying for put to avoid state pollution
-        ud_put = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        put_val = OptionValuation(
-            name="PUT",
-            underlying=ud_put,
-            spec=put_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        call_price = call_val.present_value()
-        put_price = put_val.present_value()
-
-        # Put-call parity with no dividend
-        T = 1.0
-        parity_rhs = self.spot * np.exp(-0.0 * T) - self.strike * np.exp(-self.rate * T)
-
-        assert np.isclose(call_price - put_price, parity_rhs, rtol=1e-10)
-
-    def test_bsm_present_value_returns_float(self):
-        """Test BSM present_value returns a scalar float."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        result = valuation.present_value()
-        assert isinstance(result, float)
-
-
-class TestBinomialValuation:
-    """Tests for Binomial tree option valuation."""
-
-    def setup_method(self):
-        """Set up market environment for binomial tests."""
-        self.pricing_date = dt.datetime(2025, 1, 1)
-        self.maturity = dt.datetime(2026, 1, 1)
-        self.strike = 100.0
-        self.spot = 100.0
-        self.volatility = 0.2
-        self.rate = 0.05
-
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
-
-        self.ud = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-    def test_binomial_european_call_atm(self):
-        """Test binomial European call option."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL_BIN",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        pv = valuation.present_value(params=BinomialParams(num_steps=500))
-        assert pv > 0
-        # ATM call value should be approx 10.45 for these parameters
-        assert np.isclose(pv, 10.45, rtol=0.01)
-
-    def test_binomial_american_call_no_div_equal_to_european(self):
-        """Test that American call >= European call (same parameters)."""
-        eu_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        am_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.AMERICAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        ud_eu = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        ud_am = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        eu_val = OptionValuation(
-            name="CALL_EU",
-            underlying=ud_eu,
-            spec=eu_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        am_val = OptionValuation(
-            name="CALL_AM",
-            underlying=ud_am,
-            spec=am_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        eu_price = eu_val.present_value(params=BinomialParams(num_steps=500))
-        am_price = am_val.present_value(params=BinomialParams(num_steps=500))
-
-        # American should be >= European (early exercise premium)
-        assert np.isclose(am_price, eu_price, rtol=0.005)
-
-    def test_binomial_european_call_discrete_dividends_reduce_price(self):
-        """Discrete dividends should reduce European call price in binomial tree."""
-        spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        ud_no_div = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-            dividend_yield=0.0,
-            discrete_dividends=[],
-        )
-
-        ud_div = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-            dividend_yield=0.0,
-            discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
-        )
-
-        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BINOMIAL)
-        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BINOMIAL)
-
-        pv_no_div = val_no_div.present_value(params=BinomialParams(num_steps=500))
-        pv_div = val_div.present_value(params=BinomialParams(num_steps=500))
-
-        assert pv_div < pv_no_div
-
-    def test_binomial_american_put_early_exercise(self):
-        """Test American put has early exercise premium."""
-        eu_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        am_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.AMERICAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        ud_eu = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        ud_am = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        eu_val = OptionValuation(
-            name="PUT_EU",
-            underlying=ud_eu,
-            spec=eu_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        am_val = OptionValuation(
-            name="PUT_AM",
-            underlying=ud_am,
-            spec=am_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        eu_price = eu_val.present_value(params=BinomialParams(num_steps=100))
-        am_price = am_val.present_value(params=BinomialParams(num_steps=100))
-
-        # American put should be strictly greater (has early exercise value)
-        assert am_price > eu_price
-
-    def test_binomial_convergence(self):
-        """Test that binomial prices converge with more steps."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        ud1 = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        ud2 = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        val1 = OptionValuation(
-            name="CALL_100",
-            underlying=ud1,
-            spec=call_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        val2 = OptionValuation(
-            name="CALL_200",
-            underlying=ud2,
-            spec=call_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        price_100 = val1.present_value(params=BinomialParams(num_steps=100))
-        price_200 = val2.present_value(params=BinomialParams(num_steps=200))
-
-        # Prices should be closer with more steps (convergence)
-        # This is a weak test due to oscillation in binomial, but direction should be reasonable
-        assert abs(price_200 - price_100) < 1.0
-
-
-class TestMCSValuation:
-    """Tests for Monte Carlo Simulation valuation."""
-
-    def setup_method(self):
-        """Set up market environment for MCS tests."""
-        self.pricing_date = dt.datetime(2025, 1, 1)
-        self.maturity = dt.datetime(2026, 1, 1)
-        self.strike = 100.0
-        self.spot = 100.0
-        self.volatility = 0.2
-        self.rate = 0.05
-
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
-
-    def test_mcs_european_call_atm(self):
-        """Test MCS European call option pricing."""
-        gbm_params = GBMParams(initial_value=self.spot, volatility=self.volatility)
-        sim_config = SimulationConfig(
-            paths=10000,
-            frequency="D",
-            end_date=self.maturity,
-        )
-
-        gbm = GeometricBrownianMotion(
-            "gbm_call",
-            self.market_data,
-            gbm_params,
-            sim_config,
-        )
-
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL_MCS",
-            underlying=gbm,
-            spec=call_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
-
-        pv = valuation.present_value(params=MonteCarloParams(random_seed=42))
-
-        # Should be positive and in reasonable range
-        assert pv > 0
-        assert np.isclose(pv, 10.45, rtol=0.02)  # 2% tolerance due to MC error
-
-    def test_mcs_european_put_atm(self):
-        """Test MCS European put option pricing."""
-        gbm_params = GBMParams(initial_value=self.spot, volatility=self.volatility)
-        sim_config = SimulationConfig(
-            paths=10000,
-            frequency="D",
-            end_date=self.maturity,
-        )
-
-        gbm = GeometricBrownianMotion(
-            "gbm_put",
-            self.market_data,
-            gbm_params,
-            sim_config,
-        )
-
-        put_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="PUT_MCS",
-            underlying=gbm,
-            spec=put_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
-
-        pv = valuation.present_value(params=MonteCarloParams(random_seed=42))
-
-        # Should be positive
-        assert pv > 0
-
-    def test_mcs_reproducibility_with_seed(self):
-        """Test that MCS with same seed produces identical results."""
-        gbm_params = GBMParams(initial_value=self.spot, volatility=self.volatility)
-        sim_config = SimulationConfig(
-            paths=1000,  # Smaller for faster test
-            frequency="D",
-            end_date=self.maturity,
-        )
-
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        # First valuation
-        gbm1 = GeometricBrownianMotion(
-            "gbm1",
-            self.market_data,
-            gbm_params,
-            sim_config,
-        )
-
-        val1 = OptionValuation(
-            name="CALL1",
-            underlying=gbm1,
-            spec=call_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
-
-        pv1 = val1.present_value(params=MonteCarloParams(random_seed=123))
-
-        # Second valuation with same seed
-        gbm2 = GeometricBrownianMotion(
-            "gbm2",
-            self.market_data,
-            gbm_params,
-            sim_config,
-        )
-
-        val2 = OptionValuation(
-            name="CALL2",
-            underlying=gbm2,
-            spec=call_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
-
-        pv2 = val2.present_value(params=MonteCarloParams(random_seed=123))
-
-        # Should be identical
-        assert np.isclose(pv1, pv2)
-
-    def test_mcs_american_option(self):
-        """Test MCS American option using Longstaff-Schwartz."""
-        gbm_params = GBMParams(initial_value=self.spot, volatility=self.volatility)
-        sim_config = SimulationConfig(
-            paths=5000,
-            frequency="D",
-            end_date=self.maturity,
-        )
-
-        gbm = GeometricBrownianMotion(
-            "gbm_am",
-            self.market_data,
-            gbm_params,
-            sim_config,
-        )
-
-        am_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.AMERICAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="PUT_AMERICAN_MCS",
-            underlying=gbm,
-            spec=am_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
-
-        pv1 = valuation.present_value(params=MonteCarloParams(random_seed=42, deg=2))
-        pv2 = valuation.present_value(params=MonteCarloParams(random_seed=42, deg=5))
-
-        # Should have positive value
-        assert pv1 > 0 and pv2 > 0
-        # Values with different polynomial degrees should be close
-        assert np.isclose(pv2, pv1, rtol=0.02)  # 2% tolerance
-
-        # binomial should also be close
-        ud_bin = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        binom_valuation = OptionValuation(
-            name="PUT_AMERICAN_BINOMIAL",
-            underlying=ud_bin,
-            spec=am_spec,
-            pricing_method=PricingMethod.BINOMIAL,
-        )
-
-        pv_binom = binom_valuation.present_value(params=BinomialParams(num_steps=500))
-
-        assert np.isclose(pv1, pv_binom, rtol=0.02)
-
-    def test_mcs_pathwise_return(self):
-        """Test MCS present_value_pathwise returns discounted PVs per path."""
-        gbm_params = GBMParams(initial_value=self.spot, volatility=self.volatility)
-        sim_config = SimulationConfig(
-            paths=1000,
-            frequency="D",
-            end_date=self.maturity,
-        )
-
-        gbm = GeometricBrownianMotion(
-            "gbm_full",
-            self.market_data,
-            gbm_params,
-            sim_config,
-        )
-
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL_FULL",
-            underlying=gbm,
-            spec=call_spec,
-            pricing_method=PricingMethod.MONTE_CARLO,
-        )
-
-        pv = valuation.present_value(params=MonteCarloParams(random_seed=42))
-        pv_pathwise = valuation.present_value_pathwise(params=MonteCarloParams(random_seed=42))
-
-        assert isinstance(pv, (float, np.floating))
-        assert isinstance(pv_pathwise, np.ndarray)
-        assert pv_pathwise.shape[0] == sim_config.paths
-        # Mean of pathwise should equal pv
-        assert np.isclose(np.mean(pv_pathwise), pv)
-
-
-class TestGreeks:
-    """Tests for greek calculations (delta, vega)."""
-
-    def setup_method(self):
-        """Set up market environment for greek tests."""
-        self.pricing_date = dt.datetime(2025, 1, 1)
-        self.maturity = dt.datetime(2026, 1, 1)
-        self.strike = 100.0
-        self.spot = 100.0
-        self.volatility = 0.2
-        self.rate = 0.05
-
-        self.csr = ConstantShortRate("csr", self.rate)
-        self.market_data = MarketData(self.pricing_date, self.csr, currency="USD")
-
-        self.ud = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-    def test_call_delta_positive(self):
-        """Test that call option delta is positive."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        delta = valuation.delta()
-        assert 0 < delta < 1
-
-    def test_put_delta_negative(self):
-        """Test that put option delta is negative."""
-        ud = UnderlyingPricingData(
-            initial_value=self.spot,
-            volatility=self.volatility,
-            market_data=self.market_data,
-        )
-
-        put_spec = OptionSpec(
-            option_type=OptionType.PUT,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="PUT",
-            underlying=ud,
-            spec=put_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        delta = valuation.delta()
-        assert -1 < delta < 0
-
-    def test_vega_positive(self):
-        """Test that vega is positive (option value increases with volatility)."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        vega = valuation.vega()
-        # Vega should be positive (more volatility = higher option value)
-        assert vega > 0
-
-    def test_delta_custom_epsilon(self):
-        """Test delta calculation with custom epsilon."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        delta = valuation.delta(epsilon=0.5)
-        assert 0 < delta < 1
-
-    def test_vega_custom_epsilon(self):
-        """Test vega calculation with custom epsilon."""
-        call_spec = OptionSpec(
-            option_type=OptionType.CALL,
-            exercise_type=ExerciseType.EUROPEAN,
-            strike=self.strike,
-            maturity=self.maturity,
-            currency="USD",
-        )
-
-        valuation = OptionValuation(
-            name="CALL",
-            underlying=self.ud,
-            spec=call_spec,
-            pricing_method=PricingMethod.BSM,
-        )
-
-        vega = valuation.vega(epsilon=0.02)
-        assert vega > 0

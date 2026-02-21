@@ -1,35 +1,54 @@
+import datetime as dt
+
 import numpy as np
-import pandas as pd
+
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.utils import calculate_year_fraction
 
 
-def make_fake_price_df(stocks, start_date, end_date):
-    # Create daily dates inclusive of start and end
-    dates = pd.date_range(start_date, end_date, freq="D")
+def flat_curve(
+    pricing_date: dt.datetime,
+    maturity: dt.datetime,
+    rate: float,
+    name: str = "r",
+) -> DiscountCurve:
+    ttm = calculate_year_fraction(pricing_date, maturity)
+    return DiscountCurve.flat(name, rate, end_time=ttm)
 
-    # Use a reproducible RNG so tests are deterministic
-    rng = np.random.RandomState(42)
 
-    # Build MultiIndex columns (Ticker, Field)
-    data = {}
-    for i, s in enumerate(stocks):
-        # Generate small daily returns (some positive, some negative)
-        daily_ret = rng.normal(loc=0.0005, scale=0.02, size=len(dates))
-        # Ensure variability across stocks by shifting mean slightly
-        daily_ret += i * 0.0001
+def build_curve_from_forwards(
+    *,
+    name: str,
+    times: np.ndarray,
+    forwards: np.ndarray,
+) -> DiscountCurve:
+    """Build a DiscountCurve from piecewise-constant forward rates.
 
-        # Build close prices via cumulative returns from a base price
-        base = 100 + i * 5
-        close = base * np.cumprod(1 + daily_ret)
+    Parameters
+    ----------
+    name : str
+        Curve name.
+    times : np.ndarray
+        Time grid including 0. Shape ``(N+1,)``.
+    forwards : np.ndarray
+        Forward rate on each interval. Shape ``(N,)``.
 
-        # small dividends series: mostly zero, occasional small dividend
-        dividends = np.zeros(len(dates))
-        dividends[::3] = 0.5  # pay dividend every 3rd day
+    Returns
+    -------
+    DiscountCurve
+    """
+    times = np.asarray(times, dtype=float)
+    forwards = np.asarray(forwards, dtype=float)
+    if times.ndim != 1 or forwards.ndim != 1:
+        raise ValueError("times/forwards must be 1D arrays")
+    if times.size < 2:
+        raise ValueError("times must include at least [0, T]")
+    if forwards.size != times.size - 1:
+        raise ValueError("forwards must have length len(times)-1")
+    if not np.isclose(times[0], 0.0):
+        raise ValueError("times must start at 0.0")
 
-        data[(s, "Close")] = close
-        data[(s, "Dividends")] = dividends
-
-    # Create MultiIndex and DataFrame
-    cols = pd.MultiIndex.from_tuples(list(data.keys()), names=["Ticker", "Field"])
-    df = pd.DataFrame(data=list(data.values()), index=cols).T
-    df.index = dates
-    return df
+    dt_steps = np.diff(times)
+    cum_rate = np.concatenate([[0.0], np.cumsum(forwards * dt_steps)])
+    dfs = np.exp(-cum_rate)
+    return DiscountCurve(name=name, times=times, dfs=dfs)

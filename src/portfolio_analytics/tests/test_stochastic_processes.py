@@ -1,6 +1,7 @@
 import pytest
 import datetime as dt
 import numpy as np
+from portfolio_analytics.exceptions import ConfigurationError, ValidationError
 from portfolio_analytics.stochastic_processes import (
     PathSimulation,
     GeometricBrownianMotion,
@@ -12,8 +13,8 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
 from portfolio_analytics.enums import DayCountConvention
+from portfolio_analytics.tests.helpers import flat_curve
 
 
 class TestPathSimulation:
@@ -21,8 +22,10 @@ class TestPathSimulation:
 
     def test_cannot_instantiate_abstract_class(self):
         """Test that PathSimulation cannot be instantiated directly due to abstract method"""
-        csr = ConstantShortRate("csr", 0.05)
-        market_data = MarketData(dt.datetime(2025, 1, 1), csr, currency="EUR")
+        pricing_date = dt.datetime(2025, 1, 1)
+        end_date = dt.datetime(2026, 1, 1)
+        curve = flat_curve(pricing_date, end_date, 0.05, name="csr")
+        market_data = MarketData(pricing_date, curve, currency="EUR")
         process_params = GBMParams(initial_value=100.0, volatility=0.2)
         sim = SimulationConfig(
             paths=10000,
@@ -42,13 +45,15 @@ class TestGeometricBrownianMotion:
 
     def setup_method(self):
         """Set up market environment for GBM tests"""
-        self.csr = ConstantShortRate("csr", 0.05)
-        self.market_data = MarketData(dt.datetime(2025, 1, 1), self.csr, currency="EUR")
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=36.0, volatility=0.2)
         self.sim = SimulationConfig(
             paths=10000,
             frequency="ME",
-            end_date=dt.datetime(2026, 1, 1),
+            end_date=self.end_date,
         )
         self.gbm = GeometricBrownianMotion(
             "gbm_test",
@@ -151,8 +156,10 @@ class TestGeometricBrownianMotion:
         # With many paths, mean return should approximate r - 0.5*sigma^2
         short_rate = 0.05
         volatility = 0.2
-        csr = ConstantShortRate("csr", short_rate)
-        market_data = MarketData(dt.datetime(2025, 1, 1), csr, currency="USD")
+        pricing_date = dt.datetime(2025, 1, 1)
+        end_date = dt.datetime(2026, 1, 1)
+        curve = flat_curve(pricing_date, end_date, short_rate, name="csr")
+        market_data = MarketData(pricing_date, curve, currency="USD")
         process_params = GBMParams(initial_value=100.0, volatility=volatility)
         sim_config = SimulationConfig(
             paths=10000,
@@ -181,8 +188,10 @@ class TestSquareRootDiffusion:
 
     def setup_method(self):
         """Set up market environment for SRD tests."""
-        self.csr = ConstantShortRate("csr", 0.05)
-        self.market_data = MarketData(dt.datetime(2025, 1, 1), self.csr, currency="USD")
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = SRDParams(
             initial_value=0.03,
             volatility=0.015,
@@ -192,7 +201,7 @@ class TestSquareRootDiffusion:
         self.sim = SimulationConfig(
             paths=5000,
             frequency="D",
-            end_date=dt.datetime(2026, 1, 1),
+            end_date=self.end_date,
         )
         self.srd = SquareRootDiffusion(
             "srd_test",
@@ -272,8 +281,10 @@ class TestJumpDiffusion:
 
     def setup_method(self):
         """Set up market environment for Jump Diffusion tests."""
-        self.csr = ConstantShortRate("csr", 0.05)
-        self.market_data = MarketData(dt.datetime(2025, 1, 1), self.csr, currency="USD")
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = JDParams(
             initial_value=100.0,
             volatility=0.2,
@@ -284,7 +295,7 @@ class TestJumpDiffusion:
         self.sim = SimulationConfig(
             paths=5000,
             frequency="D",
-            end_date=dt.datetime(2026, 1, 1),
+            end_date=self.end_date,
         )
         self.jd = JumpDiffusion(
             "jd_test",
@@ -395,15 +406,27 @@ class TestSimulationConfig:
         assert config.day_count_convention == DayCountConvention.ACT_365F  # default
 
     def test_simulation_config_custom_day_count(self):
-        """Test SimulationConfig with custom day count convention."""
+        """Test SimulationConfig with a non-default DayCountConvention."""
         config = SimulationConfig(
             paths=1000,
             frequency="W",
             end_date=dt.datetime(2026, 1, 1),
-            day_count_convention=360,
+            day_count_convention=DayCountConvention.ACT_360,
         )
 
-        assert config.day_count_convention == 360
+        assert config.day_count_convention == DayCountConvention.ACT_360
+
+    def test_simulation_config_rejects_non_enum_day_count(self):
+        """Passing a raw int/str instead of DayCountConvention must raise TypeError."""
+        with pytest.raises(
+            ConfigurationError, match="day_count_convention must be a DayCountConvention"
+        ):
+            SimulationConfig(
+                paths=1000,
+                frequency="W",
+                end_date=dt.datetime(2026, 1, 1),
+                day_count_convention=360,
+            )
 
     def test_simulation_config_with_special_dates(self):
         """Test SimulationConfig with special dates."""
@@ -449,7 +472,7 @@ class TestSimulationConfig:
             ]
         )
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             SimulationConfig(
                 paths=500,
                 end_date=dt.datetime(2026, 1, 1),
@@ -458,7 +481,7 @@ class TestSimulationConfig:
 
     def test_simulation_config_with_frequency_and_num_steps_raise_error(self):
         """Supplying both frequency and num_steps should raise."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             SimulationConfig(
                 paths=500,
                 end_date=dt.datetime(2026, 1, 1),
@@ -474,3 +497,310 @@ class TestSimulationConfig:
             num_steps=10,
         )
         assert config.num_steps == 10
+
+
+class TestVarianceReduction:
+    """Tests for configurable antithetic variates and moment matching."""
+
+    def setup_method(self):
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
+        self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
+
+    def _make_gbm(self, *, antithetic: bool, moment_matching: bool, paths: int = 10000):
+        sim = SimulationConfig(
+            paths=paths,
+            end_date=self.end_date,
+            num_steps=252,
+            antithetic=antithetic,
+            moment_matching=moment_matching,
+        )
+        return GeometricBrownianMotion(
+            "vr_test", self.market_data, self.process_params, sim, corr=None
+        )
+
+    def test_defaults_are_true(self):
+        """SimulationConfig defaults to antithetic=True, moment_matching=True."""
+        sim = SimulationConfig(paths=100, end_date=self.end_date, num_steps=10)
+        assert sim.antithetic is True
+        assert sim.moment_matching is True
+
+    def test_antithetic_produces_symmetric_randoms(self):
+        """With antithetic=True, random draws should come in negated pairs."""
+        gbm = self._make_gbm(antithetic=True, moment_matching=False, paths=1000)
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=1000)
+        half = z.shape[1] // 2
+        # Z[:, i] + Z[:, i + half] == 0 for all i
+        assert np.allclose(z[:, :half] + z[:, half:], 0.0, atol=1e-14)
+
+    def test_no_antithetic_no_symmetric_randoms(self):
+        """With antithetic=False, random draws should NOT cancel in pairs."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=1000)
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=1000)
+        half = z.shape[1] // 2
+        assert not np.allclose(z[:, :half] + z[:, half:], 0.0, atol=1e-6)
+
+    def test_moment_matching_normalises_randoms(self):
+        """With moment_matching=True, raw normals should have mean≈0 and std≈1."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=True, paths=10000)
+        # Access the internal normals directly
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=10000)
+        assert np.isclose(z.mean(), 0.0, atol=1e-14)
+        assert np.isclose(z.std(), 1.0, atol=1e-14)
+
+    def test_no_moment_matching_raw_stats(self):
+        """With moment_matching=False, raw normals have small but nonzero mean drift."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=500)
+        z = gbm._standard_normals(random_seed=42, steps=10, paths=500)
+        # With only 500 paths the sample mean won't be exactly zero
+        assert not np.isclose(z.mean(), 0.0, atol=1e-14)
+
+    def test_antithetic_reduces_estimator_variance(self):
+        """Antithetic variates should reduce variance of a call payoff estimator.
+
+        We run many small batches and compare the variance of the batch means.
+        """
+        n_batches = 50
+        batch_paths = 500
+        strike = 100.0
+
+        means_av = []
+        means_plain = []
+        for seed in range(n_batches):
+            gbm_av = self._make_gbm(antithetic=True, moment_matching=False, paths=batch_paths)
+            terminal = gbm_av.generate_paths(random_seed=seed)[-1]
+            means_av.append(np.mean(np.maximum(terminal - strike, 0.0)))
+
+            gbm_plain = self._make_gbm(antithetic=False, moment_matching=False, paths=batch_paths)
+            terminal = gbm_plain.generate_paths(random_seed=seed + 10000)[-1]
+            means_plain.append(np.mean(np.maximum(terminal - strike, 0.0)))
+
+        # Variance of batch means should be lower with antithetic
+        assert np.var(means_av) < np.var(means_plain)
+
+    def test_both_off_still_produces_valid_paths(self):
+        """With both variance reduction techniques off, paths should still be valid GBM."""
+        gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=1000)
+        paths = gbm.generate_paths(random_seed=42)
+
+        assert np.all(paths > 0)
+        assert paths[0, 0] == self.process_params.initial_value
+
+    def test_odd_paths_with_antithetic_warns_and_falls_back(self):
+        """Odd path count with antithetic=True should warn and fall back to plain sampling."""
+        gbm = self._make_gbm(antithetic=True, moment_matching=False, paths=999)
+        with pytest.warns(UserWarning, match="antithetic=True but paths=999 is odd"):
+            paths = gbm.generate_paths(random_seed=42)
+        assert paths.shape[1] == 999
+        assert np.all(paths > 0)
+
+
+class TestPathSimulationReplace:
+    """Tests for PathSimulation.replace() — ensures kwargs are routed correctly
+    to nested frozen dataclasses and that derived state (time_grid, special_dates)
+    is handled properly.
+    """
+
+    def setup_method(self):
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
+        self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
+        self.sim = SimulationConfig(
+            paths=1000,
+            frequency="ME",
+            end_date=self.end_date,
+        )
+        self.gbm = GeometricBrownianMotion(
+            "gbm_orig", self.market_data, self.process_params, self.sim
+        )
+
+    # --- Type preservation ---
+
+    def test_replace_returns_same_concrete_type(self):
+        """replace() on a GBM should return a GBM, not a bare PathSimulation."""
+        cloned = self.gbm.replace(initial_value=105.0)
+        assert type(cloned) is GeometricBrownianMotion
+
+    def test_replace_jd_returns_jd(self):
+        """replace() on a JumpDiffusion should return a JumpDiffusion."""
+        jd_params = JDParams(initial_value=100.0, volatility=0.2, lambd=0.5, mu=-0.1, delta=0.3)
+        jd = JumpDiffusion("jd_orig", self.market_data, jd_params, self.sim)
+        cloned = jd.replace(initial_value=110.0)
+        assert type(cloned) is JumpDiffusion
+        assert cloned.initial_value == 110.0
+
+    # --- Process param routing ---
+
+    def test_replace_initial_value(self):
+        """replace(initial_value=...) routes to process_params."""
+        cloned = self.gbm.replace(initial_value=105.0)
+        assert cloned.initial_value == 105.0
+        assert self.gbm.initial_value == 100.0  # original unchanged
+
+    def test_replace_volatility(self):
+        """replace(volatility=...) routes to process_params."""
+        cloned = self.gbm.replace(volatility=0.3)
+        assert cloned.volatility == 0.3
+        assert self.gbm.volatility == 0.2  # original unchanged
+
+    def test_replace_dividend_curve(self):
+        """replace(dividend_curve=...) routes to process_params."""
+        q_curve = flat_curve(self.pricing_date, self.end_date, 0.02, name="q")
+        cloned = self.gbm.replace(dividend_curve=q_curve)
+        assert cloned.dividend_curve is q_curve
+        assert self.gbm.dividend_curve is None  # original unchanged
+
+    # --- Sim config routing ---
+
+    def test_replace_end_date_nulls_time_grid(self):
+        """replace(end_date=...) should null the time_grid for lazy rebuild."""
+        # First ensure time_grid exists
+        self.gbm.generate_time_grid()
+        assert self.gbm.time_grid is not None
+
+        new_end = dt.datetime(2027, 1, 1)
+        cloned = self.gbm.replace(end_date=new_end)
+        assert cloned.time_grid is None  # grid must be rebuilt
+        assert cloned.end_date == new_end
+
+    def test_replace_num_steps(self):
+        """replace(num_steps=...) routes to sim config."""
+        sim_steps = SimulationConfig(paths=1000, num_steps=50, end_date=self.end_date)
+        gbm_steps = GeometricBrownianMotion(
+            "gbm_steps", self.market_data, self.process_params, sim_steps
+        )
+        cloned = gbm_steps.replace(num_steps=100)
+        assert cloned.num_steps == 100
+        assert cloned.time_grid is None  # grid-shaping param changed
+
+    # --- Market data routing ---
+
+    def test_replace_name(self):
+        """replace(name=...) updates the name."""
+        cloned = self.gbm.replace(name="gbm_cloned")
+        assert cloned.name == "gbm_cloned"
+        assert self.gbm.name == "gbm_orig"
+
+    def test_replace_currency(self):
+        """replace(currency=...) routes to market_data."""
+        cloned = self.gbm.replace(currency="USD")
+        assert cloned.currency == "USD"
+        assert self.gbm.currency == "EUR"  # original unchanged
+
+    def test_replace_discount_curve(self):
+        """replace(discount_curve=...) routes to market_data."""
+        new_curve = flat_curve(self.pricing_date, self.end_date, 0.08, name="csr2")
+        cloned = self.gbm.replace(discount_curve=new_curve)
+        assert cloned.discount_curve is new_curve
+        assert self.gbm.discount_curve is self.curve  # original unchanged
+
+    def test_replace_market_data(self):
+        """replace(market_data=...) replaces the entire MarketData object."""
+        new_md = MarketData(self.pricing_date, self.curve, currency="USD")
+        cloned = self.gbm.replace(market_data=new_md)
+        assert cloned.market_data is new_md
+        assert cloned.currency == "USD"
+
+    def test_replace_pricing_date_nulls_grid_and_updates_market_data(self):
+        """replace(pricing_date=...) updates market_data and nulls time_grid."""
+        self.gbm.generate_time_grid()
+        new_date = dt.datetime(2025, 6, 1)
+        cloned = self.gbm.replace(pricing_date=new_date)
+        assert cloned.pricing_date == new_date
+        assert cloned.time_grid is None  # pricing_date is a grid-shaping param
+
+    # --- Special dates handling ---
+
+    def test_replace_special_dates_with_explicit_time_grid_augments(self):
+        """When time_grid is explicit, replace(special_dates=...) augments it."""
+        explicit_grid = np.array(
+            [
+                dt.datetime(2025, 1, 1),
+                dt.datetime(2025, 6, 1),
+                dt.datetime(2026, 1, 1),
+            ]
+        )
+        sim_explicit = SimulationConfig(paths=1000, time_grid=explicit_grid)
+        gbm_explicit = GeometricBrownianMotion(
+            "gbm_explicit", self.market_data, self.process_params, sim_explicit
+        )
+
+        mid_date = dt.datetime(2025, 3, 15)
+        cloned = gbm_explicit.replace(special_dates={mid_date})
+
+        # time_grid should now include the mid_date
+        assert mid_date in cloned.time_grid
+        # original dates should still be there
+        for d in explicit_grid:
+            assert d in cloned.time_grid
+        assert len(cloned.time_grid) == 4
+
+    def test_replace_special_dates_without_time_grid_nulls_grid(self):
+        """When time_grid is None (lazy mode), replace(special_dates=...) keeps it None."""
+        assert self.gbm.time_grid is None  # lazy — not yet generated
+        cloned = self.gbm.replace(special_dates={dt.datetime(2025, 7, 1)})
+        assert cloned.time_grid is None  # stays None for lazy rebuild
+
+    # --- Isolation / no shared state ---
+
+    def test_replace_does_not_mutate_original(self):
+        """Cloned instance should be fully independent of the original."""
+        self.gbm.generate_time_grid()
+        original_grid = self.gbm.time_grid.copy()
+        original_special = set(self.gbm.special_dates)
+
+        self.gbm.replace(initial_value=200.0)
+
+        # Original should be untouched
+        np.testing.assert_array_equal(self.gbm.time_grid, original_grid)
+        assert self.gbm.special_dates == original_special
+        assert self.gbm.initial_value == 100.0
+
+    def test_replace_time_grid_is_deep_copied(self):
+        """Mutating the cloned time_grid should not affect the original."""
+        self.gbm.generate_time_grid()
+        original_grid = self.gbm.time_grid.copy()
+
+        cloned = self.gbm.replace(initial_value=105.0)
+
+        # Must be a different array object
+        assert cloned.time_grid is not self.gbm.time_grid
+
+        # Mutating the clone's grid must not affect the original
+        cloned.time_grid[0] = dt.datetime(1999, 1, 1)
+        np.testing.assert_array_equal(self.gbm.time_grid, original_grid)
+
+    # --- Validation ---
+
+    def test_replace_unknown_kwarg_raises(self):
+        """Passing an unsupported kwarg should raise ValidationError."""
+        with pytest.raises(ValidationError, match="unknown"):
+            self.gbm.replace(unknown_field=42)
+
+    def test_replace_unsupported_param_for_process_raises(self):
+        """Replacing a param not on the process_params type should raise."""
+        # SRD doesn't have dividend_curve
+        srd_params = SRDParams(initial_value=0.03, volatility=0.015, kappa=0.2, theta=0.05)
+        srd = SquareRootDiffusion("srd", self.market_data, srd_params, self.sim)
+        with pytest.raises(ValidationError, match="dividend_curve.*not supported"):
+            srd.replace(dividend_curve=self.curve)
+
+    # --- Functional: cloned instance produces valid paths ---
+
+    def test_replace_vol_produces_valid_paths(self):
+        """A cloned GBM with bumped vol should produce valid paths."""
+        cloned = self.gbm.replace(volatility=0.4)
+        paths = cloned.generate_paths(random_seed=42)
+        assert np.all(paths > 0)
+        assert paths[0, 0] == self.gbm.initial_value  # same S0
+
+    def test_replace_spot_produces_valid_paths(self):
+        """A cloned GBM with bumped spot should produce valid paths."""
+        cloned = self.gbm.replace(initial_value=120.0)
+        paths = cloned.generate_paths(random_seed=42)
+        assert np.all(paths > 0)
+        assert paths[0, 0] == 120.0

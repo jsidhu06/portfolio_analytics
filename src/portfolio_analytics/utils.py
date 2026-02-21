@@ -1,13 +1,49 @@
 """Helper functions and classes for derivatives valuation."""
 
+from __future__ import annotations
+
+from contextlib import contextmanager
 from datetime import datetime
 from math import comb
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable
+from collections.abc import Iterator
+import time
 import numpy as np
 
-from .enums import DayCountConvention
+from .enums import DayCountConvention, OptionType
+from .exceptions import ArbitrageViolationError, ValidationError
+
+if TYPE_CHECKING:
+    from .rates import DiscountCurve
+
+__all__ = [
+    "log_timing",
+    "calculate_year_fraction",
+    "get_year_deltas",
+    "pv_discrete_dividends",
+    "forward_price",
+    "put_call_parity_rhs",
+    "put_call_parity_gap",
+    "binomial_pmf",
+    "expected_binomial",
+    "expected_binomial_payoff",
+]
 
 SECONDS_IN_DAY = 86400
+
+
+@contextmanager
+def log_timing(logger, label: str, enabled: bool) -> Iterator[None]:
+    """Log timing for a code block when enabled is True."""
+    if not enabled:
+        yield
+        return
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - start
+        logger.debug("Timing %s: %.6fs", label, elapsed)
 
 
 def _day_count_30_360_us(start_date: datetime, end_date: datetime) -> float:
@@ -29,9 +65,6 @@ def calculate_year_fraction(
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Calculate year fraction between two dates.
-
-    This is a fundamental calculation in finance for time-value of money,
-    discount factors, and accrued interest calculations.
 
     Parameters
     ==========
@@ -68,7 +101,7 @@ def calculate_year_fraction(
     elif day_count_convention is DayCountConvention.ACT_365F:
         denom = 365.0
     else:
-        raise ValueError(f"Unsupported day_count_convention: {day_count_convention}")
+        raise ValidationError(f"Unsupported day_count_convention: {day_count_convention}")
 
     delta_days = (end_date - start_date).total_seconds() / SECONDS_IN_DAY
     year_fraction = delta_days / denom
@@ -103,23 +136,30 @@ def get_year_deltas(
 
 def pv_discrete_dividends(
     dividends: list[tuple[datetime, float]],
-    pricing_date: datetime,
-    maturity: datetime,
-    short_rate: float,
+    curve_date: datetime,
+    end_date: datetime,
+    discount_curve: DiscountCurve,
+    start_date: datetime | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
-    """Present value of discrete cash dividends between pricing_date and maturity.
+    """Present value of discrete cash dividends between start_date and end_date.
 
-    Only dividends with pricing_date < ex_date <= maturity are included.
+    Only dividends with start_date < ex_date <= end_date are included.
     """
     if not dividends:
         return 0.0
 
+    start_date = curve_date if start_date is None else start_date
+    t_start = calculate_year_fraction(curve_date, start_date, day_count_convention)
+    df_start = float(discount_curve.df(t_start))
+
     pv = 0.0
     for ex_date, amount in dividends:
-        if pricing_date < ex_date <= maturity:
-            t = calculate_year_fraction(pricing_date, ex_date, day_count_convention)
-            pv += float(amount) * np.exp(-short_rate * t)
+        if start_date < ex_date <= end_date:
+            t_ex = calculate_year_fraction(curve_date, ex_date, day_count_convention)
+            df_ex = float(discount_curve.df(t_ex))
+            df = df_ex / df_start
+            pv += float(amount) * df
     return float(pv)
 
 
@@ -129,35 +169,42 @@ def forward_price(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Compute the no-arbitrage forward price for an equity-style underlying.
 
-    Supports either continuous dividend yield or discrete dividends (not both).
+    Supports either continuous dividend curve or discrete dividends (not both).
     """
-    if dividend_yield != 0.0 and discrete_dividends:
-        raise ValueError(
-            "Provide either a continuous dividend_yield or discrete_dividends, not both."
+    if dividend_curve is not None and discrete_dividends:
+        raise ValidationError(
+            "Provide either a continuous dividend_curve or discrete_dividends, not both."
         )
 
     t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
     if t <= 0:
-        raise ValueError("maturity must be after pricing_date")
+        raise ValidationError("maturity must be after pricing_date")
 
     spot = float(spot)
     short_rate = float(short_rate)
-    dividend_yield = float(dividend_yield)
 
     if discrete_dividends:
+        if discount_curve is None:
+            raise ValidationError("discount_curve is required for discrete_dividends.")
         pv_divs = pv_discrete_dividends(
-            discrete_dividends, pricing_date, maturity, short_rate, day_count_convention
+            discrete_dividends,
+            curve_date=pricing_date,
+            end_date=maturity,
+            discount_curve=discount_curve,
+            day_count_convention=day_count_convention,
         )
         prepaid_forward = spot - pv_divs
         return float(prepaid_forward * np.exp(short_rate * t))
 
-    return float(spot * np.exp((short_rate - dividend_yield) * t))
+    df_q = 1.0 if dividend_curve is None else float(dividend_curve.df(t))
+    return float(spot * np.exp(short_rate * t) * df_q)
 
 
 def put_call_parity_rhs(
@@ -167,7 +214,8 @@ def put_call_parity_rhs(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -177,14 +225,15 @@ def put_call_parity_rhs(
     """
     t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
     if t <= 0:
-        raise ValueError("maturity must be after pricing_date")
+        raise ValidationError("maturity must be after pricing_date")
 
     fwd = forward_price(
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=short_rate,
-        dividend_yield=dividend_yield,
+        discount_curve=discount_curve,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,
     )
@@ -200,7 +249,8 @@ def put_call_parity_gap(
     pricing_date: datetime,
     maturity: datetime,
     short_rate: float,
-    dividend_yield: float = 0.0,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
@@ -211,53 +261,12 @@ def put_call_parity_gap(
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=short_rate,
-        dividend_yield=dividend_yield,
+        discount_curve=discount_curve,
+        dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,
     )
     return float(call_price - put_price - rhs)
-
-
-def sn_random_numbers(
-    shape: tuple[int, int, int],
-    antithetic: bool = True,
-    moment_matching: bool = True,
-    random_seed: int | None = None,
-) -> np.ndarray:
-    """Return array of standard normally distributed pseudo-random numbers.
-
-    Supports antithetic variates and moment matching for variance reduction
-    in Monte Carlo simulations.
-
-    Parameters
-    ==========
-    shape: tuple (o, n, m)
-        array shape (# simulations, # time steps, # paths)
-    antithetic: bool, default True
-        if True, use antithetic variates for variance reduction
-        (generates n/2 randoms and appends their negatives)
-    moment_matching: bool, default True
-        if True, rescale to match sample mean=0 and std=1
-    random_seed: int, optional
-        random number generator seed for reproducibility
-
-    Returns
-    =======
-    ran: np.ndarray
-        shape (o, n, m) if o > 1, else shape (n, m)
-        standard normally distributed random numbers
-    """
-    rng = np.random.default_rng(random_seed)
-    if antithetic:
-        ran = rng.standard_normal((shape[0], shape[1], shape[2] // 2))
-        ran = np.concatenate((ran, -ran), axis=2)
-    else:
-        ran = rng.standard_normal(shape)
-    if moment_matching:
-        ran = (ran - np.mean(ran)) / np.std(ran)  # note this is population std dev
-    if shape[0] == 1:
-        return ran[0]
-    return ran
 
 
 def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:
@@ -273,11 +282,11 @@ def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:
         Success probability in [0, 1].
     """
     if n < 0:
-        raise ValueError("n must be >= 0")
+        raise ValidationError("n must be >= 0")
 
     p = float(p)
     if not (0.0 <= p <= 1.0):
-        raise ValueError("p must be in [0, 1]")
+        raise ValidationError("p must be in [0, 1]")
 
     k_arr = np.asarray(k, dtype=int)
     out = np.zeros_like(k_arr, dtype=float)
@@ -303,16 +312,16 @@ def expected_binomial(
     $\sum_{k=0}^n \binom{n}{k} p^k (1-p)^{n-k} f(k)$.
     """
     if n < 0:
-        raise ValueError("n must be >= 0")
+        raise ValidationError("n must be >= 0")
     p = float(p)
     if not (0.0 <= p <= 1.0):
-        raise ValueError("p must be in [0, 1]")
+        raise ValidationError("p must be in [0, 1]")
 
     ks = np.arange(n + 1)
     pmf = binomial_pmf(ks, n=n, p=p)
     vals = np.asarray(f(ks), dtype=float)
     if vals.shape != ks.shape:
-        raise ValueError("f(k) must return an array with same shape as k")
+        raise ValidationError("f(k) must return an array with same shape as k")
     return float(np.dot(pmf, vals))
 
 
@@ -321,11 +330,11 @@ def expected_binomial_payoff(
     S0: float,
     n: int,
     T: float,
-    side: Literal["call", "put"],
+    option_type: OptionType,
     K: float,
     r: float,
     q: float,
-    u: float | None = None,
+    u: float,
 ) -> float:
     """Expected vanilla payoff under a binomial terminal distribution.
 
@@ -337,8 +346,8 @@ def expected_binomial_payoff(
         Number of steps.
     T:
         Time to maturity (years).
-    side:
-        "call" or "put".
+    option_type: OptionType
+        Option type (Call or Put).
     K:
         Strike.
     u:
@@ -351,36 +360,33 @@ def expected_binomial_payoff(
     $p = (e^{(r-q)\Delta t} - d) / (u - d)$.
     This function returns the expected terminal payoff (not discounted).
     """
-    side_l = str(side).lower()
-    if side_l not in ("call", "put"):
-        raise ValueError("side must be 'call' or 'put'")
+    if option_type not in (OptionType.CALL, OptionType.PUT):
+        raise ValidationError("option_type must be OptionType.CALL or OptionType.PUT")
 
     if n < 1:
-        raise ValueError("n must be >= 1")
+        raise ValidationError("n must be >= 1")
     if T <= 0:
-        raise ValueError("T must be positive")
+        raise ValidationError("T must be positive")
 
     S0 = float(S0)
     K = float(K)
     r = float(r)
     q = float(q)
 
-    if u is None:
-        raise ValueError("u must be provided")
     u = float(u)
     if u <= 0:
-        raise ValueError("u must be positive")
+        raise ValidationError("u must be positive")
     d = 1.0 / u
 
     def payoff_from_k(ks: np.ndarray) -> np.ndarray:
         ST = S0 * (u**ks) * (d ** (n - ks))
-        if side_l == "call":
+        if option_type is OptionType.CALL:
             return np.maximum(ST - K, 0.0)
         return np.maximum(K - ST, 0.0)
 
     delta_t = T / n
     p = (np.exp((r - q) * delta_t) - d) / (u - d)
     if not (0.0 <= p <= 1.0):
-        raise ValueError("risk-neutral probability p must be in [0, 1]")
+        raise ArbitrageViolationError("risk-neutral probability p must be in [0, 1]")
 
     return expected_binomial(n=n, p=p, f=payoff_from_k)

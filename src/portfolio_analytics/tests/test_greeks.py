@@ -1,10 +1,11 @@
-"""Comprehensive tests for greek calculations (delta, gamma, vega)."""
+"""Comprehensive tests for greek calculations (delta, gamma, vega, theta, rho)."""
 
 import datetime as dt
 
 import numpy as np
 import pytest
 
+from portfolio_analytics.exceptions import ConfigurationError, ValidationError
 from portfolio_analytics.enums import (
     ExerciseType,
     GreekCalculationMethod,
@@ -13,7 +14,8 @@ from portfolio_analytics.enums import (
     DayCountConvention,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.rates import DiscountCurve
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     PathSimulation,
@@ -48,7 +50,7 @@ class TestGreeksSetup:
         self.currency = "USD"
 
         # Discount curve
-        self.csr = ConstantShortRate("csr", self.rate)
+        self.csr = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
 
         # Market data + sim config for Monte Carlo
         self.market_data = MarketData(self.pricing_date, self.csr, currency=self.currency)
@@ -66,7 +68,7 @@ class TestGreeksSetup:
         *,
         spot: float | None = None,
         vol: float | None = None,
-        dividend_yield: float = 0.0,
+        dividend_curve: DiscountCurve | None = None,
         pricing_date: dt.datetime | None = None,
     ) -> UnderlyingPricingData:
         md = (
@@ -78,8 +80,18 @@ class TestGreeksSetup:
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
             market_data=md,
-            dividend_yield=dividend_yield,
+            dividend_curve=dividend_curve,
         )
+
+    def _make_q_curve(
+        self,
+        dividend_rate: float,
+        pricing_date: dt.datetime | None = None,
+    ) -> DiscountCurve | None:
+        if dividend_rate == 0.0:
+            return None
+        base_date = self.pricing_date if pricing_date is None else pricing_date
+        return flat_curve(base_date, self.maturity, dividend_rate, name="q")
 
     def _make_spec(
         self,
@@ -104,20 +116,21 @@ class TestGreeksSetup:
         underlying: PathSimulation | UnderlyingPricingData,
         spec: OptionSpec,
         method: PricingMethod,
+        params=None,
     ) -> OptionValuation:
-        return OptionValuation(name, underlying, spec, method)
+        return OptionValuation(name, underlying, spec, method, params=params)
 
     def _make_gbm(
         self,
         *,
         spot: float | None = None,
         vol: float | None = None,
-        dividend_yield: float = 0.0,
+        dividend_curve: DiscountCurve | None = None,
     ) -> GeometricBrownianMotion:
         params = GBMParams(
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
-            dividend_yield=dividend_yield,
+            dividend_curve=dividend_curve,
         )
         return GeometricBrownianMotion("gbm", self.market_data, params, self.sim_config)
 
@@ -168,6 +181,14 @@ class TestDeltaBasicProperties(TestGreeksSetup):
         ud = self._make_ud(spot=150.0)
         valuation = self._make_val("put_otm", ud, spec, PricingMethod.BSM)
         assert valuation.delta() > -0.05
+
+    def test_delta_custom_epsilon(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
+
+        delta = valuation.delta(epsilon=0.5)
+        assert 0 < delta < 1
 
 
 class TestGammaBasicProperties(TestGreeksSetup):
@@ -258,6 +279,138 @@ class TestVegaBasicProperties(TestGreeksSetup):
 
         assert vega_long > vega_short
 
+    def test_vega_custom_epsilon(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
+
+        vega = valuation.vega(epsilon=0.02)
+        assert vega > 0
+
+
+class TestThetaBasicProperties(TestGreeksSetup):
+    """Test basic properties of theta values."""
+
+    def test_call_theta_negative(self):
+        """ATM European call theta should be negative (time decay)."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call_atm", ud, spec, PricingMethod.BSM)
+        assert valuation.theta() < 0
+
+    def test_put_theta_negative(self):
+        """ATM European put theta should be negative (no dividends, moderate rate)."""
+        spec = self._make_spec(option_type=OptionType.PUT)
+        ud = self._make_ud()
+        valuation = self._make_val("put_atm", ud, spec, PricingMethod.BSM)
+        assert valuation.theta() < 0
+
+    def test_theta_magnitude_increases_near_expiry(self):
+        """ATM theta should become more negative (larger magnitude) closer to expiry."""
+        maturity_short = dt.datetime(2025, 2, 1)
+        spec_short = self._make_spec(option_type=OptionType.CALL, maturity=maturity_short)
+        ud_short = self._make_ud()
+        val_short = self._make_val("call_short", ud_short, spec_short, PricingMethod.BSM)
+        theta_short = val_short.theta()
+
+        spec_long = self._make_spec(option_type=OptionType.CALL, maturity=self.maturity)
+        ud_long = self._make_ud()
+        val_long = self._make_val("call_long", ud_long, spec_long, PricingMethod.BSM)
+        theta_long = val_long.theta()
+
+        # Shorter maturity → larger magnitude theta (more negative)
+        assert theta_short < theta_long < 0
+
+    def test_theta_atm_highest_magnitude(self):
+        """ATM options have the largest theta magnitude."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+
+        ud_atm = self._make_ud(spot=self.spot)
+        val_atm = self._make_val("call_atm", ud_atm, spec, PricingMethod.BSM)
+        theta_atm = val_atm.theta()
+
+        ud_otm = self._make_ud(spot=70.0)
+        val_otm = self._make_val("call_otm", ud_otm, spec, PricingMethod.BSM)
+        theta_otm = val_otm.theta()
+
+        # ATM theta more negative than OTM theta
+        assert theta_atm < theta_otm
+
+    def test_theta_with_dividends_call(self):
+        """Continuous dividend yield affects call theta."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+
+        val_no_div = self._make_val(
+            "call_no_div",
+            self._make_ud(dividend_curve=None),
+            spec,
+            PricingMethod.BSM,
+        )
+        theta_no_div = val_no_div.theta()
+
+        val_with_div = self._make_val(
+            "call_with_div",
+            self._make_ud(dividend_curve=self._make_q_curve(0.03)),
+            spec,
+            PricingMethod.BSM,
+        )
+        theta_with_div = val_with_div.theta()
+
+        # Both negative, values differ due to dividend
+        assert theta_no_div < 0
+        assert theta_with_div < 0
+        assert theta_no_div != pytest.approx(theta_with_div)
+
+    def test_theta_near_expiry_large_magnitude(self):
+        """Theta magnitude should be very large for near-expiry ATM options."""
+        maturity_near = self.pricing_date + dt.timedelta(days=2)
+        spec = self._make_spec(option_type=OptionType.CALL, maturity=maturity_near)
+        ud = self._make_ud()
+        valuation = self._make_val("call_near_expiry", ud, spec, PricingMethod.BSM)
+        theta = valuation.theta()
+        # Near-expiry ATM call has very large negative theta
+        assert theta < -0.05
+
+    def test_bsm_analytical_vs_numerical_theta(self):
+        """Analytical BSM theta should closely match numerical theta."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
+
+        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
+
+    def test_bsm_analytical_vs_numerical_theta_put(self):
+        """Analytical BSM put theta should closely match numerical theta."""
+        spec = self._make_spec(option_type=OptionType.PUT)
+        ud = self._make_ud()
+        valuation = self._make_val("put", ud, spec, PricingMethod.BSM)
+
+        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
+
+    def test_theta_consistency_bsm_binomial(self):
+        """BSM and binomial theta should approximately agree for European options."""
+        spec = self._make_spec(option_type=OptionType.CALL)
+
+        bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
+        theta_bsm = bsm_val.theta()
+
+        binomial_val = self._make_val(
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
+        )
+        theta_binomial = binomial_val.theta()
+
+        assert np.isclose(theta_bsm, theta_binomial, atol=0.005)
+
 
 class TestGreekCalculationMethods(TestGreeksSetup):
     """Test analytical vs numerical greek calculation methods."""
@@ -302,6 +455,16 @@ class TestGreekCalculationMethods(TestGreeksSetup):
 
         assert np.isclose(rho_analytical, rho_numerical, rtol=1e-3)
 
+    def test_bsm_analytical_vs_numerical_theta(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val("call", ud, spec, PricingMethod.BSM)
+
+        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
+
 
 class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
     """Test that greeks are consistent across different pricing methods."""
@@ -313,9 +476,13 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         delta_bsm = bsm_val.delta()
 
         binomial_val = self._make_val(
-            "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
         )
-        delta_binomial = binomial_val.delta(params=BinomialParams(num_steps=2500))
+        delta_binomial = binomial_val.delta()
 
         assert np.isclose(delta_bsm, delta_binomial, atol=0.01)
 
@@ -325,9 +492,15 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         bsm_val = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
         delta_bsm = bsm_val.delta()
 
-        gbm = self._make_gbm(dividend_yield=0.0)
-        mcs_val = self._make_val("call_mcs", gbm, spec, PricingMethod.MONTE_CARLO)
-        delta_mcs = mcs_val.delta(params=MonteCarloParams(random_seed=42))
+        gbm = self._make_gbm(dividend_curve=None)
+        mcs_val = self._make_val(
+            "call_mcs",
+            gbm,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
+        )
+        delta_mcs = mcs_val.delta()
 
         assert np.isclose(delta_bsm, delta_mcs, atol=0.03)
 
@@ -338,9 +511,13 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         gamma_bsm = bsm_val.gamma()
 
         binomial_val = self._make_val(
-            "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
         )
-        gamma_binomial = binomial_val.gamma(params=BinomialParams(num_steps=2500))
+        gamma_binomial = binomial_val.gamma()
 
         assert np.isclose(gamma_bsm, gamma_binomial, atol=0.005)
 
@@ -351,41 +528,57 @@ class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
         vega_bsm = bsm_val.vega()
 
         binomial_val = self._make_val(
-            "call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL
+            "call_binomial",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=2500),
         )
-        vega_binomial = binomial_val.vega(params=BinomialParams(num_steps=2500))
+        vega_binomial = binomial_val.vega()
 
         assert np.isclose(vega_bsm, vega_binomial, atol=0.1)
 
 
-class TestGreeksDividendYieldEffect(TestGreeksSetup):
-    """Test the effect of dividend yield on greeks."""
+class TestGreeksDividendCurveEffect(TestGreeksSetup):
+    """Test the effect of dividend curves on greeks."""
 
-    def test_call_delta_lower_with_dividend_yield(self):
+    def test_call_delta_lower_with_dividend_curve(self):
         spec = self._make_spec(option_type=OptionType.CALL)
 
         val_no_div = self._make_val(
-            "call_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM
+            "call_no_div",
+            self._make_ud(dividend_curve=None),
+            spec,
+            PricingMethod.BSM,
         )
         delta_no_div = val_no_div.delta()
 
         val_with_div = self._make_val(
-            "call_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM
+            "call_with_div",
+            self._make_ud(dividend_curve=self._make_q_curve(0.03)),
+            spec,
+            PricingMethod.BSM,
         )
         delta_with_div = val_with_div.delta()
 
         assert delta_with_div < delta_no_div
 
-    def test_put_delta_more_negative_with_dividend_yield(self):
+    def test_put_delta_more_negative_with_dividend_curve(self):
         spec = self._make_spec(option_type=OptionType.PUT)
 
         val_no_div = self._make_val(
-            "put_no_div", self._make_ud(dividend_yield=0.0), spec, PricingMethod.BSM
+            "put_no_div",
+            self._make_ud(dividend_curve=None),
+            spec,
+            PricingMethod.BSM,
         )
         delta_no_div = val_no_div.delta()
 
         val_with_div = self._make_val(
-            "put_with_div", self._make_ud(dividend_yield=0.03), spec, PricingMethod.BSM
+            "put_with_div",
+            self._make_ud(dividend_curve=self._make_q_curve(0.03)),
+            spec,
+            PricingMethod.BSM,
         )
         delta_with_div = val_with_div.delta()
 
@@ -400,8 +593,28 @@ class TestGreekErrorHandling(TestGreeksSetup):
 
         valuation = self._make_val("call_binomial", self._make_ud(), spec, PricingMethod.BINOMIAL)
 
-        with pytest.raises(ValueError, match="Analytical greeks are only available for BSM"):
+        with pytest.raises(ValidationError, match="Analytical greeks are only available for BSM"):
             valuation.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+
+    def test_tree_greek_with_non_binomial_raises_error(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        valuation = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
+
+        with pytest.raises(ValidationError, match="Tree greeks are only available for BINOMIAL"):
+            valuation.delta(greek_calc_method=GreekCalculationMethod.TREE)
+
+    def test_tree_greek_for_vega_raises_error(self):
+        spec = self._make_spec(option_type=OptionType.CALL)
+        valuation = self._make_val(
+            "call_binom",
+            self._make_ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=100),
+        )
+
+        with pytest.raises(ValidationError, match="Tree extraction is not available"):
+            valuation.vega(greek_calc_method=GreekCalculationMethod.TREE)
 
     def test_invalid_greek_calc_method_type_raises_error(self):
         spec = self._make_spec(option_type=OptionType.CALL)
@@ -409,7 +622,7 @@ class TestGreekErrorHandling(TestGreeksSetup):
         valuation = self._make_val("call_bsm", self._make_ud(), spec, PricingMethod.BSM)
 
         with pytest.raises(
-            TypeError, match="greek_calc_method must be GreekCalculationMethod enum"
+            ConfigurationError, match="greek_calc_method must be GreekCalculationMethod enum"
         ):
             valuation.delta(greek_calc_method="analytical")  # type: ignore[arg-type]
 
@@ -438,13 +651,19 @@ class TestGreekImmutability(TestGreeksSetup):
         """Verify gamma calculation doesn't mutate UnderlyingPricingData.initial_value."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
-        valuation = self._make_val("call_binomial", ud, spec, PricingMethod.BINOMIAL)
+        valuation = self._make_val(
+            "call_binomial",
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=100),
+        )
 
         original_spot = ud.initial_value
         original_vol = ud.volatility
 
         # Calculate gamma
-        gamma = valuation.gamma(params=BinomialParams(num_steps=100))
+        gamma = valuation.gamma()
 
         # Verify underlying state is unchanged
         assert ud.initial_value == original_spot, "Gamma calculation mutated initial_value"
@@ -488,21 +707,22 @@ class TestGreekImmutability(TestGreeksSetup):
             underlying=process,
             spec=spec,
             pricing_method=PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
         )
 
         original_spot = process.initial_value
         original_vol = process.volatility
 
         # Calculate delta
-        delta = valuation.delta(params=MonteCarloParams(random_seed=42))
+        delta = valuation.delta()
 
         # Verify PathSimulation state is unchanged
-        assert (
-            process.initial_value == original_spot
-        ), "Delta calculation mutated PathSimulation.initial_value"
-        assert (
-            process.volatility == original_vol
-        ), "Delta calculation mutated PathSimulation.volatility"
+        assert process.initial_value == original_spot, (
+            "Delta calculation mutated PathSimulation.initial_value"
+        )
+        assert process.volatility == original_vol, (
+            "Delta calculation mutated PathSimulation.volatility"
+        )
         assert delta is not None  # sanity check
 
     def test_multiple_concurrent_greeks_with_shared_underlying(self):

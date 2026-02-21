@@ -8,6 +8,7 @@ import numpy as np
 
 from ..valuation import OptionSpec, OptionValuation
 from ..enums import ExerciseType, OptionType, PositionSide
+from ..exceptions import ConfigurationError, ValidationError
 from ..valuation import ValuationParams
 
 if TYPE_CHECKING:
@@ -44,21 +45,23 @@ class CondorSpec:
     side: PositionSide = PositionSide.LONG
     contract_size: int | float = 100
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
         if not isinstance(self.side, PositionSide):
-            raise TypeError(f"side must be PositionSide enum, got {type(self.side).__name__}")
+            raise ConfigurationError(
+                f"side must be PositionSide enum, got {type(self.side).__name__}"
+            )
 
         k1, k2, k3, k4 = self.strikes
         if not (k1 < k2):
-            raise ValueError("Condor strikes must satisfy K1 < K2")
+            raise ValidationError("Condor strikes must satisfy K1 < K2")
         if not (k3 < k4):
-            raise ValueError("Condor strikes must satisfy K3 < K4")
+            raise ValidationError("Condor strikes must satisfy K3 < K4")
         if not (k2 < k3):
-            raise ValueError("Condor strikes must satisfy K2 < K3")
+            raise ValidationError("Condor strikes must satisfy K2 < K3")
 
     def terminal_payoff(self, spot: np.ndarray | float) -> np.ndarray:
         """Vectorized terminal payoff at maturity as a function of spot.
@@ -71,7 +74,7 @@ class CondorSpec:
         exercisable vanilla legs.
         """
         if self.exercise_type != ExerciseType.EUROPEAN:
-            raise ValueError("terminal_payoff(...) is only valid for EUROPEAN exercise")
+            raise ValidationError("terminal_payoff(...) is only valid for EUROPEAN exercise")
 
         s = np.asarray(spot, dtype=float)
         k1, k2, k3, k4 = self.strikes
@@ -108,7 +111,7 @@ class CondorSpec:
         pricing_method:
             PricingMethod used for each leg.
         params:
-            Forwarded to per-leg `present_value(...)` calls.
+            Params applied to each per-leg valuation.
         """
         total = 0.0
         for opt_type, strike, weight in self.leg_definitions():
@@ -125,8 +128,9 @@ class CondorSpec:
                 underlying=underlying,
                 spec=leg_spec,
                 pricing_method=pricing_method,
+                params=params,
             )
-            total += weight * leg_val.present_value(params=params)
+            total += weight * leg_val.present_value()
 
         return float(total)
 

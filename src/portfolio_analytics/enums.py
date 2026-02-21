@@ -2,6 +2,20 @@
 
 from enum import Enum
 
+__all__ = [
+    "OptionType",
+    "AsianAveraging",
+    "PositionSide",
+    "ExerciseType",
+    "PricingMethod",
+    "GreekCalculationMethod",
+    "ImpliedVolMethod",
+    "PDEMethod",
+    "PDESpaceGrid",
+    "PDEEarlyExercise",
+    "DayCountConvention",
+]
+
 
 class OptionType(Enum):
     CALL = "call"
@@ -32,6 +46,7 @@ class PricingMethod(Enum):
 
 class GreekCalculationMethod(Enum):
     ANALYTICAL = "analytical"
+    TREE = "tree"
     NUMERICAL = "numerical"
 
 
@@ -39,6 +54,23 @@ class ImpliedVolMethod(Enum):
     NEWTON_RAPHSON = "newton_raphson"
     BISECTION = "bisection"
     BRENTQ = "brentq"
+
+
+class PDEMethod(Enum):
+    IMPLICIT = "implicit"
+    EXPLICIT = "explicit"
+    EXPLICIT_HULL = "explicit_hull"
+    CRANK_NICOLSON = "crank_nicolson"
+
+
+class PDESpaceGrid(Enum):
+    SPOT = "spot"
+    LOG_SPOT = "log_spot"
+
+
+class PDEEarlyExercise(Enum):
+    INTRINSIC = "intrinsic"
+    GAUSS_SEIDEL = "gauss_seidel"
 
 
 class DayCountConvention(Enum):

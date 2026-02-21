@@ -5,7 +5,7 @@ import numpy as np
 
 from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import ConstantShortRate
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionSpec, UnderlyingPricingData, OptionValuation
 from portfolio_analytics.utils import (
     calculate_year_fraction,
@@ -15,20 +15,21 @@ from portfolio_analytics.utils import (
 )
 
 
-def test_forward_price_continuous_dividend_yield():
+def test_forward_price_continuous_dividend_curve():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     ttm = calculate_year_fraction(pricing_date, maturity)
     spot = 100.0
     r = 0.05
     q = 0.02
+    q_curve = flat_curve(pricing_date, maturity, q)
 
     fwd = forward_price(
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=r,
-        dividend_yield=q,
+        dividend_curve=q_curve,
     )
 
     expected = spot * np.exp((r - q) * ttm)
@@ -42,12 +43,14 @@ def test_forward_price_discrete_dividends():
     spot = 100.0
     r = 0.05
     dividends = [(dt.datetime(2025, 7, 1), 0.5)]
+    curve = flat_curve(pricing_date, maturity, r)
 
     fwd = forward_price(
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=r,
+        discount_curve=curve,
         discrete_dividends=dividends,
     )
 
@@ -95,7 +98,8 @@ def test_put_call_parity_bsm_no_dividend():
     strike = 100.0
     r = 0.05
 
-    market_data = MarketData(pricing_date, ConstantShortRate("r", r), currency="USD")
+    curve = flat_curve(pricing_date, maturity, r)
+    market_data = MarketData(pricing_date, curve, currency="USD")
 
     underlying_call = UnderlyingPricingData(
         initial_value=spot,
@@ -148,7 +152,7 @@ def test_put_call_parity_bsm_no_dividend():
     assert np.isclose(call_price - put_price, rhs, rtol=1e-10)
 
 
-def test_put_call_parity_bsm_with_dividend_yield():
+def test_put_call_parity_bsm_with_dividend_curve():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
     spot = 100.0
@@ -156,18 +160,20 @@ def test_put_call_parity_bsm_with_dividend_yield():
     r = 0.04
     q = 0.02
 
-    market_data = MarketData(pricing_date, ConstantShortRate("r", r), currency="USD")
+    curve = flat_curve(pricing_date, maturity, r)
+    q_curve = flat_curve(pricing_date, maturity, q)
+    market_data = MarketData(pricing_date, curve, currency="USD")
     underlying_call = UnderlyingPricingData(
         initial_value=spot,
         volatility=0.25,
         market_data=market_data,
-        dividend_yield=q,
+        dividend_curve=q_curve,
     )
     underlying_put = UnderlyingPricingData(
         initial_value=spot,
         volatility=0.25,
         market_data=market_data,
-        dividend_yield=q,
+        dividend_curve=q_curve,
     )
 
     call_spec = OptionSpec(
@@ -205,7 +211,7 @@ def test_put_call_parity_bsm_with_dividend_yield():
         pricing_date=pricing_date,
         maturity=maturity,
         short_rate=r,
-        dividend_yield=q,
+        dividend_curve=q_curve,
     )
 
     assert np.isclose(call_price - put_price, rhs, rtol=1e-10)

@@ -1,8 +1,10 @@
-from dataclasses import dataclass
-from collections.abc import Callable
+from dataclasses import dataclass, replace as dc_replace
+from collections.abc import Callable, Sequence
 import datetime as dt
+import logging
 import numpy as np
 from ..stochastic_processes import PathSimulation
+from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
     OptionType,
     AsianAveraging,
@@ -10,17 +12,47 @@ from ..enums import (
     PricingMethod,
     GreekCalculationMethod,
 )
-from .monte_carlo import _MCEuropeanValuation, _MCAmerianValuation, _MCAsianValuation
+from .monte_carlo import (
+    _MCEuropeanValuation,
+    _MCAmericanValuation,
+    _MCAsianValuation,
+    _MCAsianAmericanValuation,
+)
 from .binomial import (
     _BinomialEuropeanValuation,
     _BinomialAmericanValuation,
-    _BinomialMCAsianValuation,
+    _BinomialAsianValuation,
 )
 from .bsm import _BSMEuropeanValuation
+from .asian_analytical import _AnalyticalAsianValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
-from ..rates import ConstantShortRate
+from ..rates import DiscountCurve
+from ..utils import calculate_year_fraction
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
+
+logger = logging.getLogger(__name__)
+
+# ── Implementation registries ───────────────────────────────────────
+# Maps (PricingMethod, ExerciseType) → implementation class for vanilla specs.
+_VANILLA_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
+    (PricingMethod.MONTE_CARLO, ExerciseType.EUROPEAN): _MCEuropeanValuation,
+    (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCAmericanValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialEuropeanValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.AMERICAN): _BinomialAmericanValuation,
+    (PricingMethod.BSM, ExerciseType.EUROPEAN): _BSMEuropeanValuation,
+    (PricingMethod.PDE_FD, ExerciseType.EUROPEAN): _FDEuropeanValuation,
+    (PricingMethod.PDE_FD, ExerciseType.AMERICAN): _FDAmericanValuation,
+}
+
+# Maps (PricingMethod, ExerciseType) → implementation class for Asian option specs.
+_ASIAN_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
+    (PricingMethod.MONTE_CARLO, ExerciseType.EUROPEAN): _MCAsianValuation,
+    (PricingMethod.MONTE_CARLO, ExerciseType.AMERICAN): _MCAsianAmericanValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.EUROPEAN): _BinomialAsianValuation,
+    (PricingMethod.BINOMIAL, ExerciseType.AMERICAN): _BinomialAsianValuation,
+    (PricingMethod.BSM, ExerciseType.EUROPEAN): _AnalyticalAsianValuation,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,29 +66,31 @@ class OptionSpec:
     currency: str
     contract_size: int | float = 100
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate option_type/exercise_type and coerce strike."""
         if not isinstance(self.option_type, OptionType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
-            raise ValueError("OptionSpec.option_type must be OptionType.CALL or OptionType.PUT")
+            raise ValidationError(
+                "OptionSpec.option_type must be OptionType.CALL or OptionType.PUT"
+            )
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
 
         if self.strike is None:
-            raise ValueError("OptionSpec.strike must be provided")
+            raise ValidationError("OptionSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise TypeError("OptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("OptionSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValueError("OptionSpec.strike must be finite")
+            raise ValidationError("OptionSpec.strike must be finite")
         if strike < 0.0:
-            raise ValueError("OptionSpec.strike must be >= 0")
+            raise ValidationError("OptionSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
 
@@ -84,13 +118,13 @@ class PayoffSpec:
     # Kept for compatibility with vanilla valuation interfaces
     strike: None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
         if not callable(self.payoff_fn):
-            raise TypeError("payoff_fn must be callable")
+            raise ConfigurationError("payoff_fn must be callable")
 
     def payoff(self, spot: np.ndarray | float) -> np.ndarray:
         """Vectorized payoff as a function of spot."""
@@ -119,6 +153,12 @@ class AsianOptionSpec:
         Currency denomination
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
+    num_steps : int, optional
+        Number of equally spaced time steps within the averaging window.
+        Required for analytical (BSM) pricing.  For Monte Carlo and Binomial the
+        step count is determined by the simulation/tree time grid.
+    exercise_type : ExerciseType
+        Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
         Contract multiplier (default 100)
 
@@ -128,7 +168,7 @@ class AsianOptionSpec:
     - Geometric average: S_avg = (Π S_i)^(1/N)
     - Payoff for call: max(S_avg - K, 0)
     - Payoff for put: max(K - S_avg, 0)
-    - Only European exercise is supported
+    - European and American exercise are supported depending on pricing method
     """
 
     averaging: AsianAveraging
@@ -137,96 +177,101 @@ class AsianOptionSpec:
     maturity: dt.datetime
     currency: str
     averaging_start: dt.datetime | None = None
+    num_steps: int | None = None
     contract_size: int | float = 100
-
-    # Kept for compatibility
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate Asian option specification."""
         if not isinstance(self.averaging, AsianAveraging):
-            raise TypeError(
+            raise ConfigurationError(
                 f"averaging must be AsianAveraging enum, got {type(self.averaging).__name__}"
             )
         if not isinstance(self.exercise_type, ExerciseType):
-            raise TypeError(
+            raise ConfigurationError(
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
-        if self.exercise_type != ExerciseType.EUROPEAN:
-            raise ValueError("AsianOptionSpec only supports European exercise")
 
         if not isinstance(self.call_put, OptionType):
-            raise TypeError(f"call_put must be OptionType enum, got {type(self.call_put).__name__}")
+            raise ConfigurationError(
+                f"call_put must be OptionType enum, got {type(self.call_put).__name__}"
+            )
         if self.call_put not in (OptionType.CALL, OptionType.PUT):
-            raise ValueError("AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT")
+            raise ValidationError(
+                "AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT"
+            )
 
         if self.strike is None:
-            raise ValueError("AsianOptionSpec.strike must be provided")
+            raise ValidationError("AsianOptionSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise TypeError("AsianOptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("AsianOptionSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValueError("AsianOptionSpec.strike must be finite")
+            raise ValidationError("AsianOptionSpec.strike must be finite")
         if strike < 0.0:
-            raise ValueError("AsianOptionSpec.strike must be >= 0")
+            raise ValidationError("AsianOptionSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
+        if self.num_steps is not None:
+            if not isinstance(self.num_steps, int) or self.num_steps < 1:
+                raise ValidationError("num_steps must be a positive integer")
 
+
+@dataclass(frozen=True, slots=True)
 class UnderlyingPricingData:
     """Minimal data container for option valuation underlying asset.
 
     Used when pricing with methods that don't require full stochastic process simulation
     (e.g., BSM, binomial trees, FD approximation to PDE).
     Contains only essential parameters: spot price, volatility, pricing date, discount curve,
-    continuous dividend yield (optional, default 0.0),
+    continuous dividend yield via dividend_curve,
     and optional discrete dividends as (ex_date, amount) pairs.
     """
 
-    def __init__(
-        self,
-        initial_value: float,
-        volatility: float,
-        market_data: MarketData,
-        dividend_yield: float = 0.0,
-        discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
-    ):
-        self.initial_value = initial_value
-        self.volatility = volatility
-        self.market_data = market_data
-        self.dividend_yield = dividend_yield
-        if discrete_dividends is None:
-            self.discrete_dividends = []
-        else:
+    initial_value: float
+    volatility: float
+    market_data: MarketData
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None
+    dividend_curve: DiscountCurve | None = None
+
+    def __post_init__(self) -> None:
+        if self.discrete_dividends is not None:
             cleaned: list[tuple[dt.datetime, float]] = []
-            for ex_date, amount in discrete_dividends:
+            for ex_date, amount in self.discrete_dividends:
                 if not isinstance(ex_date, dt.datetime):
-                    raise TypeError("discrete_dividends entries must be (datetime, amount) tuples")
+                    raise ConfigurationError(
+                        "discrete_dividends entries must be (datetime, amount) tuples"
+                    )
                 try:
                     amt = float(amount)
                 except (TypeError, ValueError) as exc:
-                    raise TypeError("dividend amount must be numeric") from exc
+                    raise ConfigurationError("dividend amount must be numeric") from exc
                 cleaned.append((ex_date, amt))
-            self.discrete_dividends = sorted(cleaned, key=lambda x: x[0])
-
-        if self.dividend_yield != 0.0 and self.discrete_dividends:
-            raise ValueError(
-                "Provide either a continuous dividend_yield or discrete_dividends, not both."
+            object.__setattr__(
+                self,
+                "discrete_dividends",
+                tuple(sorted(cleaned, key=lambda x: x[0])),
             )
+        else:
+            object.__setattr__(self, "discrete_dividends", ())
+
+        if self.dividend_curve is not None and self.discrete_dividends:
+            raise ValidationError("Provide either dividend_curve or discrete_dividends, not both.")
 
     @property
     def pricing_date(self) -> dt.datetime:
         return self.market_data.pricing_date
 
     @property
-    def discount_curve(self) -> ConstantShortRate:
+    def discount_curve(self) -> DiscountCurve:
         return self.market_data.discount_curve
 
     @property
     def currency(self) -> str:
         return self.market_data.currency
 
-    def replace(self, **kwargs) -> "UnderlyingPricingData":
+    def replace(self, **kwargs: object) -> "UnderlyingPricingData":
         """Create a new UnderlyingPricingData instance with modified fields.
 
         This is used for bump-and-revalue calculations (e.g., Greeks) without
@@ -235,23 +280,15 @@ class UnderlyingPricingData:
         Parameters
         ----------
         **kwargs
-            Fields to override (initial_value, volatility, dividend_yield, market_data)
+            Fields to override (initial_value, volatility, dividend_curve,
+            discrete_dividends, market_data)
 
         Returns
         -------
         UnderlyingPricingData
             New instance with specified fields replaced
         """
-        if set(kwargs).difference(self.__dict__.keys()):
-            raise ValueError(f"replace() only supports overriding {list(self.__dict__.keys())}")
-
-        return UnderlyingPricingData(
-            initial_value=kwargs.get("initial_value", self.initial_value),
-            volatility=kwargs.get("volatility", self.volatility),
-            market_data=kwargs.get("market_data", self.market_data),
-            dividend_yield=kwargs.get("dividend_yield", self.dividend_yield),
-            discrete_dividends=kwargs.get("discrete_dividends", self.discrete_dividends),
-        )
+        return dc_replace(self, **kwargs)
 
 
 class OptionValuation:
@@ -308,7 +345,7 @@ class OptionValuation:
         spec: OptionSpec | PayoffSpec | AsianOptionSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
-    ):
+    ) -> None:
         self.name = name
         self.underlying = underlying
         self.spec = spec
@@ -329,13 +366,19 @@ class OptionValuation:
             self.option_type = None
 
         if self.currency != underlying.currency:
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "Cross-currency valuation is not supported. "
                 "Option currency must match the underlying market currency."
             )
         self.exercise_type = spec.exercise_type
-        self.pricing_method = pricing_method
         self.contract_size = spec.contract_size
+
+        # Validate pricing_method early — comparisons below rely on enum identity
+        if not isinstance(pricing_method, PricingMethod):
+            raise ConfigurationError(
+                f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
+            )
+        self.pricing_method = pricing_method
 
         self.params: ValuationParams | None = self._validate_and_default_params(
             pricing_method=pricing_method, params=params
@@ -346,30 +389,27 @@ class OptionValuation:
             OptionType.CALL,
             OptionType.PUT,
         ):
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "BSM pricing is only available for vanilla CALL/PUT option types."
             )
 
         # Optional sanity check: maturity must be after pricing date
         if self.maturity <= self.pricing_date:
-            raise ValueError("Option maturity must be after pricing_date.")
+            raise ValidationError("Option maturity must be after pricing_date.")
 
-        # Only add special dates for PathSimulation (Monte Carlo)
+        # Merge pricing_date + maturity into the simulation's special_dates
+        # via replace() so the caller's PathSimulation is never mutated.
         if isinstance(underlying, PathSimulation):
-            for d in (self.pricing_date, self.maturity):
-                underlying.special_dates.add(d)
-
-        # Validate pricing_method
-        if not isinstance(pricing_method, PricingMethod):
-            raise TypeError(
-                f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
-            )
+            merged = underlying.special_dates | {self.pricing_date, self.maturity}
+            if merged != underlying.special_dates:
+                underlying = underlying.replace(special_dates=merged)
+            self.underlying = underlying
 
         # Validate that MC requires PathSimulation
         if pricing_method == PricingMethod.MONTE_CARLO and not isinstance(
             underlying, PathSimulation
         ):
-            raise TypeError(
+            raise ConfigurationError(
                 "Monte Carlo pricing requires underlying to be a PathSimulation instance"
             )
 
@@ -380,54 +420,32 @@ class OptionValuation:
             PricingMethod.BSM,
             PricingMethod.PDE_FD,
         ) and isinstance(underlying, PathSimulation):
-            raise TypeError(
+            raise ConfigurationError(
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
                 "Pass an UnderlyingPricingData instance instead of PathSimulation."
             )
 
         # Dispatch to appropriate pricing method implementation
         if isinstance(spec, AsianOptionSpec):
-            if pricing_method == PricingMethod.MONTE_CARLO:
-                self._impl = _MCAsianValuation(self)
-            elif pricing_method == PricingMethod.BINOMIAL:
-                self._impl = _BinomialMCAsianValuation(self)
-            else:
-                raise ValueError(
-                    "Asian options are path-dependent and require MONTE_CARLO or BINOMIAL (MC sampling)"
+            impl_cls = _ASIAN_REGISTRY.get((pricing_method, spec.exercise_type))
+            if impl_cls is None:
+                raise ValidationError(
+                    f"Asian options with {spec.exercise_type.name} exercise "
+                    f"do not support {pricing_method.name} pricing."
                 )
-        elif pricing_method == PricingMethod.MONTE_CARLO:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _MCEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _MCAmerianValuation(self)
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.BINOMIAL:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _BinomialEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _BinomialAmericanValuation(self)
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.BSM:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _BSMEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                raise NotImplementedError(
-                    "BSM is only applicable to European option valuation. "
-                    "Select a different pricing method for American options such as Binomial or Monte Carlo."
-                )
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
-        elif pricing_method == PricingMethod.PDE_FD:
-            if spec.exercise_type == ExerciseType.EUROPEAN:
-                self._impl = _FDEuropeanValuation(self)
-            elif spec.exercise_type == ExerciseType.AMERICAN:
-                self._impl = _FDAmericanValuation(self)
-            else:
-                raise ValueError(f"Unknown exercise type: {spec.exercise_type}")
         else:
-            raise ValueError(f"Unknown pricing method: {pricing_method}")
+            impl_cls = _VANILLA_REGISTRY.get((pricing_method, spec.exercise_type))
+            if impl_cls is None:
+                if pricing_method is PricingMethod.BSM:
+                    raise UnsupportedFeatureError(
+                        "BSM is only applicable to European option valuation. "
+                        "Select a different pricing method for American options such as Binomial, "
+                        "PDE_FD or MONTE_CARLO."
+                    )
+                raise ValidationError(
+                    f"{pricing_method.name} does not support {spec.exercise_type.name} exercise."
+                )
+        self._impl = impl_cls(self)
 
     @staticmethod
     def _validate_and_default_params(
@@ -446,31 +464,35 @@ class OptionValuation:
 
         if pricing_method == PricingMethod.MONTE_CARLO:
             if not isinstance(params, MonteCarloParams):
-                raise TypeError("pricing_method=MONTE_CARLO requires params=MonteCarloParams")
+                raise ConfigurationError(
+                    "pricing_method=MONTE_CARLO requires params=MonteCarloParams"
+                )
             return params
 
         if pricing_method == PricingMethod.BINOMIAL:
             if not isinstance(params, BinomialParams):
-                raise TypeError("pricing_method=BINOMIAL requires params=BinomialParams")
+                raise ConfigurationError("pricing_method=BINOMIAL requires params=BinomialParams")
             return params
 
         if pricing_method == PricingMethod.PDE_FD:
             if not isinstance(params, PDEParams):
-                raise TypeError("pricing_method=PDE_FD requires params=PDEParams")
+                raise ConfigurationError("pricing_method=PDE_FD requires params=PDEParams")
             return params
 
         if params is not None:
-            raise TypeError(
+            raise ConfigurationError(
                 f"pricing_method={pricing_method.name} does not accept valuation params"
             )
         return None
 
-    def _effective_params(self, params: ValuationParams | None) -> ValuationParams | None:
+    def _effective_params(self) -> ValuationParams | None:
         return self._validate_and_default_params(
-            pricing_method=self.pricing_method, params=params if params is not None else self.params
+            pricing_method=self.pricing_method, params=self.params
         )
 
-    def solve(self, params: ValuationParams | None = None):
+    def solve(
+        self,
+    ) -> float | np.ndarray | tuple[np.ndarray, np.ndarray] | tuple[float, np.ndarray, np.ndarray]:
         """Run the pricing method's core solver and return its raw output.
 
         This is intentionally method-specific:
@@ -481,13 +503,168 @@ class OptionValuation:
 
         Use present_value_pathwise() for discounted pathwise outputs where supported.
         """
-        return self._impl.solve(self._effective_params(params))
+        self._effective_params()
+        return self._impl.solve()
 
-    def present_value(self, params: ValuationParams | None = None) -> float:
+    def present_value(self) -> float:
         """Calculate present value of the derivative."""
-        return float(self._impl.present_value(self._effective_params(params)))
+        effective_params = self._effective_params()
+        base_pv = float(self._impl.present_value())
+        if effective_params is None or not getattr(
+            effective_params, "control_variate_european", False
+        ):
+            return base_pv
 
-    def present_value_pathwise(self, params: ValuationParams | None = None) -> np.ndarray:
+        return float(self._apply_control_variate(base_pv))
+
+    def _apply_control_variate(self, base_pv: float) -> float:
+        if self.exercise_type is not ExerciseType.AMERICAN:
+            raise ValidationError("control_variate_european is only valid for American options.")
+
+        if isinstance(self.spec, AsianOptionSpec):
+            return self._apply_asian_control_variate(base_pv)
+
+        if self.pricing_method not in (
+            PricingMethod.BINOMIAL,
+            PricingMethod.PDE_FD,
+            PricingMethod.MONTE_CARLO,
+        ):
+            raise UnsupportedFeatureError(
+                "control_variate_european is only supported for BINOMIAL, PDE_FD, "
+                "and MONTE_CARLO pricing."
+            )
+        if not isinstance(self.spec, OptionSpec):
+            raise UnsupportedFeatureError(
+                "Vanilla control_variate_european requires spec to be of type OptionSpec. "
+                "PayoffSpec is not supported."
+            )
+        if self.option_type not in (OptionType.CALL, OptionType.PUT):
+            raise UnsupportedFeatureError(
+                "Vanilla control_variate_european requires a CALL or PUT option type."
+            )
+
+        euro_spec = dc_replace(self.spec, exercise_type=ExerciseType.EUROPEAN)
+
+        params = self._effective_params()
+        cv_params = (
+            dc_replace(params, control_variate_european=False)
+            if hasattr(params, "control_variate_european")
+            else params
+        )
+        euro_num = OptionValuation(
+            name=f"{self.name}_cv_euro_num",
+            underlying=self.underlying,
+            spec=euro_spec,
+            pricing_method=self.pricing_method,
+            params=cv_params,
+        ).present_value()
+
+        # BSM needs UnderlyingPricingData; extract from PathSimulation if needed
+        if isinstance(self.underlying, PathSimulation):
+            bsm_underlying = UnderlyingPricingData(
+                initial_value=self.underlying.initial_value,
+                volatility=self.underlying.volatility,
+                market_data=self.underlying.market_data,
+                dividend_curve=self.underlying.dividend_curve,
+                discrete_dividends=self.underlying.discrete_dividends or None,
+            )
+        else:
+            bsm_underlying = self.underlying
+
+        euro_bsm = OptionValuation(
+            name=f"{self.name}_cv_euro_bsm",
+            underlying=bsm_underlying,
+            spec=euro_spec,
+            pricing_method=PricingMethod.BSM,
+        ).present_value()
+
+        return base_pv + (euro_bsm - euro_num)
+
+    def _apply_asian_control_variate(self, base_pv: float) -> float:
+        """Apply control variate adjustment for American Asian options.
+
+        Uses the European Asian analytical price (Kemna-Vorst for geometric,
+        Turnbull-Wakeman for arithmetic) to correct numerical discretisation
+        error:
+
+            V_cv = V_american_numerical + (V_european_analytical − V_european_numerical)
+
+        The numerical error for European and American exercises is highly
+        correlated (same lattice/paths, same discretisation), so the correction
+        largely cancels the systematic bias.
+        """
+        if self.pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.MONTE_CARLO):
+            raise UnsupportedFeatureError(
+                "Asian control_variate_european is only supported for "
+                "BINOMIAL and MONTE_CARLO pricing."
+            )
+        spec = self.spec
+        if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
+            raise UnsupportedFeatureError(
+                "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
+            )
+
+        params = self._effective_params()
+
+        # Method-specific validation
+        if self.pricing_method is PricingMethod.BINOMIAL:
+            if not isinstance(params, BinomialParams):
+                raise ConfigurationError("Expected BinomialParams for binomial pricing.")
+            if params.asian_tree_averages is None:
+                raise UnsupportedFeatureError(
+                    "Asian control_variate_european requires Hull tree averages "
+                    "(set asian_tree_averages on BinomialParams)."
+                )
+
+        cv_params = dc_replace(params, control_variate_european=False)
+
+        # European Asian — numerical (same method, same parameters)
+        euro_spec = dc_replace(spec, exercise_type=ExerciseType.EUROPEAN)
+        euro_num = OptionValuation(
+            name=f"{self.name}_cv_euro_num",
+            underlying=self.underlying,
+            spec=euro_spec,
+            pricing_method=self.pricing_method,
+            params=cv_params,
+        ).present_value()
+
+        # European Asian — analytical (Kemna-Vorst / Turnbull-Wakeman)
+        # BSM needs UnderlyingPricingData; extract from PathSimulation if needed
+        if isinstance(self.underlying, PathSimulation):
+            bsm_underlying = UnderlyingPricingData(
+                initial_value=self.underlying.initial_value,
+                volatility=self.underlying.volatility,
+                market_data=self.underlying.market_data,
+                dividend_curve=self.underlying.dividend_curve,
+                discrete_dividends=self.underlying.discrete_dividends or None,
+            )
+            # For BSM analytical, num_steps = number of steps (observations - 1)
+            # time_grid includes t₀, so len(time_grid) = M observations = N + 1
+            n_steps = len(self.underlying.time_grid) - 1
+            bsm_spec = dc_replace(euro_spec, num_steps=n_steps)
+        else:
+            bsm_underlying = self.underlying
+            # num_steps must match the tree so the contract definitions align
+            bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)
+
+        euro_analytical = OptionValuation(
+            name=f"{self.name}_cv_euro_analytical",
+            underlying=bsm_underlying,
+            spec=bsm_spec,
+            pricing_method=PricingMethod.BSM,
+        ).present_value()
+
+        logger.debug(
+            "Asian CV: american=%.6f euro_num=%.6f euro_analytical=%.6f adj=%.6f",
+            base_pv,
+            euro_num,
+            euro_analytical,
+            euro_analytical - euro_num,
+        )
+
+        return base_pv + (euro_analytical - euro_num)
+
+    def present_value_pathwise(self) -> np.ndarray:
         """Return discounted pathwise present values.
 
         Implemented for Monte Carlo pricing methods. For other pricing methods, this
@@ -495,16 +672,82 @@ class OptionValuation:
         """
         pv_pathwise = getattr(self._impl, "present_value_pathwise", None)
         if pv_pathwise is None:
-            raise NotImplementedError(
+            raise UnsupportedFeatureError(
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
-        return pv_pathwise(self._effective_params(params))
+        self._effective_params()
+        return pv_pathwise()
+
+    def _resolve_greek_method(
+        self,
+        greek_calc_method: GreekCalculationMethod | None,
+        *,
+        tree_capable: bool = False,
+    ) -> GreekCalculationMethod:
+        """Resolve the effective greek calculation method, validating compatibility.
+
+        Parameters
+        ----------
+        tree_capable : bool
+            Whether tree extraction is available for this greek (delta, gamma,
+            theta — not vega or rho).
+
+        Returns
+        -------
+        GreekCalculationMethod
+            The resolved method: ANALYTICAL, TREE, or NUMERICAL.
+        """
+        if greek_calc_method is not None and not isinstance(
+            greek_calc_method, GreekCalculationMethod
+        ):
+            raise ConfigurationError(
+                f"greek_calc_method must be GreekCalculationMethod enum, "
+                f"got {type(greek_calc_method).__name__}"
+            )
+
+        # --- resolve default (None) ---
+        if greek_calc_method is None:
+            if self.pricing_method == PricingMethod.BSM:
+                return GreekCalculationMethod.ANALYTICAL
+            if tree_capable and self.pricing_method == PricingMethod.BINOMIAL:
+                return GreekCalculationMethod.TREE
+            return GreekCalculationMethod.NUMERICAL
+
+        # --- validate explicit choice ---
+        if (
+            greek_calc_method == GreekCalculationMethod.ANALYTICAL
+            and self.pricing_method != PricingMethod.BSM
+        ):
+            raise ValidationError(
+                "Analytical greeks are only available for BSM pricing method. "
+                "Use GreekCalculationMethod.NUMERICAL (or .TREE for binomial delta/gamma/theta)."
+            )
+
+        if greek_calc_method == GreekCalculationMethod.TREE:
+            if self.pricing_method != PricingMethod.BINOMIAL:
+                raise ValidationError("Tree greeks are only available for BINOMIAL pricing method.")
+            if not tree_capable:
+                raise ValidationError(
+                    "Tree extraction is not available for this greek. "
+                    "Only delta, gamma, and theta support GreekCalculationMethod.TREE."
+                )
+
+        return greek_calc_method
+
+    def _build_valuation(self, *, name_suffix: str, underlying) -> "OptionValuation":
+        """Create a sibling valuation with a modified underlying for bump-and-revalue."""
+        return OptionValuation(
+            name=f"{self.name}_{name_suffix}",
+            underlying=underlying,
+            spec=self.spec,
+            pricing_method=self.pricing_method,
+            params=self.params,
+        )
 
     def delta(
         self,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option delta.
 
@@ -512,48 +755,31 @@ class OptionValuation:
         - Uses analytical closed-form formula by default
         - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
 
+        For BINOMIAL pricing method:
+        - Extracts delta directly from the CRR lattice by default (Hull Ch. 13)
+        - Uses numerical bump-and-revalue if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
         For other pricing methods:
-        - Only support numerical central difference approximation (greek_calc_method analytical
-            raises ValueError)
+        - Only support numerical central difference approximation
 
         Parameters
         ==========
         epsilon: float, optional
             Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
         greek_calc_method: GreekCalculationMethod, optional
-            Method for calculating delta. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
-            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
-            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+            Method for calculating delta.
+            - None (default): ANALYTICAL for BSM, TREE for BINOMIAL, NUMERICAL for others
+            - GreekCalculationMethod.ANALYTICAL: Closed-form formula (BSM only)
+            - GreekCalculationMethod.TREE: CRR lattice extraction (BINOMIAL only)
+            - GreekCalculationMethod.NUMERICAL: Central difference approximation
         Returns
         =======
         float
             option delta
         """
-        # Determine which method to use
-        if greek_calc_method is None:
-            # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            # Validate that analytical is only used with BSM
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError(
-                    "Analytical greeks are only available for BSM pricing method. "
-                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-                )
+        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
 
-        # Use analytical formula for BSM if specified
-        if use_analytical:
+        if method != GreekCalculationMethod.NUMERICAL:
             return self._impl.delta()
 
         # Otherwise use numerical approximation via bump-and-revalue
@@ -567,39 +793,21 @@ class OptionValuation:
         underlying_up = self.underlying.replace(
             initial_value=self.underlying.initial_value + epsilon
         )
-        # Create temporary valuation objects with bumped underlyings
-        val_down = OptionValuation(
-            name=f"{self.name}_delta_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_up = OptionValuation(
-            name=f"{self.name}_delta_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_down = self._build_valuation(name_suffix="delta_down", underlying=underlying_down)
+        val_up = self._build_valuation(name_suffix="delta_up", underlying=underlying_up)
 
         # Calculate central difference
-        value_left = val_down.present_value(params=params)
-        value_right = val_up.present_value(params=params)
+        value_left = val_down.present_value()
+        value_right = val_up.present_value()
 
         delta = (value_right - value_left) / (2 * epsilon)
-        # correct for potential numerical errors
-        if delta < -1.0:
-            return -1.0
-        if delta > 1.0:
-            return 1.0
+
         return delta
 
     def gamma(
         self,
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option gamma.
 
@@ -607,47 +815,31 @@ class OptionValuation:
         - Uses analytical closed-form formula by default
         - Uses numerical central difference approximation if greek_calc_method=GreekCalculationMethod.NUMERICAL
 
+        For BINOMIAL pricing method:
+        - Extracts gamma directly from the CRR lattice by default (Hull Ch. 13)
+        - Uses numerical bump-and-revalue if greek_calc_method=GreekCalculationMethod.NUMERICAL
+
         For other pricing methods:
-        - Always uses numerical central difference approximation (greek_calc_method ignored)
+        - Always uses numerical central difference approximation
 
         Parameters
         ==========
         epsilon: float, optional
             Step size for numerical approximation (only used when greek_calc_method=NUMERICAL)
         greek_calc_method: GreekCalculationMethod, optional
-            Method for calculating gamma. Defaults to ANALYTICAL for BSM, NUMERICAL for others.
-            - GreekCalculationMethod.ANALYTICAL: Use closed-form formula (BSM only)
-            - GreekCalculationMethod.NUMERICAL: Use central difference approximation
+            Method for calculating gamma.
+            - None (default): ANALYTICAL for BSM, TREE for BINOMIAL, NUMERICAL for others
+            - GreekCalculationMethod.ANALYTICAL: Closed-form formula (BSM only)
+            - GreekCalculationMethod.TREE: CRR lattice extraction (BINOMIAL only)
+            - GreekCalculationMethod.NUMERICAL: Central difference approximation
         Returns
         =======
         float
             option gamma
         """
-        # Determine which method to use
-        if greek_calc_method is None:
-            # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            # Validate that analytical is only used with BSM
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError(
-                    "Analytical greeks are only available for BSM pricing method. "
-                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-                )
+        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
 
-        # Use analytical formula for BSM if specified
-        if use_analytical:
+        if method != GreekCalculationMethod.NUMERICAL:
             return self._impl.gamma()
 
         # Otherwise use numerical approximation via bump-and-revalue
@@ -662,26 +854,13 @@ class OptionValuation:
             initial_value=self.underlying.initial_value + epsilon
         )
 
-        # Create temporary valuation objects with bumped underlyings
-        val_down = OptionValuation(
-            name=f"{self.name}_gamma_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_up = OptionValuation(
-            name=f"{self.name}_gamma_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_down = self._build_valuation(name_suffix="gamma_down", underlying=underlying_down)
+        val_up = self._build_valuation(name_suffix="gamma_up", underlying=underlying_up)
 
         # Calculate central difference (center uses self.present_value)
-        value_left = val_down.present_value(params=params)
-        value_right = val_up.present_value(params=params)
-        value_center = self.present_value(params=params)
+        value_left = val_down.present_value()
+        value_right = val_up.present_value()
+        value_center = self.present_value()
 
         gamma = (value_right - 2 * value_center + value_left) / (epsilon**2)
         return gamma
@@ -690,7 +869,6 @@ class OptionValuation:
         self,
         epsilon: float = 0.01,
         greek_calc_method: GreekCalculationMethod | None = None,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate option vega.
 
@@ -713,32 +891,15 @@ class OptionValuation:
         =======
         float
             option vega
-        """
-        # Determine which method to use
-        if greek_calc_method is None:
-            # Default to analytical for BSM, numerical for others
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            # Validate that analytical is only used with BSM
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError(
-                    "Analytical greeks are only available for BSM pricing method. "
-                    "Use greek_calc_method=GreekCalculationMethod.NUMERICAL for other pricing methods."
-                )
 
-        # Use analytical formula for BSM if specified
-        if use_analytical:
+        Notes
+        =====
+        Vega is returned per 1% point change in volatility. The implied-vol solver
+        scales this back to per-1.0 volatility when computing Newton steps.
+        """
+        method = self._resolve_greek_method(greek_calc_method)
+
+        if method == GreekCalculationMethod.ANALYTICAL:
             return self._impl.vega()
 
         # Otherwise use numerical approximation via bump-and-revalue
@@ -746,25 +907,12 @@ class OptionValuation:
         underlying_down = self.underlying.replace(volatility=self.underlying.volatility - epsilon)
         underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
 
-        # Create temporary valuation objects with bumped underlyings
-        val_down = OptionValuation(
-            name=f"{self.name}_vega_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_up = OptionValuation(
-            name=f"{self.name}_vega_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_down = self._build_valuation(name_suffix="vega_down", underlying=underlying_down)
+        val_up = self._build_valuation(name_suffix="vega_up", underlying=underlying_up)
 
         # Calculate central difference
-        value_left = val_down.present_value(params=params)
-        value_right = val_up.present_value(params=params)
+        value_left = val_down.present_value()
+        value_right = val_up.present_value()
 
         vega = (value_right - value_left) / (2 * epsilon) / 100  # per 1% point change in vol
         return vega
@@ -773,21 +921,22 @@ class OptionValuation:
         self,
         greek_calc_method: GreekCalculationMethod | None = None,
         time_bump_days: float = 1.0,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate theta (time decay) of the option.
 
         Theta measures the rate of change of option value with respect to time.
-        For the BSM method, closed-form analytical formulas are available (default).
+        For BSM, closed-form analytical formulas are used by default.
+        For BINOMIAL, tree theta is extracted from the CRR lattice by default (Hull Ch. 13).
         For other methods, a numerical finite-difference approach is used.
 
         Parameters
         ==========
         greek_calc_method : GreekCalculationMethod | None, optional
-            Method to use for greek calculation (analytical or numerical)
-            - None (default): Uses analytical for BSM, numerical for others
-            - GreekCalculationMethod.ANALYTICAL: Uses closed-form formulas (BSM only)
-            - GreekCalculationMethod.NUMERICAL: Uses bump-and-revalue finite-difference
+            Method to use for greek calculation.
+            - None (default): ANALYTICAL for BSM, TREE for BINOMIAL, NUMERICAL for others
+            - GreekCalculationMethod.ANALYTICAL: Closed-form formula (BSM only)
+            - GreekCalculationMethod.TREE: CRR lattice extraction (BINOMIAL only)
+            - GreekCalculationMethod.NUMERICAL: Bump-and-revalue finite-difference
         time_bump_days : float, optional
             Time bump size in days for numerical calculation (default: 1.0)
             This is the number of days to advance the pricing date
@@ -797,30 +946,20 @@ class OptionValuation:
         float
             option theta (change in option value per day)
 
+        Notes
+        =====
+        Numerical theta bumps the pricing date forward by calendar days. This is
+        consistent with the BSM analytical theta using a 365-day scaling, but it
+        can differ from trading-day conventions.
+
         Raises
         ======
         ValueError
-            if analytical method requested for non-BSM pricing method
+            if analytical method requested for unsupported pricing method
         """
-        # Default to analytical for BSM, numerical for others
-        if greek_calc_method is None:
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError("Analytical theta calculation only available for BSM method")
+        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
 
-        if use_analytical:
+        if method != GreekCalculationMethod.NUMERICAL:
             return self._impl.theta()
 
         # Numerical theta: bump pricing date forward by time_bump_days and reprice
@@ -828,7 +967,7 @@ class OptionValuation:
         if bumped_date >= self.maturity:
             return 0.0
 
-        value_now = self.present_value(params=params)
+        value_now = self.present_value()
 
         # Build bumped underlying
         bumped_market = MarketData(
@@ -846,14 +985,13 @@ class OptionValuation:
             params=self.params,
         )
 
-        value_bumped = valuation_bumped.present_value(params=params)
+        value_bumped = valuation_bumped.present_value()
         return (value_bumped - value_now) / time_bump_days
 
     def rho(
         self,
         greek_calc_method: GreekCalculationMethod | None = None,
         rate_bump: float = 0.01,
-        params: ValuationParams | None = None,
     ) -> float:
         """Calculate rho (interest rate sensitivity) of the option.
 
@@ -882,33 +1020,29 @@ class OptionValuation:
         ValueError
             if analytical method requested for non-BSM pricing method
         """
-        # Default to analytical for BSM, numerical for others
-        if greek_calc_method is None:
-            use_analytical = self.pricing_method == PricingMethod.BSM
-        else:
-            if not isinstance(greek_calc_method, GreekCalculationMethod):
-                raise TypeError(
-                    f"greek_calc_method must be GreekCalculationMethod enum, got {type(greek_calc_method).__name__}"
-                )
-            use_analytical = (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method == PricingMethod.BSM
-            )
-            if (
-                greek_calc_method == GreekCalculationMethod.ANALYTICAL
-                and self.pricing_method != PricingMethod.BSM
-            ):
-                raise ValueError("Analytical rho calculation only available for BSM method")
+        method = self._resolve_greek_method(greek_calc_method)
 
-        if use_analytical:
+        if method == GreekCalculationMethod.ANALYTICAL:
             return self._impl.rho()
 
         # Numerical rho: bump risk-free rate up and down and reprice
-        rate_up = self.discount_curve.short_rate + rate_bump / 2
-        rate_down = self.discount_curve.short_rate - rate_bump / 2
+        if self.discount_curve.flat_rate is None:
+            raise UnsupportedFeatureError("Numerical rho requires a flat discount curve.")
 
-        curve_up = ConstantShortRate(f"{self.discount_curve.name}_up", rate_up)
-        curve_down = ConstantShortRate(f"{self.discount_curve.name}_down", rate_down)
+        rate_up = self.discount_curve.flat_rate + rate_bump / 2
+        rate_down = self.discount_curve.flat_rate - rate_bump / 2
+
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        curve_up = DiscountCurve.flat(
+            f"{self.discount_curve.name}_up",
+            rate_up,
+            end_time=ttm,
+        )
+        curve_down = DiscountCurve.flat(
+            f"{self.discount_curve.name}_down",
+            rate_down,
+            end_time=ttm,
+        )
 
         md_up = MarketData(self.pricing_date, curve_up, currency=self.currency)
         md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
@@ -916,23 +1050,11 @@ class OptionValuation:
         underlying_up = self.underlying.replace(market_data=md_up)
         underlying_down = self.underlying.replace(market_data=md_down)
 
-        val_up = OptionValuation(
-            name=f"{self.name}_rho_up",
-            underlying=underlying_up,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
-        val_down = OptionValuation(
-            name=f"{self.name}_rho_down",
-            underlying=underlying_down,
-            spec=self.spec,
-            pricing_method=self.pricing_method,
-            params=self.params,
-        )
+        val_up = self._build_valuation(name_suffix="rho_up", underlying=underlying_up)
+        val_down = self._build_valuation(name_suffix="rho_down", underlying=underlying_down)
 
-        value_up = val_up.present_value(params=params)
-        value_down = val_down.present_value(params=params)
+        value_up = val_up.present_value()
+        value_down = val_down.present_value()
 
         # Central difference, normalized to per 1% rate change
         # rate_up/down are bumped by ± rate_bump/2, so denominator is rate_bump.
