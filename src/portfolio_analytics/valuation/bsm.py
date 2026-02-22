@@ -1,5 +1,6 @@
 """Black-Scholes-Merton option valuation with continuous dividend yield."""
 
+from __future__ import annotations
 from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from scipy.stats import norm
@@ -27,7 +28,7 @@ class _BSMInputs(NamedTuple):
 class _BSMValuationBase:
     """Base class for Black-Scholes-Merton option valuation."""
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
 
     def _calculate_d_values(

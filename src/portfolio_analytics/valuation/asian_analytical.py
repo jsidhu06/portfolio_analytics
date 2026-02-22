@@ -30,6 +30,7 @@ European Average Options", *Journal of Financial and Quantitative Analysis*,
 Hull, J. C. *Options, Futures, and Other Derivatives*, Chapter 26.
 """
 
+from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import logging
@@ -301,7 +302,7 @@ class _AnalyticalAsianValuation:
       (Hull Section 26.13).
     """
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
         spec = parent.spec
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
