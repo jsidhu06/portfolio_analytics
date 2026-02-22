@@ -11,7 +11,7 @@ import pytest
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve, build_curve_from_forwards
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.params import PDEParams
 
@@ -324,7 +324,7 @@ def test_american_fd_vs_quantlib_discrete_div():
 def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = build_curve_from_forwards(name="r_curve", times=times, forwards=forwards)
+    r_curve = DiscountCurve.from_forwards(name="r_curve", times=times, forwards=forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -359,11 +359,11 @@ def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
 def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, option_type):
     r_times = np.array([0.0, 1.0])
     r_forwards = np.array([0.04])
-    r_curve = build_curve_from_forwards(name="r_flat", times=r_times, forwards=r_forwards)
+    r_curve = DiscountCurve.from_forwards(name="r_flat", times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 0.25, 0.5, 1.0])
     q_forwards = np.array([0.00, 0.02, 0.04])
-    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -400,11 +400,11 @@ def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, opt
 def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 0.25, 0.5, 1.0])
     q_forwards = np.array([0.01, 0.02, 0.00])
-    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -441,7 +441,7 @@ def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, 
 def test_american_fd_vs_quantlib_nonflat_rate_with_discrete_divs(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 1.0])
     q_dfs = np.array([1.0, 1.0])

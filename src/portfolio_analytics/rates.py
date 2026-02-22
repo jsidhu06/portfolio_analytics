@@ -48,6 +48,39 @@ class DiscountCurve:
         object.__setattr__(self, "dfs", df)
 
     @classmethod
+    def from_forwards(
+        cls,
+        name: str,
+        times: np.ndarray,
+        forwards: np.ndarray,
+    ) -> "DiscountCurve":
+        """Build a curve from piecewise-constant forward rates.
+
+        Parameters
+        ----------
+        name
+            Curve identifier.
+        times
+            Year-fraction grid including 0.  Shape ``(N+1,)``.
+        forwards
+            Continuously-compounded forward rate on each interval.  Shape ``(N,)``.
+        """
+        times = np.asarray(times, dtype=float)
+        forwards = np.asarray(forwards, dtype=float)
+        if times.ndim != 1 or forwards.ndim != 1:
+            raise ValidationError("times and forwards must be 1-D arrays")
+        if times.size < 2:
+            raise ValidationError("times must include at least [0, T]")
+        if forwards.size != times.size - 1:
+            raise ValidationError("forwards must have length len(times) - 1")
+        if not np.isclose(times[0], 0.0):
+            raise ValidationError("times must start at 0.0")
+        dt_steps = np.diff(times)
+        cum_rate = np.concatenate([[0.0], np.cumsum(forwards * dt_steps)])
+        dfs = np.exp(-cum_rate)
+        return cls(name=name, times=times, dfs=dfs)
+
+    @classmethod
     def flat(
         cls,
         name: str,

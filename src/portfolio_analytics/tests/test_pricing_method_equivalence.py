@@ -18,7 +18,7 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve, build_curve_from_forwards
+from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GeometricBrownianMotion,
@@ -48,7 +48,7 @@ def _market_data(r_curve: DiscountCurve | None = None) -> MarketData:
 def _nonflat_r_curve() -> DiscountCurve:
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
-    return build_curve_from_forwards(name="r_curve_nonflat", times=times, forwards=forwards)
+    return DiscountCurve.from_forwards(name="r_curve_nonflat", times=times, forwards=forwards)
 
 
 def _underlying(
@@ -413,8 +413,8 @@ def test_european_method_equivalence_with_forward_curves(
     q_forwards,
 ):
     """European BSM, MC, PDE FD, and binomial should agree under time-varying curves."""
-    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
-    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
     gbm = _gbm(
@@ -492,8 +492,8 @@ def test_american_method_equivalence_with_forward_curves(
     q_forwards,
 ):
     """American MC, PDE FD, and binomial should agree under time-varying curves."""
-    r_curve = build_curve_from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
-    q_curve = build_curve_from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
     gbm = _gbm(

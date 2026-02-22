@@ -135,10 +135,3 @@ def standard_discrete_dividends(pricing_date: dt.datetime) -> list[tuple[dt.date
         (pricing_date + dt.timedelta(days=90), 0.50),
         (pricing_date + dt.timedelta(days=270), 0.50),
     ]
-
-
-# ---------------------------------------------------------------------------
-# Re-export helpers for convenience (non-fixture utilities available via import)
-# ---------------------------------------------------------------------------
-
-from portfolio_analytics.tests.helpers import build_curve_from_forwards  # noqa: F401,E402
