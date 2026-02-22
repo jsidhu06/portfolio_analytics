@@ -46,7 +46,7 @@ from ..exceptions import (
 from ..utils import calculate_year_fraction
 
 if TYPE_CHECKING:
-    from .core import OptionValuation
+    from .core import OptionValuation, AsianOptionSpec
 
 
 logger = logging.getLogger(__name__)
@@ -304,7 +304,8 @@ class _AnalyticalAsianValuation:
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
-        spec = parent.spec
+        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        spec = self.spec
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
                 "Analytical (BSM) Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
@@ -337,7 +338,7 @@ class _AnalyticalAsianValuation:
         Dispatches to the Kemna-Vorst formula (geometric) or the
         Turnbull-Wakeman moment-matching approximation (arithmetic).
         """
-        spec = self.parent.spec
+        spec = self.spec
         spot = float(self.parent.underlying.initial_value)
         strike = float(spec.strike)
         volatility = float(self.parent.underlying.volatility)

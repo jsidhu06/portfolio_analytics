@@ -288,7 +288,7 @@ class UnderlyingPricingData:
         UnderlyingPricingData
             New instance with specified fields replaced
         """
-        return dc_replace(self, **kwargs)
+        return dc_replace(self, **kwargs)  # type: ignore[arg-type]
 
 
 class OptionValuation:
@@ -599,6 +599,7 @@ class OptionValuation:
                 "BINOMIAL and MONTE_CARLO pricing."
             )
         spec = self.spec
+        assert isinstance(spec, AsianOptionSpec)
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
                 "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
@@ -641,11 +642,11 @@ class OptionValuation:
             # For BSM analytical, num_steps = number of steps (observations - 1)
             # time_grid includes t₀, so len(time_grid) = M observations = N + 1
             n_steps = len(self.underlying.time_grid) - 1
-            bsm_spec = dc_replace(euro_spec, num_steps=n_steps)
+            bsm_spec = dc_replace(euro_spec, num_steps=n_steps)  # type: ignore[arg-type]
         else:
             bsm_underlying = self.underlying
             # num_steps must match the tree so the contract definitions align
-            bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)
+            bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)  # type: ignore[union-attr, arg-type]
 
         euro_analytical = OptionValuation(
             name=f"{self.name}_cv_euro_analytical",

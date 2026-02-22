@@ -60,10 +60,10 @@ def _solve_tridiagonal_thomas(
         raise ValidationError("lower/upper must have length n-1")
 
     # Copy to avoid mutating inputs
-    c = upper.astype(float, copy=True)
-    d = diag.astype(float, copy=True)
-    b = lower.astype(float, copy=True)
-    y = rhs.astype(float, copy=True)
+    c: np.ndarray = upper.astype(float, copy=True)
+    d: np.ndarray = diag.astype(float, copy=True)
+    b: np.ndarray = lower.astype(float, copy=True)
+    y: np.ndarray = rhs.astype(float, copy=True)
 
     # Forward elimination
     for i in range(1, n):
@@ -72,7 +72,7 @@ def _solve_tridiagonal_thomas(
         y[i] -= w * y[i - 1]
 
     # Back substitution
-    x = np.empty(n, dtype=float)
+    x: np.ndarray = np.empty(n, dtype=float)
     x[-1] = y[-1] / d[-1]
     for i in range(n - 2, -1, -1):
         x[i] = (y[i] - c[i] * x[i + 1]) / d[i]
@@ -306,8 +306,8 @@ def _psor_solve(
     A_lower: np.ndarray,
     A_diag: np.ndarray,
     A_upper: np.ndarray,
-    V_left: float,
-    V_right: float,
+    V_left: float | np.floating,
+    V_right: float | np.floating,
     omega: float,
     tol: float,
     max_iter: int,
@@ -391,8 +391,8 @@ def _implicit_cn_step(
                 A_lower,
                 A_diag,
                 A_upper,
-                V[0],
-                V[-1],
+                float(V[0]),
+                float(V[-1]),
                 float(omega),
                 float(tol),
                 int(max_iter),
@@ -633,7 +633,7 @@ def _vanilla_fd_core(
                 hull_discounting=hull_discounting,
             )
         else:
-            gamma, beta, alpha = _log_operator_coeffs(
+            gamma, beta, alpha = _log_operator_coeffs(  # type: ignore[assignment]
                 dz=dz,
                 risk_free_rate=r,
                 dividend_rate=q,
@@ -642,10 +642,10 @@ def _vanilla_fd_core(
             )
 
         df_0t = float(discount_curve.df(t_curr))
-        df_tT = df_0T / df_0t
+        df_tT: float = df_0T / df_0t
         if dividend_curve is not None:
             dq_0t = float(dividend_curve.df(t_curr))
-            dq_tT = dq_0T / dq_0t
+            dq_tT: float = dq_0T / dq_0t  # type: ignore[operator]
         else:
             dq_tT = float(np.exp(-q * tau_curr))
 

@@ -170,20 +170,14 @@ class PDEParams:
     omega: float = 1.5
     tol: float = 1e-6
     max_iter: int = 20_000
-    method: PDEMethod | str = PDEMethod.CRANK_NICOLSON
+    method: PDEMethod = PDEMethod.CRANK_NICOLSON
     rannacher_steps: int = 2
-    space_grid: PDESpaceGrid | str = PDESpaceGrid.SPOT
-    american_solver: PDEEarlyExercise | str = PDEEarlyExercise.GAUSS_SEIDEL
+    space_grid: PDESpaceGrid = PDESpaceGrid.SPOT
+    american_solver: PDEEarlyExercise = PDEEarlyExercise.GAUSS_SEIDEL
     control_variate_european: bool = False
     log_timings: bool = False
 
     def __post_init__(self) -> None:
-        if isinstance(self.method, str):
-            object.__setattr__(self, "method", PDEMethod(self.method))
-        if isinstance(self.space_grid, str):
-            object.__setattr__(self, "space_grid", PDESpaceGrid(self.space_grid))
-        if isinstance(self.american_solver, str):
-            object.__setattr__(self, "american_solver", PDEEarlyExercise(self.american_solver))
         if self.smax_mult <= 0:
             raise ValidationError(f"smax_mult must be positive, got {self.smax_mult}")
         if self.spot_steps < 3:
