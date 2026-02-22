@@ -6,14 +6,14 @@ import logging
 import numpy as np
 
 from ..utils import calculate_year_fraction, log_timing
-
+from ..stochastic_processes import PathSimulation
 from ..enums import OptionType, AsianAveraging
 from ..exceptions import ConfigurationError, NumericalError, ValidationError
 from .params import MonteCarloParams
 
+
 if TYPE_CHECKING:
     from .core import OptionValuation, AsianOptionSpec
-    from ..stochastic_processes import PathSimulation
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,11 @@ class _MCEuropeanValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
-        self.underlying: PathSimulation = parent.underlying  # type: ignore[assignment]
+        if not isinstance(parent.underlying, PathSimulation):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
+            )
+        self.underlying = parent.underlying
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
@@ -142,7 +146,11 @@ class _MCAmericanValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
-        self.underlying: PathSimulation = parent.underlying  # type: ignore[assignment]
+        if not isinstance(parent.underlying, PathSimulation):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
+            )
+        self.underlying = parent.underlying
 
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
@@ -232,7 +240,11 @@ class _MCAsianValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
-        self.underlying: PathSimulation = parent.underlying  # type: ignore[assignment]
+        if not isinstance(parent.underlying, PathSimulation):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
+            )
+        self.underlying = parent.underlying
         self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
 
     def solve(self) -> np.ndarray:
