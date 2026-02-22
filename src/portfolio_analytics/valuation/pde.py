@@ -13,6 +13,7 @@ PDE via finite differences for vanilla European and American call/put:
 - American handling: intrinsic projection or Gauss-Seidel/PSOR
 """
 
+from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 import logging
@@ -876,7 +877,7 @@ class _FDEuropeanValuation:
 class _FDAmericanValuation:
     """American option valuation using PDE finite differences."""
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
 
     def solve(self) -> tuple[float, np.ndarray, np.ndarray]:

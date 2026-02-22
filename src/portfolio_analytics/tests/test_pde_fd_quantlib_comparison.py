@@ -1,8 +1,9 @@
 """Compare PDE FD American pricing vs QuantLib for reference."""
 
+from __future__ import annotations
 import datetime as dt
 import logging
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import numpy as np
 import pytest
@@ -16,8 +17,6 @@ from portfolio_analytics.valuation.params import PDEParams
 
 if TYPE_CHECKING:
     import QuantLib as ql_typing
-else:
-    ql_typing = Any
 
 ql = pytest.importorskip("QuantLib")
 
@@ -43,7 +42,7 @@ def _ql_curve_from_times(
     *,
     times: np.ndarray,
     dfs: np.ndarray,
-) -> "ql_typing.YieldTermStructureHandle":
+) -> ql_typing.YieldTermStructureHandle:
     day_count = ql.Actual365Fixed()
     ql.Settings.instance().evaluationDate = ql.Date(
         PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
@@ -67,7 +66,7 @@ def _spec(*, strike: float, option_type: OptionType) -> OptionSpec:
 
 def _quantlib_dividend_schedule(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
-) -> "ql_typing.DividendVector":
+) -> ql_typing.DividendVector:
     if discrete_dividends:
         div_dates = []
         dividends = []
@@ -84,8 +83,8 @@ def _quantlib_american_with_curves(
     spot: float,
     strike: float,
     option_type: OptionType,
-    rf_curve: "ql_typing.YieldTermStructureHandle",
-    div_curve: "ql_typing.YieldTermStructureHandle",
+    rf_curve: ql_typing.YieldTermStructureHandle,
+    div_curve: ql_typing.YieldTermStructureHandle,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
     grid_points: int = 200,
     time_steps: int = 400,

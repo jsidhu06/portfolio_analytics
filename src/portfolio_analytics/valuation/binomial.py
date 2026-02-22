@@ -2,6 +2,7 @@
 Cox-Ross-Rubinstein
 """
 
+from __future__ import annotations
 from typing import TYPE_CHECKING
 import logging
 import numpy as np
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 class _BinomialValuationBase:
     """Base class for binomial tree option valuation."""
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
         if not isinstance(parent.params, BinomialParams):
             raise ConfigurationError(

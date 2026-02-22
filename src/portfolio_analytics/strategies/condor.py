@@ -92,8 +92,8 @@ class CondorSpec:
         self,
         *,
         name: str,
-        underlying: "PathSimulation | UnderlyingPricingData",
-        pricing_method: "PricingMethod",
+        underlying: PathSimulation | UnderlyingPricingData,
+        pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ) -> float:
         """Value the condor as a 4-leg strategy: sum of vanilla leg present values.

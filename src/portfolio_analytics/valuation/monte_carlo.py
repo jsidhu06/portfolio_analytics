@@ -1,5 +1,6 @@
 """Monte Carlo Simulation option valuation implementations."""
 
+from __future__ import annotations
 from typing import TYPE_CHECKING
 import logging
 import numpy as np
@@ -76,7 +77,7 @@ def _year_fractions(pricing_date, dates: np.ndarray) -> np.ndarray:
 class _MCEuropeanValuation:
     """Implementation of European option valuation using Monte Carlo."""
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
             raise ConfigurationError(
@@ -132,7 +133,7 @@ class _MCEuropeanValuation:
 class _MCAmericanValuation:
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
             raise ConfigurationError(
@@ -221,7 +222,7 @@ class _MCAsianValuation:
     price of the underlying over the averaging period.
     """
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
             raise ConfigurationError(
@@ -384,7 +385,7 @@ class _MCAsianAmericanValuation:
     Both arithmetic and geometric averaging are supported.
     """
 
-    def __init__(self, parent: "OptionValuation") -> None:
+    def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
         if not isinstance(parent.params, MonteCarloParams):
             raise ConfigurationError(

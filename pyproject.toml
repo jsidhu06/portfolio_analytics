@@ -25,6 +25,15 @@ dev = [
     "pre-commit>=4.5,<5",
     "pip-tools>=7.5,<8",
 ]
+jupyter = [
+    "jupyterlab>=4.3,<5",
+    "ipykernel>=6.29,<7",
+    "matplotlib>=3.9,<4",
+    "plotly>=6,<7",
+]
+quantlib = [
+    "QuantLib>=1.36,<2",
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
