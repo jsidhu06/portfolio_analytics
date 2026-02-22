@@ -31,6 +31,9 @@ jupyter = [
     "matplotlib>=3.9,<4",
     "plotly>=6,<7",
 ]
+quantlib = [
+    "QuantLib>=1.36,<2",
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
