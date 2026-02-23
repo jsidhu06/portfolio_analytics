@@ -380,7 +380,7 @@ class OptionValuation:
             )
         self.pricing_method = pricing_method
 
-        self.params: ValuationParams | None = self._validate_and_default_params(
+        self.params: ValuationParams | None = self._resolve_params(
             pricing_method=pricing_method, params=params
         )
 
@@ -448,7 +448,7 @@ class OptionValuation:
         self._impl = impl_cls(self)
 
     @staticmethod
-    def _validate_and_default_params(
+    def _resolve_params(
         *,
         pricing_method: PricingMethod,
         params: ValuationParams | None,
@@ -485,11 +485,6 @@ class OptionValuation:
             )
         return None
 
-    def _effective_params(self) -> ValuationParams | None:
-        return self._validate_and_default_params(
-            pricing_method=self.pricing_method, params=self.params
-        )
-
     def solve(
         self,
     ) -> float | np.ndarray | tuple[np.ndarray, np.ndarray] | tuple[float, np.ndarray, np.ndarray]:
@@ -503,23 +498,21 @@ class OptionValuation:
 
         Use present_value_pathwise() for discounted pathwise outputs where supported.
         """
-        self._effective_params()
         return self._impl.solve()
 
     def present_value(self) -> float:
         """Calculate present value of the derivative."""
-        effective_params = self._effective_params()
         base_pv = float(self._impl.present_value())
-        if effective_params is None or not getattr(
-            effective_params, "control_variate_european", False
-        ):
+        if self.params is None or not getattr(self.params, "control_variate_european", False):
             return base_pv
 
         return float(self._apply_control_variate(base_pv))
 
     def _apply_control_variate(self, base_pv: float) -> float:
         if self.exercise_type is not ExerciseType.AMERICAN:
-            raise ValidationError("control_variate_european is only valid for American options.")
+            raise ValidationError(
+                "control_variate_european is only valid for options with American exercise."
+            )
 
         if isinstance(self.spec, AsianOptionSpec):
             return self._apply_asian_control_variate(base_pv)
@@ -545,12 +538,7 @@ class OptionValuation:
 
         euro_spec = dc_replace(self.spec, exercise_type=ExerciseType.EUROPEAN)
 
-        params = self._effective_params()
-        cv_params = (
-            dc_replace(params, control_variate_european=False)
-            if hasattr(params, "control_variate_european")
-            else params
-        )
+        cv_params = dc_replace(self.params, control_variate_european=False)
         euro_num = OptionValuation(
             name=f"{self.name}_cv_euro_num",
             underlying=self.underlying,
@@ -560,16 +548,7 @@ class OptionValuation:
         ).present_value()
 
         # BSM needs UnderlyingPricingData; extract from PathSimulation if needed
-        if isinstance(self.underlying, PathSimulation):
-            bsm_underlying = UnderlyingPricingData(
-                initial_value=self.underlying.initial_value,
-                volatility=self.underlying.volatility,
-                market_data=self.underlying.market_data,
-                dividend_curve=self.underlying.dividend_curve,
-                discrete_dividends=self.underlying.discrete_dividends or None,
-            )
-        else:
-            bsm_underlying = self.underlying
+        bsm_underlying = self._as_underlying_data()
 
         euro_bsm = OptionValuation(
             name=f"{self.name}_cv_euro_bsm",
@@ -579,6 +558,18 @@ class OptionValuation:
         ).present_value()
 
         return base_pv + (euro_bsm - euro_num)
+
+    def _as_underlying_data(self) -> UnderlyingPricingData:
+        """Return an UnderlyingPricingData instance, extracting from PathSimulation if needed."""
+        if isinstance(self.underlying, PathSimulation):
+            return UnderlyingPricingData(
+                initial_value=self.underlying.initial_value,
+                volatility=self.underlying.volatility,
+                market_data=self.underlying.market_data,
+                dividend_curve=self.underlying.dividend_curve,
+                discrete_dividends=self.underlying.discrete_dividends or None,
+            )
+        return self.underlying  # already UnderlyingPricingData
 
     def _apply_asian_control_variate(self, base_pv: float) -> float:
         """Apply control variate adjustment for American Asian options.
@@ -605,7 +596,7 @@ class OptionValuation:
                 "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
             )
 
-        params = self._effective_params()
+        params = self.params
 
         # Method-specific validation
         if self.pricing_method is PricingMethod.BINOMIAL:
@@ -630,21 +621,13 @@ class OptionValuation:
         ).present_value()
 
         # European Asian — analytical (Kemna-Vorst / Turnbull-Wakeman)
-        # BSM needs UnderlyingPricingData; extract from PathSimulation if needed
+        bsm_underlying = self._as_underlying_data()
         if isinstance(self.underlying, PathSimulation):
-            bsm_underlying = UnderlyingPricingData(
-                initial_value=self.underlying.initial_value,
-                volatility=self.underlying.volatility,
-                market_data=self.underlying.market_data,
-                dividend_curve=self.underlying.dividend_curve,
-                discrete_dividends=self.underlying.discrete_dividends or None,
-            )
             # For BSM analytical, num_steps = number of steps (observations - 1)
             # time_grid includes t₀, so len(time_grid) = M observations = N + 1
             n_steps = len(self.underlying.time_grid) - 1
             bsm_spec = dc_replace(euro_spec, num_steps=n_steps)  # type: ignore[arg-type]
         else:
-            bsm_underlying = self.underlying
             # num_steps must match the tree so the contract definitions align
             bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)  # type: ignore[union-attr, arg-type]
 
@@ -676,7 +659,6 @@ class OptionValuation:
             raise UnsupportedFeatureError(
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
-        self._effective_params()
         return pv_pathwise()
 
     def _resolve_greek_method(
