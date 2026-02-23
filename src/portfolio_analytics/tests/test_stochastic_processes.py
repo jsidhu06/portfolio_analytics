@@ -428,9 +428,9 @@ class TestSimulationConfig:
                 day_count_convention=360,
             )
 
-    def test_simulation_config_with_special_dates(self):
+    def test_simulation_config_with_observation_dates(self):
         """Test SimulationConfig with special dates."""
-        special_dates = {
+        observation_dates = {
             dt.datetime(2025, 3, 17),
             dt.datetime(2025, 6, 20),
         }
@@ -439,10 +439,10 @@ class TestSimulationConfig:
             paths=1000,
             frequency="D",
             end_date=dt.datetime(2026, 1, 1),
-            special_dates=special_dates,
+            observation_dates=observation_dates,
         )
 
-        assert len(config.special_dates) == 2
+        assert len(config.observation_dates) == 2
 
     def test_simulation_config_with_custom_time_grid(self):
         """Test SimulationConfig with pre-defined time grid."""
@@ -597,7 +597,7 @@ class TestVarianceReduction:
 
 class TestPathSimulationReplace:
     """Tests for PathSimulation.replace() — ensures kwargs are routed correctly
-    to nested frozen dataclasses and that derived state (time_grid, special_dates)
+    to nested frozen dataclasses and that derived state (time_grid, observation_dates)
     is handled properly.
     """
 
@@ -709,8 +709,8 @@ class TestPathSimulationReplace:
 
     # --- Special dates handling ---
 
-    def test_replace_special_dates_with_explicit_time_grid_augments(self):
-        """When time_grid is explicit, replace(special_dates=...) augments it."""
+    def test_replace_observation_dates_with_explicit_time_grid_augments(self):
+        """When time_grid is explicit, replace(observation_dates=...) augments it."""
         explicit_grid = np.array(
             [
                 dt.datetime(2025, 1, 1),
@@ -724,7 +724,7 @@ class TestPathSimulationReplace:
         )
 
         mid_date = dt.datetime(2025, 3, 15)
-        cloned = gbm_explicit.replace(special_dates={mid_date})
+        cloned = gbm_explicit.replace(observation_dates={mid_date})
 
         # time_grid should now include the mid_date
         assert mid_date in cloned.time_grid
@@ -733,10 +733,10 @@ class TestPathSimulationReplace:
             assert d in cloned.time_grid
         assert len(cloned.time_grid) == 4
 
-    def test_replace_special_dates_without_time_grid_nulls_grid(self):
-        """When time_grid is None (lazy mode), replace(special_dates=...) keeps it None."""
+    def test_replace_observation_dates_without_time_grid_nulls_grid(self):
+        """When time_grid is None (lazy mode), replace(observation_dates=...) keeps it None."""
         assert self.gbm.time_grid is None  # lazy — not yet generated
-        cloned = self.gbm.replace(special_dates={dt.datetime(2025, 7, 1)})
+        cloned = self.gbm.replace(observation_dates={dt.datetime(2025, 7, 1)})
         assert cloned.time_grid is None  # stays None for lazy rebuild
 
     # --- Isolation / no shared state ---
@@ -745,13 +745,13 @@ class TestPathSimulationReplace:
         """Cloned instance should be fully independent of the original."""
         self.gbm._ensure_time_grid()
         original_grid = self.gbm.time_grid.copy()
-        original_special = set(self.gbm.special_dates)
+        original_special = set(self.gbm.observation_dates)
 
         self.gbm.replace(initial_value=200.0)
 
         # Original should be untouched
         np.testing.assert_array_equal(self.gbm.time_grid, original_grid)
-        assert self.gbm.special_dates == original_special
+        assert self.gbm.observation_dates == original_special
         assert self.gbm.initial_value == 100.0
 
     def test_replace_time_grid_is_deep_copied(self):

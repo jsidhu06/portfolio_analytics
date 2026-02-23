@@ -387,12 +387,12 @@ class OptionValuation:
         if self.maturity <= self.pricing_date:
             raise ValidationError("Option maturity must be after pricing_date.")
 
-        # Merge pricing_date + maturity into the simulation's special_dates
+        # Merge pricing_date + maturity into the simulation's observation_dates
         # via replace() so the caller's PathSimulation is never mutated.
         if isinstance(underlying, PathSimulation):
-            merged = underlying.special_dates | {self.pricing_date, self.maturity}
-            if merged != underlying.special_dates:
-                underlying = underlying.replace(special_dates=merged)
+            merged = underlying.observation_dates | {self.pricing_date, self.maturity}
+            if merged != underlying.observation_dates:
+                underlying = underlying.replace(observation_dates=merged)
             self.underlying = underlying
 
         # Validate that MC requires PathSimulation

@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 __all__ = [
     "log_timing",
     "calculate_year_fraction",
-    "get_year_deltas",
     "pv_discrete_dividends",
     "forward_price",
     "put_call_parity_rhs",
@@ -106,32 +105,6 @@ def calculate_year_fraction(
     delta_days = (end_date - start_date).total_seconds() / SECONDS_IN_DAY
     year_fraction = delta_days / denom
     return year_fraction
-
-
-def get_year_deltas(
-    date_list: list[datetime],
-    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
-) -> np.ndarray:
-    """Return vector of floats with day deltas in year fractions.
-
-    Initial value is normalized to zero. Useful for discount factor
-    calculations and time grid generation.
-
-    Parameters
-    ==========
-    date_list: list or array-like
-        collection of datetime objects
-    day_count_convention: DayCountConvention, default DayCountConvention.ACT_365F
-        number of days per year (day count convention)
-
-    Returns
-    =======
-    delta_list: np.ndarray
-        array of year fractions, first element is always 0
-    """
-    start = min(date_list)
-    delta_list = [calculate_year_fraction(start, date, day_count_convention) for date in date_list]
-    return np.array(delta_list)
 
 
 def pv_discrete_dividends(

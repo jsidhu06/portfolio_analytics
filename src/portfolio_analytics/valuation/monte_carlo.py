@@ -174,23 +174,23 @@ class _MCAmericanValuation:
 
         Returns
         =======
-        tuple of (instrument_values, payoff, time_index_start, time_index_end)
+        tuple of (spot_paths, payoff, time_index_start, time_index_end)
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
         time_index_start = _resolve_time_index(time_grid, self.parent.pricing_date, "Pricing date")
         time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
-        instrument_values = paths[time_index_start : time_index_end + 1]
+        spot_paths = paths[time_index_start : time_index_end + 1]
 
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            payoff = _vanilla_payoff(self.parent.option_type, K, instrument_values)
+            payoff = _vanilla_payoff(self.parent.option_type, K, spot_paths)
         else:
             payoff_fn = self.parent.spec.payoff  # type: ignore[union-attr]
-            payoff = payoff_fn(instrument_values)
+            payoff = payoff_fn(spot_paths)
 
-        return instrument_values, payoff, time_index_start, time_index_end
+        return spot_paths, payoff, time_index_start, time_index_end
 
     def present_value(self) -> float:
         """Calculate PV using Longstaff-Schwartz regression method."""
@@ -213,7 +213,7 @@ class _MCAmericanValuation:
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path (LSM output at pricing date)."""
-        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve()
+        spot_paths, intrinsic_values, time_index_start, time_index_end = self.solve()
         time_list = self.underlying.time_grid[time_index_start : time_index_end + 1]
         t_grid = _year_fractions(self.parent.pricing_date, time_list)
         discount_factors = self.parent.discount_curve.df(t_grid)
@@ -224,12 +224,12 @@ class _MCAmericanValuation:
             df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic_values[t] > 0
 
-            continuation = np.zeros_like(instrument_values[t])
+            continuation = np.zeros_like(spot_paths[t])
             if np.any(itm):
-                S_itm = instrument_values[t][itm]
+                S_itm = spot_paths[t][itm]
                 V_itm = df_step * values[t + 1][itm]
                 poly = np.polynomial.Polynomial.fit(S_itm, V_itm, deg=self.mc_params.deg)
-                continuation[itm] = poly(instrument_values[t][itm])
+                continuation[itm] = poly(spot_paths[t][itm])
 
             values[t] = np.where(
                 intrinsic_values[t] > continuation,

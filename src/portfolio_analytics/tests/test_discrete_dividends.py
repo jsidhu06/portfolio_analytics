@@ -72,7 +72,7 @@ def test_discrete_dividend_engine_consistency():
     mc_pv = mc_val.present_value()
 
     div_dates = [divs[0][0], divs[1][0]]
-    assert all(div_date in mc_val.underlying.special_dates for div_date in div_dates)
+    assert all(div_date in mc_val.underlying.observation_dates for div_date in div_dates)
     assert all(div_date in mc_val.underlying.time_grid for div_date in div_dates)
     pde_val = OptionValuation(
         "put_pde",
