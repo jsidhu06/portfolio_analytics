@@ -203,4 +203,4 @@ class PDEParams:
 
 
 # Type alias for any valuation parameters
-ValuationParams = MonteCarloParams | BinomialParams | PDEParams
+type ValuationParams = MonteCarloParams | BinomialParams | PDEParams
