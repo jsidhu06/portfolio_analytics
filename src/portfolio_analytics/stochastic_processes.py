@@ -628,6 +628,12 @@ class GBMProcess(PathSimulation):
             if ex_date in time_set:
                 dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
+        # Apply pricing-date dividend: input spot is cum-dividend, so the
+        # stock goes ex immediately at t=0.
+        div_t0 = dividend_by_date.get(self.time_grid[0])
+        if div_t0 is not None:
+            paths[0] = np.maximum(paths[0] - div_t0, 0.0)
+
         for t in range(1, steps):
             dt_step = time_deltas[t - 1]
             increment = ((r_steps[t - 1] - q_steps[t - 1]) - 0.5 * self.volatility**2) * dt_step
