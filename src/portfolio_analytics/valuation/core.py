@@ -350,14 +350,6 @@ class OptionValuation:
         self.underlying = underlying
         self.spec = spec
 
-        # Pricing date + discount curve come from the underlying's market data
-        self.pricing_date = underlying.pricing_date
-        self.discount_curve = underlying.discount_curve
-
-        # Convenience aliases
-        self.maturity = spec.maturity
-        self.strike = spec.strike
-        self.currency = spec.currency
         if hasattr(spec, "option_type") and isinstance(spec.option_type, OptionType):
             self.option_type = spec.option_type
         elif hasattr(spec, "call_put") and isinstance(spec.call_put, OptionType):
@@ -370,8 +362,6 @@ class OptionValuation:
                 "Cross-currency valuation is not supported. "
                 "Option currency must match the underlying market currency."
             )
-        self.exercise_type = spec.exercise_type
-        self.contract_size = spec.contract_size
 
         # Validate pricing_method early — comparisons below rely on enum identity
         if not isinstance(pricing_method, PricingMethod):
@@ -446,6 +436,34 @@ class OptionValuation:
                     f"{pricing_method.name} does not support {spec.exercise_type.name} exercise."
                 )
         self._impl = impl_cls(self)
+
+    @property
+    def maturity(self) -> dt.datetime:
+        return self.spec.maturity
+
+    @property
+    def strike(self) -> float:
+        return self.spec.strike
+
+    @property
+    def currency(self) -> str:
+        return self.spec.currency
+
+    @property
+    def exercise_type(self) -> ExerciseType:
+        return self.spec.exercise_type
+
+    @property
+    def contract_size(self) -> int | float:
+        return self.spec.contract_size
+
+    @property
+    def pricing_date(self) -> dt.datetime:
+        return self.underlying.pricing_date
+
+    @property
+    def discount_curve(self) -> DiscountCurve:
+        return self.underlying.discount_curve
 
     @staticmethod
     def _resolve_params(

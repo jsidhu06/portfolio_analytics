@@ -161,8 +161,6 @@ class _BinomialValuationBase:
         """
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            if K is None:
-                raise ValidationError("strike is required for vanilla call/put payoff.")
             if self.parent.option_type is OptionType.CALL:
                 return np.maximum(instrument_values - K, 0)
             return np.maximum(K - instrument_values, 0)
@@ -327,8 +325,6 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         rng = np.random.default_rng(self.binom_params.random_seed)
 
         K = self.parent.strike
-        if K is None:
-            raise ValidationError("strike is required for Asian option payoff.")
 
         # Vectorized simulation of binomial paths:
         # draw Bernoulli down-steps for each path and step
@@ -363,8 +359,6 @@ class _BinomialAsianValuation(_BinomialValuationBase):
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
         """Compute Asian option intrinsic payoff given average price(s)."""
         K = self.parent.strike
-        if K is None:
-            raise ValidationError("strike is required for Asian option payoff.")
         if self.spec.call_put is OptionType.CALL:
             return np.maximum(avg_price - K, 0.0)
         return np.maximum(K - avg_price, 0.0)

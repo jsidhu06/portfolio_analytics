@@ -828,8 +828,6 @@ class _FDEuropeanValuation:
         )
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
-        if strike is None:
-            raise ValidationError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve
@@ -899,8 +897,6 @@ class _FDAmericanValuation:
         )
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
-        if strike is None:
-            raise ValidationError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve

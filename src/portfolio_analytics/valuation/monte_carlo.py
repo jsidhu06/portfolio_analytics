@@ -101,8 +101,6 @@ class _MCEuropeanValuation:
 
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            if K is None:
-                raise ValidationError("strike is required for vanilla European call/put payoff.")
             return _vanilla_payoff(self.parent.option_type, K, maturity_value)
 
         payoff_fn = getattr(self.parent.spec, "payoff", None)
@@ -168,8 +166,6 @@ class _MCAmericanValuation:
 
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            if K is None:
-                raise ValidationError("strike is required for vanilla American call/put payoff.")
             payoff = _vanilla_payoff(self.parent.option_type, K, instrument_values)
         else:
             payoff_fn = self.parent.spec.payoff  # type: ignore[union-attr]
@@ -295,8 +291,6 @@ class _MCAsianValuation:
 
         # Calculate payoff based on average
         K = self.parent.strike
-        if K is None:
-            raise ValidationError("strike is required for Asian option payoff.")
 
         # Asian call: max(S_avg - K, 0)
         # Asian put: max(K - S_avg, 0)
