@@ -35,7 +35,7 @@ class TestPathSimulation:
 
         with pytest.raises(
             TypeError,
-            match="Can't instantiate abstract class PathSimulation without an implementation for abstract method 'generate_paths'",
+            match="Can't instantiate abstract class PathSimulation without an implementation for abstract method '_generate_paths'",
         ):
             PathSimulation("test_name", market_data, process_params, sim, corr=None)
 
@@ -63,10 +63,10 @@ class TestGBMProcess:
             corr=None,
         )
 
-    def test_generate_paths_reproducibility_with_seed(self):
-        """Test that generate_paths produces identical results with the same random_seed"""
+    def test_simulate_reproducibility_with_seed(self):
+        """Test that simulate produces identical results with the same random_seed."""
         # Generate paths with seed 1000
-        paths_1 = self.gbm.generate_paths(random_seed=1000).copy()
+        paths_1 = self.gbm.simulate(random_seed=1000).copy()
 
         # Create a new instance and generate again with same seed
         gbm_2 = GBMProcess(
@@ -76,14 +76,14 @@ class TestGBMProcess:
             self.sim,
             corr=None,
         )
-        paths_2 = gbm_2.generate_paths(random_seed=1000).copy()
+        paths_2 = gbm_2.simulate(random_seed=1000).copy()
 
         # Should be identical
         np.testing.assert_array_equal(paths_1, paths_2)
 
-    def test_generate_paths_basic_properties(self):
-        """Test basic properties of generated paths"""
-        paths = self.gbm.generate_paths(random_seed=1000)
+    def test_simulate_basic_properties(self):
+        """Test basic properties of simulated paths."""
+        paths = self.gbm.simulate(random_seed=1000)
 
         # Check shape: (M, num_paths) where M is time steps, num_paths is paths
         M = len(self.gbm.time_grid)
@@ -96,9 +96,9 @@ class TestGBMProcess:
         # All values should be positive (GBM property)
         assert np.all(paths > 0)
 
-    def test_generate_paths_returns_array(self):
-        """Test that generate_paths returns the paths array"""
-        paths = self.gbm.generate_paths(random_seed=1000)
+    def test_simulate_returns_array(self):
+        """Test that simulate returns the paths array."""
+        paths = self.gbm.simulate(random_seed=1000)
 
         # Should return a valid ndarray
         assert isinstance(paths, np.ndarray)
@@ -108,7 +108,7 @@ class TestGBMProcess:
     def test_time_grid_generation(self):
         """Test that time_grid is generated correctly."""
         # Generate paths to ensure time_grid is populated
-        self.gbm.generate_paths(random_seed=42)
+        self.gbm.simulate(random_seed=42)
 
         assert self.gbm.time_grid is not None
         # Time grid should start with pricing_date and end with end_date
@@ -142,8 +142,8 @@ class TestGBMProcess:
             self.sim,
         )
 
-        paths_low = gbm_low.generate_paths(random_seed=42)
-        paths_high = gbm_high.generate_paths(random_seed=42)
+        paths_low = gbm_low.simulate(random_seed=42)
+        paths_high = gbm_high.simulate(random_seed=42)
 
         # Higher volatility should lead to wider range of final values
         std_low = np.std(paths_low[-1])
@@ -168,7 +168,7 @@ class TestGBMProcess:
         )
 
         gbm = GBMProcess("gbm_drift", market_data, process_params, sim_config)
-        paths = gbm.generate_paths(random_seed=42)
+        paths = gbm.simulate(random_seed=42)
 
         # Calculate mean return
         T = 1.0  # 1 year
@@ -216,9 +216,9 @@ class TestSRDProcess:
         assert self.srd.theta == self.process_params.theta
         assert self.srd.volatility == self.process_params.volatility
 
-    def test_srd_generate_paths(self):
-        """Test SRD path generation."""
-        paths = self.srd.generate_paths(random_seed=42)
+    def test_srd_simulate(self):
+        """Test SRD path simulation."""
+        paths = self.srd.simulate(random_seed=42)
 
         # Check shape
         assert paths.shape[0] == len(self.srd.time_grid)
@@ -245,7 +245,7 @@ class TestSRDProcess:
             long_sim,
         )
 
-        paths = srd_long.generate_paths(random_seed=42)
+        paths = srd_long.simulate(random_seed=42)
 
         # Final values should be closer to theta than initial value
         final_mean = np.mean(paths[-1])
@@ -262,7 +262,7 @@ class TestSRDProcess:
 
     def test_srd_reproducibility(self):
         """Test SRD reproducibility with same seed."""
-        paths1 = self.srd.generate_paths(random_seed=123).copy()
+        paths1 = self.srd.simulate(random_seed=123).copy()
 
         srd2 = SRDProcess(
             "srd_test2",
@@ -271,7 +271,7 @@ class TestSRDProcess:
             self.sim,
         )
 
-        paths2 = srd2.generate_paths(random_seed=123)
+        paths2 = srd2.simulate(random_seed=123)
 
         np.testing.assert_array_equal(paths1, paths2)
 
@@ -311,9 +311,9 @@ class TestJDProcess:
         assert self.jd.delta == self.process_params.delta
         assert self.jd.volatility == self.process_params.volatility
 
-    def test_jd_generate_paths(self):
-        """Test JD path generation."""
-        paths = self.jd.generate_paths(random_seed=42)
+    def test_jd_simulate(self):
+        """Test JD path simulation."""
+        paths = self.jd.simulate(random_seed=42)
 
         # Check shape
         assert paths.shape[0] == len(self.jd.time_grid)
@@ -328,7 +328,7 @@ class TestJDProcess:
     def test_jd_jump_impact(self):
         """Test that jump diffusion paths have discontinuities (jumps)."""
         # Generate paths with jumps
-        paths_jd = self.jd.generate_paths(random_seed=42)
+        paths_jd = self.jd.simulate(random_seed=42)
 
         # Generate comparable GBM paths
         gbm_params = GBMParams(
@@ -342,7 +342,7 @@ class TestJDProcess:
             self.sim,
         )
 
-        paths_gbm = gbm.generate_paths(random_seed=42)
+        paths_gbm = gbm.simulate(random_seed=42)
 
         # JD should have larger final value spread due to jumps
         std_jd = np.std(paths_jd[-1])
@@ -353,7 +353,7 @@ class TestJDProcess:
 
     def test_jd_reproducibility(self):
         """Test JD reproducibility with same seed."""
-        paths1 = self.jd.generate_paths(random_seed=456).copy()
+        paths1 = self.jd.simulate(random_seed=456).copy()
 
         jd2 = JDProcess(
             "jd_test2",
@@ -362,7 +362,7 @@ class TestJDProcess:
             self.sim,
         )
 
-        paths2 = jd2.generate_paths(random_seed=456)
+        paths2 = jd2.simulate(random_seed=456)
 
         np.testing.assert_array_equal(paths1, paths2)
 
@@ -383,7 +383,7 @@ class TestJDProcess:
             self.sim,
         )
 
-        paths_jd = jd_no_jump.generate_paths(random_seed=99)
+        paths_jd = jd_no_jump.simulate(random_seed=99)
 
         # Without jumps, all values should be positive and continuous
         assert np.all(paths_jd > 0)
@@ -568,11 +568,11 @@ class TestVarianceReduction:
         means_plain = []
         for seed in range(n_batches):
             gbm_av = self._make_gbm(antithetic=True, moment_matching=False, paths=batch_paths)
-            terminal = gbm_av.generate_paths(random_seed=seed)[-1]
+            terminal = gbm_av.simulate(random_seed=seed)[-1]
             means_av.append(np.mean(np.maximum(terminal - strike, 0.0)))
 
             gbm_plain = self._make_gbm(antithetic=False, moment_matching=False, paths=batch_paths)
-            terminal = gbm_plain.generate_paths(random_seed=seed + 10000)[-1]
+            terminal = gbm_plain.simulate(random_seed=seed + 10000)[-1]
             means_plain.append(np.mean(np.maximum(terminal - strike, 0.0)))
 
         # Variance of batch means should be lower with antithetic
@@ -581,7 +581,7 @@ class TestVarianceReduction:
     def test_both_off_still_produces_valid_paths(self):
         """With both variance reduction techniques off, paths should still be valid GBM."""
         gbm = self._make_gbm(antithetic=False, moment_matching=False, paths=1000)
-        paths = gbm.generate_paths(random_seed=42)
+        paths = gbm.simulate(random_seed=42)
 
         assert np.all(paths > 0)
         assert paths[0, 0] == self.process_params.initial_value
@@ -590,7 +590,7 @@ class TestVarianceReduction:
         """Odd path count with antithetic=True should warn and fall back to plain sampling."""
         gbm = self._make_gbm(antithetic=True, moment_matching=False, paths=999)
         with pytest.warns(UserWarning, match="antithetic=True but paths=999 is odd"):
-            paths = gbm.generate_paths(random_seed=42)
+            paths = gbm.simulate(random_seed=42)
         assert paths.shape[1] == 999
         assert np.all(paths > 0)
 
@@ -655,7 +655,7 @@ class TestPathSimulationReplace:
     def test_replace_end_date_nulls_time_grid(self):
         """replace(end_date=...) should null the time_grid for lazy rebuild."""
         # First ensure time_grid exists
-        self.gbm.generate_time_grid()
+        self.gbm._ensure_time_grid()
         assert self.gbm.time_grid is not None
 
         new_end = dt.datetime(2027, 1, 1)
@@ -701,7 +701,7 @@ class TestPathSimulationReplace:
 
     def test_replace_pricing_date_nulls_grid_and_updates_market_data(self):
         """replace(pricing_date=...) updates market_data and nulls time_grid."""
-        self.gbm.generate_time_grid()
+        self.gbm._ensure_time_grid()
         new_date = dt.datetime(2025, 6, 1)
         cloned = self.gbm.replace(pricing_date=new_date)
         assert cloned.pricing_date == new_date
@@ -743,7 +743,7 @@ class TestPathSimulationReplace:
 
     def test_replace_does_not_mutate_original(self):
         """Cloned instance should be fully independent of the original."""
-        self.gbm.generate_time_grid()
+        self.gbm._ensure_time_grid()
         original_grid = self.gbm.time_grid.copy()
         original_special = set(self.gbm.special_dates)
 
@@ -756,7 +756,7 @@ class TestPathSimulationReplace:
 
     def test_replace_time_grid_is_deep_copied(self):
         """Mutating the cloned time_grid should not affect the original."""
-        self.gbm.generate_time_grid()
+        self.gbm._ensure_time_grid()
         original_grid = self.gbm.time_grid.copy()
 
         cloned = self.gbm.replace(initial_value=105.0)
@@ -788,13 +788,13 @@ class TestPathSimulationReplace:
     def test_replace_vol_produces_valid_paths(self):
         """A cloned GBM with bumped vol should produce valid paths."""
         cloned = self.gbm.replace(volatility=0.4)
-        paths = cloned.generate_paths(random_seed=42)
+        paths = cloned.simulate(random_seed=42)
         assert np.all(paths > 0)
         assert paths[0, 0] == self.gbm.initial_value  # same S0
 
     def test_replace_spot_produces_valid_paths(self):
         """A cloned GBM with bumped spot should produce valid paths."""
         cloned = self.gbm.replace(initial_value=120.0)
-        paths = cloned.generate_paths(random_seed=42)
+        paths = cloned.simulate(random_seed=42)
         assert np.all(paths > 0)
         assert paths[0, 0] == 120.0

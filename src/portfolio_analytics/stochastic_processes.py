@@ -221,10 +221,8 @@ class PathSimulation(ABC):
 
     Methods
     =======
-    generate_time_grid:
-        returns time grid for simulation
     simulate:
-        returns the current instrument values (array)
+        returns simulated instrument value paths (array)
     """
 
     def __init__(
@@ -307,38 +305,25 @@ class PathSimulation(ABC):
     def correlation_context(self) -> CorrelationContext | None:
         return self._correlation_context
 
-    def generate_time_grid(self) -> None:
-        "Generate time grid for simulation of stochastic process."
-        self.time_grid = self._build_time_grid()
-
     def _build_time_grid(self) -> np.ndarray:
+        """Build a sorted datetime time grid from the simulation configuration."""
         start = self.pricing_date
         end = self.end_date
 
         if self.num_steps is not None:
-            grid = pd.date_range(
-                start=start,
-                end=end,
-                periods=int(self.num_steps) + 1,
+            dates = pd.date_range(
+                start=start, end=end, periods=int(self.num_steps) + 1
             ).to_pydatetime()
         else:
-            grid = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
+            dates = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
 
-        time_grid = list(grid)
-        if start not in time_grid:
-            time_grid.insert(0, start)
-        if end not in time_grid:
-            time_grid.append(end)
-
-        if self.special_dates:
-            time_grid.extend(self.special_dates)
-            time_grid = sorted(set(time_grid))
-
-        return np.array(time_grid)
+        # Merge generated dates with required boundary + special dates
+        all_dates = set(dates) | {start, end} | self.special_dates
+        return np.array(sorted(all_dates))
 
     def _ensure_time_grid(self) -> None:
         if self.time_grid is None:
-            self.generate_time_grid()
+            self.time_grid = self._build_time_grid()
 
     def _time_deltas(self) -> np.ndarray:
         self._ensure_time_grid()
@@ -490,7 +475,7 @@ class PathSimulation(ABC):
                 cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
             elif "special_dates" in kwargs:
                 # Lazy-build mode: null the grid so _build_time_grid picks up
-                # the updated special_dates on next generate_time_grid() call.
+                # the updated special_dates on next _ensure_time_grid() call.
                 cloned.time_grid = None
 
         # Update market_data if any related fields were overridden
@@ -526,12 +511,12 @@ class PathSimulation(ABC):
         Returns
         =======
         np.ndarray
-            simulated instrument value paths
+            simulated instrument value paths, shape (time_steps, paths)
         """
-        return self.generate_paths(random_seed=random_seed)
+        return self._generate_paths(random_seed=random_seed)
 
     @abstractmethod
-    def generate_paths(
+    def _generate_paths(
         self,
         random_seed: int | None = None,
     ) -> np.ndarray:
@@ -544,13 +529,8 @@ class PathSimulation(ABC):
         ==========
         random_seed: int, optional
             random seed for reproducibility
-
-        Raises
-        ======
-        NotImplementedError
-            if subclass does not implement this method
         """
-        raise NotImplementedError("Subclasses must implement generate_paths method")
+        raise NotImplementedError
 
 
 class GBMProcess(PathSimulation):
@@ -558,7 +538,7 @@ class GBMProcess(PathSimulation):
     the Black-Scholes-Merton geometric Brownian motion model.
     """
 
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+    def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate geometric Brownian motion paths.
 
         Implements the classic Black-Scholes-Merton model:
@@ -684,7 +664,7 @@ class JDProcess(PathSimulation):
     def delta(self) -> float:
         return self._process_params.delta
 
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+    def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         self._ensure_time_grid()
 
         steps = len(self.time_grid)
@@ -816,7 +796,7 @@ class SRDProcess(PathSimulation):
     def theta(self) -> float:
         return self._process_params.theta
 
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+    def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
         self._ensure_time_grid()
 

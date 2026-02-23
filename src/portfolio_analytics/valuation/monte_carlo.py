@@ -53,12 +53,31 @@ def _warn_if_high_std_error(
         )
 
 
-def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
-    """Return the index of *target* in *time_grid*, raising ValueError if absent."""
-    idx = np.where(time_grid == target)[0]
-    if idx.size == 0:
-        raise ValidationError(f"{label} not in underlying time_grid.")
-    return int(idx[0])
+def _resolve_time_index(time_grid: np.ndarray, target, label: str) -> int:
+    """Return the index of the entry in *time_grid* closest to *target*.
+
+    Uses ``np.searchsorted`` on year-fraction offsets so that minor
+    datetime rounding (e.g. microseconds from ``pd.date_range``) does not
+    cause a lookup failure.  Raises ``ValidationError`` if the nearest
+    grid point is more than ~1 second away.
+    """
+    if len(time_grid) == 0:
+        raise ValidationError(f"{label}: time_grid is empty.")
+
+    # Fast path: exact object match (covers the common case)
+    exact = np.where(time_grid == target)[0]
+    if exact.size > 0:
+        return int(exact[0])
+
+    # Tolerance-based fallback: compare as year fractions from grid[0]
+    ref = time_grid[0]
+    target_yf = calculate_year_fraction(ref, target)
+    grid_yf = np.array([calculate_year_fraction(ref, t) for t in time_grid], dtype=float)
+    idx = int(np.argmin(np.abs(grid_yf - target_yf)))
+    # ~1 second tolerance expressed as year fraction
+    if abs(grid_yf[idx] - target_yf) > 1.0 / (365.25 * 86400):
+        raise ValidationError(f"{label} not found in underlying time_grid.")
+    return idx
 
 
 def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) -> np.ndarray:
@@ -96,7 +115,7 @@ class _MCEuropeanValuation:
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
 
-        time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
         maturity_value = paths[time_index_end]
 
         K = self.parent.strike
@@ -159,8 +178,8 @@ class _MCAmericanValuation:
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
-        time_index_start = _find_time_index(time_grid, self.parent.pricing_date, "Pricing date")
-        time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+        time_index_start = _resolve_time_index(time_grid, self.parent.pricing_date, "Pricing date")
+        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
         instrument_values = paths[time_index_start : time_index_end + 1]
 
@@ -259,16 +278,8 @@ class _MCAsianValuation:
         averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
 
         # Find indices for averaging period
-        idx_start = np.where(time_grid == averaging_start)[0]
-        idx_end = np.where(time_grid == self.parent.maturity)[0]
-
-        if idx_start.size == 0:
-            raise ValidationError(f"averaging_start {averaging_start} not in underlying time_grid.")
-        if idx_end.size == 0:
-            raise ValidationError(f"maturity {self.parent.maturity} not in underlying time_grid.")
-
-        time_index_start = int(idx_start[0])
-        time_index_end = int(idx_end[0])
+        time_index_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
         # Extract paths over averaging period (inclusive)
         averaging_paths = paths[time_index_start : time_index_end + 1, :]
@@ -435,8 +446,8 @@ class _MCAsianAmericanValuation:
         spec = self.spec
         averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
 
-        idx_start = _find_time_index(time_grid, averaging_start, "averaging_start")
-        idx_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+        idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+        idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
         averaging_paths = paths[idx_start : idx_end + 1]
         running_avg = _running_averages(averaging_paths, spec.averaging)
