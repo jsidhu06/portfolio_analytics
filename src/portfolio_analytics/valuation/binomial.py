@@ -122,6 +122,7 @@ class _BinomialValuationBase:
                 curve_date=time_intervals[0],
                 end_date=time_intervals[-1],
                 discount_curve=discount_curve,
+                include_start=True,
             )
             spot = max(spot - pv_all, 0.0)
 
@@ -130,6 +131,9 @@ class _BinomialValuationBase:
         if not discrete_dividends:
             return lattice
 
+        # Escrowed-dividend add-back: at each time step, restore the PV of
+        # dividends that have NOT yet gone ex.  Use include_start=False so
+        # a dividend going ex at exactly *t* is treated as already paid.
         pv_remaining = np.array(
             [
                 pv_discrete_dividends(
@@ -138,6 +142,7 @@ class _BinomialValuationBase:
                     end_date=time_intervals[-1],
                     discount_curve=discount_curve,
                     start_date=t,
+                    include_start=False,
                 )
                 for t in time_intervals
             ],
