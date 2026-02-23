@@ -223,7 +223,7 @@ class PathSimulation(ABC):
     =======
     generate_time_grid:
         returns time grid for simulation
-    get_instrument_values:
+    simulate:
         returns the current instrument values (array)
     """
 
@@ -515,7 +515,7 @@ class PathSimulation(ABC):
 
         return cloned
 
-    def get_instrument_values(self, random_seed: int | None = None) -> np.ndarray:
+    def simulate(self, random_seed: int | None = None) -> np.ndarray:
         """Generate and return simulated instrument value paths.
 
         Parameters
@@ -553,7 +553,7 @@ class PathSimulation(ABC):
         raise NotImplementedError("Subclasses must implement generate_paths method")
 
 
-class GeometricBrownianMotion(PathSimulation):
+class GBMProcess(PathSimulation):
     """Class to generate simulated paths based on
     the Black-Scholes-Merton geometric Brownian motion model.
     """
@@ -649,7 +649,7 @@ class GeometricBrownianMotion(PathSimulation):
         return paths
 
 
-class JumpDiffusion(PathSimulation):
+class JDProcess(PathSimulation):
     """Merton (1976) jump diffusion (lognormal jumps).
 
     Risk-neutral discretisation (per step Δt):
@@ -789,7 +789,7 @@ class JumpDiffusion(PathSimulation):
         return paths
 
 
-class SquareRootDiffusion(PathSimulation):
+class SRDProcess(PathSimulation):
     """Cox–Ingersoll–Ross (1985) square-root diffusion (CIR/SRD).
 
     Model (under chosen measure):

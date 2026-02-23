@@ -20,7 +20,7 @@ from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.utils import pv_discrete_dividends
@@ -55,7 +55,7 @@ def _gbm_underlying(
     maturity: dt.datetime,
     paths: int,
     num_steps: int,
-) -> GeometricBrownianMotion:
+) -> GBMProcess:
     sim_config = SimulationConfig(
         paths=paths,
         day_count_convention=DayCountConvention.ACT_365F,
@@ -68,7 +68,7 @@ def _gbm_underlying(
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
-    return GeometricBrownianMotion(
+    return GBMProcess(
         "gbm",
         _market_data(short_rate, maturity),
         gbm_params,
@@ -561,7 +561,7 @@ class TestAmericanAsianMC:
         maturity: dt.datetime | None = None,
         paths: int | None = None,
         dividend_curve: DiscountCurve | None = None,
-    ) -> GeometricBrownianMotion:
+    ) -> GBMProcess:
         return _gbm_underlying(
             spot=spot or self.SPOT,
             vol=vol or self.VOL,

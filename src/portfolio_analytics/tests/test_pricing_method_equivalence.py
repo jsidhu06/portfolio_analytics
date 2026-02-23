@@ -21,7 +21,7 @@ from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.utils import pv_discrete_dividends
@@ -75,7 +75,7 @@ def _gbm(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     paths: int = 200_000,
     name: str = "gbm",
-) -> GeometricBrownianMotion:
+) -> GBMProcess:
     sim_config = SimulationConfig(
         paths=paths,
         day_count_convention=DayCountConvention.ACT_365F,
@@ -88,7 +88,7 @@ def _gbm(
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
-    return GeometricBrownianMotion(name, _market_data(r_curve), gbm_params, sim_config)
+    return GBMProcess(name, _market_data(r_curve), gbm_params, sim_config)
 
 
 def _spec(*, strike: float, option_type: OptionType, exercise_type: ExerciseType) -> OptionSpec:

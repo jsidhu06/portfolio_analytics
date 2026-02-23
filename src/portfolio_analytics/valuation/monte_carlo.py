@@ -93,7 +93,7 @@ class _MCEuropeanValuation:
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
-        paths = self.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
 
         time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
@@ -157,7 +157,7 @@ class _MCAmericanValuation:
         =======
         tuple of (instrument_values, payoff, time_index_start, time_index_end)
         """
-        paths = self.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
         time_index_start = _find_time_index(time_grid, self.parent.pricing_date, "Pricing date")
         time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
@@ -251,7 +251,7 @@ class _MCAsianValuation:
         np.ndarray
             Payoff for each path based on the average spot price
         """
-        paths = self.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
 
         # Determine averaging period
@@ -430,7 +430,7 @@ class _MCAsianAmericanValuation:
             intrinsic       : (N_obs, n_paths) intrinsic payoff at each date
             time_list       : (N_obs,) datetime time grid for the averaging window
         """
-        paths = self.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
         spec = self.spec
         averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date

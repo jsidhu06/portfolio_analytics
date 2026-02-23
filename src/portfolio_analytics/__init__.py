@@ -21,9 +21,9 @@ from .stochastic_processes import (
     GBMParams,
     JDParams,
     SRDParams,
-    GeometricBrownianMotion,
-    JumpDiffusion,
-    SquareRootDiffusion,
+    GBMProcess,
+    JDProcess,
+    SRDProcess,
     PathSimulation,
 )
 from .enums import (
@@ -61,9 +61,9 @@ __all__ = [
     "GBMParams",
     "JDParams",
     "SRDParams",
-    "GeometricBrownianMotion",
-    "JumpDiffusion",
-    "SquareRootDiffusion",
+    "GBMProcess",
+    "JDProcess",
+    "SRDProcess",
     "PathSimulation",
     # Enums
     "OptionType",

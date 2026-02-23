@@ -4,9 +4,9 @@ import numpy as np
 from portfolio_analytics.exceptions import ConfigurationError, ValidationError
 from portfolio_analytics.stochastic_processes import (
     PathSimulation,
-    GeometricBrownianMotion,
-    SquareRootDiffusion,
-    JumpDiffusion,
+    GBMProcess,
+    SRDProcess,
+    JDProcess,
     GBMParams,
     JDParams,
     SRDParams,
@@ -40,8 +40,8 @@ class TestPathSimulation:
             PathSimulation("test_name", market_data, process_params, sim, corr=None)
 
 
-class TestGeometricBrownianMotion:
-    """Tests for the GeometricBrownianMotion class"""
+class TestGBMProcess:
+    """Tests for the GBMProcess class"""
 
     def setup_method(self):
         """Set up market environment for GBM tests"""
@@ -55,7 +55,7 @@ class TestGeometricBrownianMotion:
             frequency="ME",
             end_date=self.end_date,
         )
-        self.gbm = GeometricBrownianMotion(
+        self.gbm = GBMProcess(
             "gbm_test",
             self.market_data,
             self.process_params,
@@ -69,7 +69,7 @@ class TestGeometricBrownianMotion:
         paths_1 = self.gbm.generate_paths(random_seed=1000).copy()
 
         # Create a new instance and generate again with same seed
-        gbm_2 = GeometricBrownianMotion(
+        gbm_2 = GBMProcess(
             "gbm_test_2",
             self.market_data,
             self.process_params,
@@ -115,9 +115,9 @@ class TestGeometricBrownianMotion:
         assert self.gbm.time_grid[0] == self.market_data.pricing_date
         assert self.gbm.time_grid[-1] == self.sim.end_date
 
-    def test_get_instrument_values(self):
-        """Test get_instrument_values method."""
-        values = self.gbm.get_instrument_values(random_seed=42)
+    def test_simulate(self):
+        """Test simulate method."""
+        values = self.gbm.simulate(random_seed=42)
 
         # Should return the instrument values array
         assert values is not None
@@ -128,14 +128,14 @@ class TestGeometricBrownianMotion:
         low_vol_params = GBMParams(initial_value=100.0, volatility=0.05)
         high_vol_params = GBMParams(initial_value=100.0, volatility=0.5)
 
-        gbm_low = GeometricBrownianMotion(
+        gbm_low = GBMProcess(
             "gbm_low_vol",
             self.market_data,
             low_vol_params,
             self.sim,
         )
 
-        gbm_high = GeometricBrownianMotion(
+        gbm_high = GBMProcess(
             "gbm_high_vol",
             self.market_data,
             high_vol_params,
@@ -167,7 +167,7 @@ class TestGeometricBrownianMotion:
             end_date=dt.datetime(2026, 1, 1),
         )
 
-        gbm = GeometricBrownianMotion("gbm_drift", market_data, process_params, sim_config)
+        gbm = GBMProcess("gbm_drift", market_data, process_params, sim_config)
         paths = gbm.generate_paths(random_seed=42)
 
         # Calculate mean return
@@ -183,8 +183,8 @@ class TestGeometricBrownianMotion:
         assert np.abs(mean_return - expected_drift) < 0.01
 
 
-class TestSquareRootDiffusion:
-    """Tests for the SquareRootDiffusion (CIR) class."""
+class TestSRDProcess:
+    """Tests for the SRDProcess (CIR) class."""
 
     def setup_method(self):
         """Set up market environment for SRD tests."""
@@ -203,7 +203,7 @@ class TestSquareRootDiffusion:
             frequency="D",
             end_date=self.end_date,
         )
-        self.srd = SquareRootDiffusion(
+        self.srd = SRDProcess(
             "srd_test",
             self.market_data,
             self.process_params,
@@ -238,7 +238,7 @@ class TestSquareRootDiffusion:
             end_date=dt.datetime(2030, 1, 1),  # 5 years
         )
 
-        srd_long = SquareRootDiffusion(
+        srd_long = SRDProcess(
             "srd_long",
             self.market_data,
             self.process_params,
@@ -264,7 +264,7 @@ class TestSquareRootDiffusion:
         """Test SRD reproducibility with same seed."""
         paths1 = self.srd.generate_paths(random_seed=123).copy()
 
-        srd2 = SquareRootDiffusion(
+        srd2 = SRDProcess(
             "srd_test2",
             self.market_data,
             self.process_params,
@@ -276,8 +276,8 @@ class TestSquareRootDiffusion:
         np.testing.assert_array_equal(paths1, paths2)
 
 
-class TestJumpDiffusion:
-    """Tests for the JumpDiffusion (Merton) class."""
+class TestJDProcess:
+    """Tests for the JDProcess (Merton) class."""
 
     def setup_method(self):
         """Set up market environment for Jump Diffusion tests."""
@@ -297,7 +297,7 @@ class TestJumpDiffusion:
             frequency="D",
             end_date=self.end_date,
         )
-        self.jd = JumpDiffusion(
+        self.jd = JDProcess(
             "jd_test",
             self.market_data,
             self.process_params,
@@ -335,7 +335,7 @@ class TestJumpDiffusion:
             initial_value=self.process_params.initial_value,
             volatility=self.process_params.volatility,
         )
-        gbm = GeometricBrownianMotion(
+        gbm = GBMProcess(
             "gbm_comparable",
             self.market_data,
             gbm_params,
@@ -355,7 +355,7 @@ class TestJumpDiffusion:
         """Test JD reproducibility with same seed."""
         paths1 = self.jd.generate_paths(random_seed=456).copy()
 
-        jd2 = JumpDiffusion(
+        jd2 = JDProcess(
             "jd_test2",
             self.market_data,
             self.process_params,
@@ -376,7 +376,7 @@ class TestJumpDiffusion:
             delta=0.0,
         )
 
-        jd_no_jump = JumpDiffusion(
+        jd_no_jump = JDProcess(
             "jd_no_jump",
             self.market_data,
             no_jump_params,
@@ -517,9 +517,7 @@ class TestVarianceReduction:
             antithetic=antithetic,
             moment_matching=moment_matching,
         )
-        return GeometricBrownianMotion(
-            "vr_test", self.market_data, self.process_params, sim, corr=None
-        )
+        return GBMProcess("vr_test", self.market_data, self.process_params, sim, corr=None)
 
     def test_defaults_are_true(self):
         """SimulationConfig defaults to antithetic=True, moment_matching=True."""
@@ -614,23 +612,21 @@ class TestPathSimulationReplace:
             frequency="ME",
             end_date=self.end_date,
         )
-        self.gbm = GeometricBrownianMotion(
-            "gbm_orig", self.market_data, self.process_params, self.sim
-        )
+        self.gbm = GBMProcess("gbm_orig", self.market_data, self.process_params, self.sim)
 
     # --- Type preservation ---
 
     def test_replace_returns_same_concrete_type(self):
         """replace() on a GBM should return a GBM, not a bare PathSimulation."""
         cloned = self.gbm.replace(initial_value=105.0)
-        assert type(cloned) is GeometricBrownianMotion
+        assert type(cloned) is GBMProcess
 
     def test_replace_jd_returns_jd(self):
-        """replace() on a JumpDiffusion should return a JumpDiffusion."""
+        """replace() on a JDProcess should return a JDProcess."""
         jd_params = JDParams(initial_value=100.0, volatility=0.2, lambd=0.5, mu=-0.1, delta=0.3)
-        jd = JumpDiffusion("jd_orig", self.market_data, jd_params, self.sim)
+        jd = JDProcess("jd_orig", self.market_data, jd_params, self.sim)
         cloned = jd.replace(initial_value=110.0)
-        assert type(cloned) is JumpDiffusion
+        assert type(cloned) is JDProcess
         assert cloned.initial_value == 110.0
 
     # --- Process param routing ---
@@ -670,9 +666,7 @@ class TestPathSimulationReplace:
     def test_replace_num_steps(self):
         """replace(num_steps=...) routes to sim config."""
         sim_steps = SimulationConfig(paths=1000, num_steps=50, end_date=self.end_date)
-        gbm_steps = GeometricBrownianMotion(
-            "gbm_steps", self.market_data, self.process_params, sim_steps
-        )
+        gbm_steps = GBMProcess("gbm_steps", self.market_data, self.process_params, sim_steps)
         cloned = gbm_steps.replace(num_steps=100)
         assert cloned.num_steps == 100
         assert cloned.time_grid is None  # grid-shaping param changed
@@ -725,7 +719,7 @@ class TestPathSimulationReplace:
             ]
         )
         sim_explicit = SimulationConfig(paths=1000, time_grid=explicit_grid)
-        gbm_explicit = GeometricBrownianMotion(
+        gbm_explicit = GBMProcess(
             "gbm_explicit", self.market_data, self.process_params, sim_explicit
         )
 
@@ -785,7 +779,7 @@ class TestPathSimulationReplace:
         """Replacing a param not on the process_params type should raise."""
         # SRD doesn't have dividend_curve
         srd_params = SRDParams(initial_value=0.03, volatility=0.015, kappa=0.2, theta=0.05)
-        srd = SquareRootDiffusion("srd", self.market_data, srd_params, self.sim)
+        srd = SRDProcess("srd", self.market_data, srd_params, self.sim)
         with pytest.raises(ValidationError, match="dividend_curve.*not supported"):
             srd.replace(dividend_curve=self.curve)
 

@@ -21,7 +21,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.tests.helpers import flat_curve
@@ -99,7 +99,7 @@ def _gbm_underlying(
     paths: int,
     num_steps: int,
     dividend_yield: float = 0.0,
-) -> GeometricBrownianMotion:
+) -> GBMProcess:
     q_curve = (
         None
         if dividend_yield == 0.0
@@ -112,7 +112,7 @@ def _gbm_underlying(
         end_date=maturity,
     )
     params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=q_curve)
-    return GeometricBrownianMotion(
+    return GBMProcess(
         "gbm",
         _market_data(short_rate, maturity),
         params,
