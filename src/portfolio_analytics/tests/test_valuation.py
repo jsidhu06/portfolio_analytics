@@ -31,7 +31,7 @@ from portfolio_analytics.enums import (
     PositionSide,
 )
 from portfolio_analytics.stochastic_processes import (
-    GeometricBrownianMotion,
+    GBMProcess,
     GBMParams,
     SimulationConfig,
 )
@@ -279,7 +279,7 @@ class TestOptionValuation:
             frequency="D",
             end_date=self.maturity,
         )
-        gbm = GeometricBrownianMotion(
+        gbm = GBMProcess(
             "gbm_test",
             self.market_data,
             gbm_params,
@@ -312,13 +312,13 @@ class TestOptionValuation:
             time_grid=time_grid,
         )
 
-        gbm_no_div = GeometricBrownianMotion(
+        gbm_no_div = GBMProcess(
             "gbm_no_div",
             self.market_data,
             gbm_params_no_div,
             sim_config,
         )
-        gbm_div = GeometricBrownianMotion(
+        gbm_div = GBMProcess(
             "gbm_div",
             self.market_data,
             gbm_params_div,
@@ -457,7 +457,7 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
-        gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
+        gbm = GBMProcess("gbm", self.market_data, process_params, simulation_config)
 
         strikes = (50.0, 90.0, 110.0, 150.0)
         condor_spec = CondorSpec(
@@ -519,7 +519,7 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=initial_value, volatility=volatility)
-        gbm = GeometricBrownianMotion("gbm", self.market_data, process_params, simulation_config)
+        gbm = GBMProcess("gbm", self.market_data, process_params, simulation_config)
 
         strikes = (50.0, 90.0, 110.0, 150.0)
         condor_spec = CondorSpec(
@@ -624,7 +624,7 @@ class TestOptionValuation:
         # Monte Carlo (PathSimulation) American via LSM
         gbm_params = GBMParams(initial_value=100.0, volatility=0.2)
         sim_config = SimulationConfig(paths=20000, frequency="W", end_date=self.maturity)
-        gbm = GeometricBrownianMotion("gbm_custom", self.market_data, gbm_params, sim_config)
+        gbm = GBMProcess("gbm_custom", self.market_data, gbm_params, sim_config)
         pv_mcs_am = OptionValuation(
             name="CUSTOM_AM_MCS",
             underlying=gbm,
@@ -704,9 +704,7 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
-        gbm = GeometricBrownianMotion(
-            "gbm_am_condor", self.market_data, process_params, simulation_config
-        )
+        gbm = GBMProcess("gbm_am_condor", self.market_data, process_params, simulation_config)
 
         strikes = (50.0, 90.0, 110.0, 150.0)
         condor_spec = CondorSpec(
@@ -798,7 +796,7 @@ class TestOptionValuation:
 
     def test_option_valuation_binomial_rejects_path_simulation(self):
         """Test that Binomial pricing rejects PathSimulation (should use UnderlyingPricingData)."""
-        process = GeometricBrownianMotion(
+        process = GBMProcess(
             name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
@@ -821,7 +819,7 @@ class TestOptionValuation:
 
     def test_option_valuation_bsm_rejects_path_simulation(self):
         """Test that BSM pricing rejects PathSimulation (should use UnderlyingPricingData)."""
-        process = GeometricBrownianMotion(
+        process = GBMProcess(
             name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
@@ -844,7 +842,7 @@ class TestOptionValuation:
 
     def test_option_valuation_pde_rejects_path_simulation(self):
         """Test that PDE_FD pricing rejects PathSimulation (should use UnderlyingPricingData)."""
-        process = GeometricBrownianMotion(
+        process = GBMProcess(
             name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),

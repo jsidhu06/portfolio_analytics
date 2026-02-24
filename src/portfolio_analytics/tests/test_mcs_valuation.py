@@ -8,7 +8,7 @@ from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.tests.helpers import flat_curve
@@ -45,7 +45,7 @@ class TestMCSValuation:
             end_date=self.maturity,
         )
 
-        gbm = GeometricBrownianMotion(
+        gbm = GBMProcess(
             "gbm_call",
             self.market_data,
             gbm_params,
@@ -83,7 +83,7 @@ class TestMCSValuation:
             end_date=self.maturity,
         )
 
-        gbm = GeometricBrownianMotion(
+        gbm = GBMProcess(
             "gbm_put",
             self.market_data,
             gbm_params,
@@ -129,7 +129,7 @@ class TestMCSValuation:
         )
 
         # First valuation
-        gbm1 = GeometricBrownianMotion(
+        gbm1 = GBMProcess(
             "gbm1",
             self.market_data,
             gbm_params,
@@ -147,7 +147,7 @@ class TestMCSValuation:
         pv1 = val1.present_value()
 
         # Second valuation with same seed
-        gbm2 = GeometricBrownianMotion(
+        gbm2 = GBMProcess(
             "gbm2",
             self.market_data,
             gbm_params,
@@ -176,7 +176,7 @@ class TestMCSValuation:
             end_date=self.maturity,
         )
 
-        gbm = GeometricBrownianMotion(
+        gbm = GBMProcess(
             "gbm_am",
             self.market_data,
             gbm_params,
@@ -242,7 +242,7 @@ class TestMCSValuation:
             end_date=self.maturity,
         )
 
-        gbm = GeometricBrownianMotion(
+        gbm = GBMProcess(
             "gbm_full",
             self.market_data,
             gbm_params,

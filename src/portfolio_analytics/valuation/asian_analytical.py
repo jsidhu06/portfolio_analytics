@@ -46,7 +46,7 @@ from ..exceptions import (
 from ..utils import calculate_year_fraction
 
 if TYPE_CHECKING:
-    from .core import OptionValuation
+    from .core import OptionValuation, AsianOptionSpec
 
 
 logger = logging.getLogger(__name__)
@@ -150,13 +150,19 @@ def _asian_geometric_analytical(
     # Forward of geometric average: E[G] = exp(M₁ + M₂/2)
     F_G = np.exp(M1 + 0.5 * M2)
 
+    # Discount to present
+    df = np.exp(-r * T)
+
+    # Edge case: K = 0 → deep ITM, value is just discounted forward of average
+    if K == 0.0:
+        if option_type is OptionType.CALL:
+            return float(df * F_G)
+        return 0.0
+
     # d-values (Black-Scholes on G)
     vol_sqrt = np.sqrt(M2)
     d1 = (np.log(F_G / K) + 0.5 * M2) / vol_sqrt
     d2 = d1 - vol_sqrt
-
-    # Discount to present
-    df = np.exp(-r * T)
 
     if option_type is OptionType.CALL:
         return float(df * (F_G * norm.cdf(d1) - K * norm.cdf(d2)))
@@ -281,6 +287,14 @@ def _asian_arithmetic_analytical(
     sigma_a = np.sqrt(sigma_a_sq)
 
     # ── Black's model with F₀ = M₁ ──
+    df = np.exp(-r * T)
+
+    # Edge case: K = 0 → deep ITM, value is just discounted first moment
+    if K == 0.0:
+        if option_type is OptionType.CALL:
+            return float(df * M1)
+        return 0.0
+
     vol_sqrt_T = sigma_a * np.sqrt(T)
     d1 = (np.log(M1 / K) + 0.5 * sigma_a_sq * T) / vol_sqrt_T
     d2 = d1 - vol_sqrt_T
@@ -304,7 +318,8 @@ class _AnalyticalAsianValuation:
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
-        spec = parent.spec
+        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        spec = self.spec
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
                 "Analytical (BSM) Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
@@ -337,7 +352,7 @@ class _AnalyticalAsianValuation:
         Dispatches to the Kemna-Vorst formula (geometric) or the
         Turnbull-Wakeman moment-matching approximation (arithmetic).
         """
-        spec = self.parent.spec
+        spec = self.spec
         spot = float(self.parent.underlying.initial_value)
         strike = float(spec.strike)
         volatility = float(self.parent.underlying.volatility)

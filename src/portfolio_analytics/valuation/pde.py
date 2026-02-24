@@ -60,10 +60,10 @@ def _solve_tridiagonal_thomas(
         raise ValidationError("lower/upper must have length n-1")
 
     # Copy to avoid mutating inputs
-    c = upper.astype(float, copy=True)
-    d = diag.astype(float, copy=True)
-    b = lower.astype(float, copy=True)
-    y = rhs.astype(float, copy=True)
+    c: np.ndarray = upper.astype(float, copy=True)
+    d: np.ndarray = diag.astype(float, copy=True)
+    b: np.ndarray = lower.astype(float, copy=True)
+    y: np.ndarray = rhs.astype(float, copy=True)
 
     # Forward elimination
     for i in range(1, n):
@@ -72,7 +72,7 @@ def _solve_tridiagonal_thomas(
         y[i] -= w * y[i - 1]
 
     # Back substitution
-    x = np.empty(n, dtype=float)
+    x: np.ndarray = np.empty(n, dtype=float)
     x[-1] = y[-1] / d[-1]
     for i in range(n - 2, -1, -1):
         x[i] = (y[i] - c[i] * x[i + 1]) / d[i]
@@ -99,19 +99,23 @@ def _dividend_tau_schedule(
     pricing_date: dt.datetime,
     maturity: dt.datetime,
 ) -> list[tuple[float, float]]:
-    """Return list of (tau, amount) for dividends strictly before maturity."""
+    """Return list of (tau, amount) for dividends between pricing_date and maturity.
+
+    The range is closed: ``0.0 <= tau <= ttm``.  Boundary values (tau=0 for
+    maturity-date dividends, tau=ttm for pricing-date dividends) are included
+    so that ``_vanilla_fd_core`` can apply them as special-case jumps.
+    """
     if not discrete_dividends:
         return []
 
     ttm = calculate_year_fraction(pricing_date, maturity)
     schedule: dict[float, float] = {}
     for ex_date, amount in discrete_dividends:
-        if pricing_date < ex_date < maturity:
+        if pricing_date <= ex_date <= maturity:
             t = calculate_year_fraction(pricing_date, ex_date)
             tau = ttm - t
-            if 0.0 < tau < ttm:
-                key = round(float(tau), 12)
-                schedule[key] = schedule.get(key, 0.0) + float(amount)
+            key = round(float(tau), 12)
+            schedule[key] = schedule.get(key, 0.0) + float(amount)
     return sorted(schedule.items())
 
 
@@ -306,8 +310,8 @@ def _psor_solve(
     A_lower: np.ndarray,
     A_diag: np.ndarray,
     A_upper: np.ndarray,
-    V_left: float,
-    V_right: float,
+    V_left: float | np.floating,
+    V_right: float | np.floating,
     omega: float,
     tol: float,
     max_iter: int,
@@ -391,8 +395,8 @@ def _implicit_cn_step(
                 A_lower,
                 A_diag,
                 A_upper,
-                V[0],
-                V[-1],
+                float(V[0]),
+                float(V[-1]),
                 float(omega),
                 float(tol),
                 int(max_iter),
@@ -572,6 +576,7 @@ def _vanilla_fd_core(
 
     j = np.arange(1, spot_steps)  # interior indices 1..M-1
 
+    # Standard terminal payoff at maturity
     if option_type is OptionType.PUT:
         payoff = np.maximum(strike - S, 0.0)
     else:
@@ -581,9 +586,24 @@ def _vanilla_fd_core(
     intrinsic = payoff if early_exercise else None
 
     schedule = dividend_schedule or []
-    dividend_taus = [tau for tau, _ in schedule]
-    tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
     dividend_map = {round(tau, 12): amount for tau, amount in schedule}
+
+    # Maturity-date dividend (tau=0): apply as an immediate jump
+    # V(S,T⁻)=V(S-D,T⁺) right after setting the terminal condition.
+    mat_div = dividend_map.pop(0.0, None)
+    if mat_div is not None:
+        _apply_dividend_jump(V, grid, mat_div, space_grid=space_grid)
+        if early_exercise:
+            V[:] = np.maximum(V, payoff)
+
+    # Pricing-date dividend (tau=ttm): will be applied as a spot shift
+    # at interpolation time.  Remove from the map so it's not applied
+    # as a mid-grid jump during time-stepping.
+    ttm_key = round(time_to_maturity, 12)
+    pricing_div = dividend_map.pop(ttm_key, None)
+
+    dividend_taus = list(dividend_map.keys())
+    tau_grid = _build_tau_grid(time_to_maturity, time_steps, dividend_taus)
 
     if method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL) and space_grid is PDESpaceGrid.SPOT:
         _check_explicit_spot_stability(
@@ -633,7 +653,7 @@ def _vanilla_fd_core(
                 hull_discounting=hull_discounting,
             )
         else:
-            gamma, beta, alpha = _log_operator_coeffs(
+            gamma, beta, alpha = _log_operator_coeffs(  # type: ignore[assignment]
                 dz=dz,
                 risk_free_rate=r,
                 dividend_rate=q,
@@ -642,10 +662,10 @@ def _vanilla_fd_core(
             )
 
         df_0t = float(discount_curve.df(t_curr))
-        df_tT = df_0T / df_0t
+        df_tT: float = df_0T / df_0t
         if dividend_curve is not None:
             dq_0t = float(dividend_curve.df(t_curr))
-            dq_tT = dq_0T / dq_0t
+            dq_tT: float = dq_0T / dq_0t  # type: ignore[operator]
         else:
             dq_tT = float(np.exp(-q * tau_curr))
 
@@ -719,7 +739,10 @@ def _vanilla_fd_core(
             psor_not_converged,
         )
 
-    price = np.interp(spot, S, V)
+    # Apply pricing-date dividend: the input spot is cum-dividend, so
+    # interpolate at S₀ − D to get the ex-dividend option value.
+    interp_spot = spot - pricing_div if pricing_div is not None else spot
+    price = np.interp(interp_spot, S, V)
     return price, S, V
 
 
@@ -828,8 +851,6 @@ class _FDEuropeanValuation:
         )
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
-        if strike is None:
-            raise ValidationError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve
@@ -899,8 +920,6 @@ class _FDAmericanValuation:
         )
         spot = float(self.parent.underlying.initial_value)
         strike = self.parent.strike
-        if strike is None:
-            raise ValidationError("strike is required for PDE FD valuation")
 
         volatility = float(self.parent.underlying.volatility)
         discount_curve = self.parent.discount_curve

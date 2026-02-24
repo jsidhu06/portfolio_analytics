@@ -48,6 +48,72 @@ class DiscountCurve:
         object.__setattr__(self, "dfs", df)
 
     @classmethod
+    def from_forwards(
+        cls,
+        name: str,
+        times: np.ndarray,
+        forwards: np.ndarray,
+    ) -> "DiscountCurve":
+        """Build a curve from piecewise-constant forward rates.
+
+        Parameters
+        ----------
+        name
+            Curve identifier.
+        times
+            Year-fraction grid including 0.  Shape ``(N+1,)``.
+        forwards
+            Continuously-compounded forward rate on each interval.  Shape ``(N,)``.
+        """
+        times = np.asarray(times, dtype=float)
+        forwards = np.asarray(forwards, dtype=float)
+        if times.ndim != 1 or forwards.ndim != 1:
+            raise ValidationError("times and forwards must be 1-D arrays")
+        if times.size < 2:
+            raise ValidationError("times must include at least [0, T]")
+        if forwards.size != times.size - 1:
+            raise ValidationError("forwards must have length len(times) - 1")
+        if not np.isclose(times[0], 0.0):
+            raise ValidationError("times must start at 0.0")
+        dt_steps = np.diff(times)
+        cum_rate = np.concatenate([[0.0], np.cumsum(forwards * dt_steps)])
+        dfs = np.exp(-cum_rate)
+        return cls(name=name, times=times, dfs=dfs)
+
+    @classmethod
+    def from_zero_rates(
+        cls,
+        name: str,
+        times: np.ndarray,
+        zero_rates: np.ndarray,
+    ) -> "DiscountCurve":
+        """Build a curve from continuously-compounded zero (spot) rates.
+
+        Parameters
+        ----------
+        name
+            Curve identifier.
+        times
+            Year-fraction grid.  Shape ``(N,)``.
+            Must be strictly increasing and start at 0.
+        zero_rates
+            Continuously-compounded zero rates at each time.  Shape ``(N,)``.
+            The rate at ``times[0] = 0`` is cosmetic (DF is always 1 there).
+        """
+        times = np.asarray(times, dtype=float)
+        zero_rates = np.asarray(zero_rates, dtype=float)
+        if times.ndim != 1 or zero_rates.ndim != 1:
+            raise ValidationError("times and zero_rates must be 1-D arrays")
+        if times.size != zero_rates.size:
+            raise ValidationError("times and zero_rates must have the same length")
+        if times.size < 2:
+            raise ValidationError("times must include at least [0, T]")
+        if not np.isclose(times[0], 0.0):
+            raise ValidationError("times must start at 0.0")
+        dfs = np.exp(-zero_rates * times)
+        return cls(name=name, times=times, dfs=dfs)
+
+    @classmethod
     def flat(
         cls,
         name: str,
@@ -66,6 +132,14 @@ class DiscountCurve:
     def df(self, t: float | np.ndarray) -> np.ndarray:
         """Log-linear interpolation of discount factors."""
         t = np.asarray(t, dtype=float)
+        t_min, t_max = float(self.times[0]), float(self.times[-1])
+        outside = (t < t_min) | (t > t_max)
+        if np.any(outside):
+            warnings.warn(
+                f"Extrapolating discount curve {self.name!r} outside "
+                f"[{t_min:.4f}, {t_max:.4f}] — flat log-DF assumed",
+                stacklevel=2,
+            )
         log_df = np.log(self.dfs)
         out = np.interp(t, self.times, log_df, left=log_df[0], right=log_df[-1])
         return np.exp(out)

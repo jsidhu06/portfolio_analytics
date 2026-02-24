@@ -19,7 +19,7 @@ from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     PathSimulation,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.valuation import (
@@ -126,13 +126,13 @@ class TestGreeksSetup:
         spot: float | None = None,
         vol: float | None = None,
         dividend_curve: DiscountCurve | None = None,
-    ) -> GeometricBrownianMotion:
+    ) -> GBMProcess:
         params = GBMParams(
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
             dividend_curve=dividend_curve,
         )
-        return GeometricBrownianMotion("gbm", self.market_data, params, self.sim_config)
+        return GBMProcess("gbm", self.market_data, params, self.sim_config)
 
 
 class TestDeltaBasicProperties(TestGreeksSetup):
@@ -690,7 +690,7 @@ class TestGreekImmutability(TestGreeksSetup):
     def test_delta_does_not_mutate_path_simulation(self):
         """Verify delta calculation doesn't mutate PathSimulation.initial_value."""
         # Create PathSimulation
-        process = GeometricBrownianMotion(
+        process = GBMProcess(
             name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=self.spot, volatility=self.volatility),

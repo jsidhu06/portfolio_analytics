@@ -11,7 +11,7 @@ from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.utils import pv_discrete_dividends
@@ -57,7 +57,7 @@ def _build_case():
         end_date=maturity,
     )
     gbm_params = GBMParams(initial_value=spot, volatility=vol, discrete_dividends=divs)
-    gbm = GeometricBrownianMotion("gbm_div", market_data, gbm_params, sim_config)
+    gbm = GBMProcess("gbm_div", market_data, gbm_params, sim_config)
 
     return market_data, spec, underlying, gbm, divs
 
@@ -72,7 +72,7 @@ def test_discrete_dividend_engine_consistency():
     mc_pv = mc_val.present_value()
 
     div_dates = [divs[0][0], divs[1][0]]
-    assert all(div_date in mc_val.underlying.special_dates for div_date in div_dates)
+    assert all(div_date in mc_val.underlying.observation_dates for div_date in div_dates)
     assert all(div_date in mc_val.underlying.time_grid for div_date in div_dates)
     pde_val = OptionValuation(
         "put_pde",

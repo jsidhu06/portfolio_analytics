@@ -6,13 +6,14 @@ import logging
 import numpy as np
 
 from ..utils import calculate_year_fraction, log_timing
-
+from ..stochastic_processes import PathSimulation
 from ..enums import OptionType, AsianAveraging
 from ..exceptions import ConfigurationError, NumericalError, ValidationError
 from .params import MonteCarloParams
 
+
 if TYPE_CHECKING:
-    from .core import OptionValuation
+    from .core import OptionValuation, AsianOptionSpec
 
 
 logger = logging.getLogger(__name__)
@@ -52,12 +53,31 @@ def _warn_if_high_std_error(
         )
 
 
-def _find_time_index(time_grid: np.ndarray, target, label: str) -> int:
-    """Return the index of *target* in *time_grid*, raising ValueError if absent."""
-    idx = np.where(time_grid == target)[0]
-    if idx.size == 0:
-        raise ValidationError(f"{label} not in underlying time_grid.")
-    return int(idx[0])
+def _resolve_time_index(time_grid: np.ndarray, target, label: str) -> int:
+    """Return the index of the entry in *time_grid* closest to *target*.
+
+    Uses ``np.searchsorted`` on year-fraction offsets so that minor
+    datetime rounding (e.g. microseconds from ``pd.date_range``) does not
+    cause a lookup failure.  Raises ``ValidationError`` if the nearest
+    grid point is more than ~1 second away.
+    """
+    if len(time_grid) == 0:
+        raise ValidationError(f"{label}: time_grid is empty.")
+
+    # Fast path: exact object match (covers the common case)
+    exact = np.where(time_grid == target)[0]
+    if exact.size > 0:
+        return int(exact[0])
+
+    # Tolerance-based fallback: compare as year fractions from grid[0]
+    ref = time_grid[0]
+    target_yf = calculate_year_fraction(ref, target)
+    grid_yf = np.array([calculate_year_fraction(ref, t) for t in time_grid], dtype=float)
+    idx = int(np.argmin(np.abs(grid_yf - target_yf)))
+    # ~1 second tolerance expressed as year fraction
+    if abs(grid_yf[idx] - target_yf) > 1.0 / (365.25 * 86400):
+        raise ValidationError(f"{label} not found in underlying time_grid.")
+    return idx
 
 
 def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) -> np.ndarray:
@@ -84,19 +104,22 @@ class _MCEuropeanValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
+        if not isinstance(parent.underlying, PathSimulation):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
+            )
+        self.underlying = parent.underlying
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
-        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
-        time_grid = self.parent.underlying.time_grid
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
+        time_grid = self.underlying.time_grid
 
-        time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
         maturity_value = paths[time_index_end]
 
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            if K is None:
-                raise ValidationError("strike is required for vanilla European call/put payoff.")
             return _vanilla_payoff(self.parent.option_type, K, maturity_value)
 
         payoff_fn = getattr(self.parent.spec, "payoff", None)
@@ -112,7 +135,7 @@ class _MCEuropeanValuation:
         logger.debug(
             "MC European paths=%d time_steps=%d",
             pv_pathwise.size,
-            len(self.parent.underlying.time_grid) - 1,
+            len(self.underlying.time_grid) - 1,
         )
         _warn_if_high_std_error(
             pv_pathwise=pv_pathwise,
@@ -140,31 +163,34 @@ class _MCAmericanValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
+        if not isinstance(parent.underlying, PathSimulation):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
+            )
+        self.underlying = parent.underlying
 
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
 
         Returns
         =======
-        tuple of (instrument_values, payoff, time_index_start, time_index_end)
+        tuple of (spot_paths, payoff, time_index_start, time_index_end)
         """
-        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
-        time_grid = self.parent.underlying.time_grid
-        time_index_start = _find_time_index(time_grid, self.parent.pricing_date, "Pricing date")
-        time_index_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
+        time_grid = self.underlying.time_grid
+        time_index_start = _resolve_time_index(time_grid, self.parent.pricing_date, "Pricing date")
+        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
-        instrument_values = paths[time_index_start : time_index_end + 1]
+        spot_paths = paths[time_index_start : time_index_end + 1]
 
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            if K is None:
-                raise ValidationError("strike is required for vanilla American call/put payoff.")
-            payoff = _vanilla_payoff(self.parent.option_type, K, instrument_values)
+            payoff = _vanilla_payoff(self.parent.option_type, K, spot_paths)
         else:
-            payoff_fn = self.parent.spec.payoff
-            payoff = payoff_fn(instrument_values)
+            payoff_fn = self.parent.spec.payoff  # type: ignore[union-attr]
+            payoff = payoff_fn(spot_paths)
 
-        return instrument_values, payoff, time_index_start, time_index_end
+        return spot_paths, payoff, time_index_start, time_index_end
 
     def present_value(self) -> float:
         """Calculate PV using Longstaff-Schwartz regression method."""
@@ -174,7 +200,7 @@ class _MCAmericanValuation:
         logger.debug(
             "MC American paths=%d time_steps=%d deg=%d",
             pv_pathwise.size,
-            len(self.parent.underlying.time_grid) - 1,
+            len(self.underlying.time_grid) - 1,
             self.mc_params.deg,
         )
         _warn_if_high_std_error(
@@ -187,8 +213,8 @@ class _MCAmericanValuation:
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path (LSM output at pricing date)."""
-        instrument_values, intrinsic_values, time_index_start, time_index_end = self.solve()
-        time_list = self.parent.underlying.time_grid[time_index_start : time_index_end + 1]
+        spot_paths, intrinsic_values, time_index_start, time_index_end = self.solve()
+        time_list = self.underlying.time_grid[time_index_start : time_index_end + 1]
         t_grid = _year_fractions(self.parent.pricing_date, time_list)
         discount_factors = self.parent.discount_curve.df(t_grid)
         values = np.zeros_like(intrinsic_values)
@@ -198,12 +224,12 @@ class _MCAmericanValuation:
             df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic_values[t] > 0
 
-            continuation = np.zeros_like(instrument_values[t])
+            continuation = np.zeros_like(spot_paths[t])
             if np.any(itm):
-                S_itm = instrument_values[t][itm]
+                S_itm = spot_paths[t][itm]
                 V_itm = df_step * values[t + 1][itm]
                 poly = np.polynomial.Polynomial.fit(S_itm, V_itm, deg=self.mc_params.deg)
-                continuation[itm] = poly(instrument_values[t][itm])
+                continuation[itm] = poly(spot_paths[t][itm])
 
             values[t] = np.where(
                 intrinsic_values[t] > continuation,
@@ -229,6 +255,12 @@ class _MCAsianValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
+        if not isinstance(parent.underlying, PathSimulation):
+            raise ConfigurationError(
+                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
+            )
+        self.underlying = parent.underlying
+        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
@@ -238,24 +270,16 @@ class _MCAsianValuation:
         np.ndarray
             Payoff for each path based on the average spot price
         """
-        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
-        time_grid = self.parent.underlying.time_grid
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
+        time_grid = self.underlying.time_grid
 
         # Determine averaging period
-        spec = self.parent.spec
+        spec = self.spec
         averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
 
         # Find indices for averaging period
-        idx_start = np.where(time_grid == averaging_start)[0]
-        idx_end = np.where(time_grid == self.parent.maturity)[0]
-
-        if idx_start.size == 0:
-            raise ValidationError(f"averaging_start {averaging_start} not in underlying time_grid.")
-        if idx_end.size == 0:
-            raise ValidationError(f"maturity {self.parent.maturity} not in underlying time_grid.")
-
-        time_index_start = int(idx_start[0])
-        time_index_end = int(idx_end[0])
+        time_index_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
         # Extract paths over averaging period (inclusive)
         averaging_paths = paths[time_index_start : time_index_end + 1, :]
@@ -278,12 +302,10 @@ class _MCAsianValuation:
 
         # Calculate payoff based on average
         K = self.parent.strike
-        if K is None:
-            raise ValidationError("strike is required for Asian option payoff.")
 
         # Asian call: max(S_avg - K, 0)
         # Asian put: max(K - S_avg, 0)
-        if self.parent.spec.call_put is OptionType.CALL:
+        if self.spec.call_put is OptionType.CALL:
             return np.maximum(avg_prices - K, 0.0)
         return np.maximum(K - avg_prices, 0.0)
 
@@ -295,7 +317,7 @@ class _MCAsianValuation:
         logger.debug(
             "MC Asian paths=%d time_steps=%d",
             pv_pathwise.size,
-            len(self.parent.underlying.time_grid) - 1,
+            len(self.underlying.time_grid) - 1,
         )
         _warn_if_high_std_error(
             pv_pathwise=pv_pathwise,
@@ -392,6 +414,8 @@ class _MCAsianAmericanValuation:
                 "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
             )
         self.mc_params: MonteCarloParams = parent.params
+        self.underlying: PathSimulation = parent.underlying  # type: ignore[assignment]
+        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
     # helpers
@@ -400,7 +424,7 @@ class _MCAsianAmericanValuation:
     def _asian_payoff(self, avg: np.ndarray) -> np.ndarray:
         """Asian payoff given average prices."""
         K = self.parent.strike
-        if self.parent.spec.call_put is OptionType.CALL:
+        if self.spec.call_put is OptionType.CALL:
             return np.maximum(avg - K, 0.0)
         return np.maximum(K - avg, 0.0)
 
@@ -417,13 +441,13 @@ class _MCAsianAmericanValuation:
             intrinsic       : (N_obs, n_paths) intrinsic payoff at each date
             time_list       : (N_obs,) datetime time grid for the averaging window
         """
-        paths = self.parent.underlying.get_instrument_values(random_seed=self.mc_params.random_seed)
-        time_grid = self.parent.underlying.time_grid
-        spec = self.parent.spec
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
+        time_grid = self.underlying.time_grid
+        spec = self.spec
         averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
 
-        idx_start = _find_time_index(time_grid, averaging_start, "averaging_start")
-        idx_end = _find_time_index(time_grid, self.parent.maturity, "maturity")
+        idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+        idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
 
         averaging_paths = paths[idx_start : idx_end + 1]
         running_avg = _running_averages(averaging_paths, spec.averaging)
@@ -455,7 +479,7 @@ class _MCAsianAmericanValuation:
         logger.debug(
             "MC Asian American paths=%d time_steps=%d deg=%d",
             pv_pathwise.size,
-            len(self.parent.underlying.time_grid) - 1,
+            len(self.underlying.time_grid) - 1,
             self.mc_params.deg,
         )
         _warn_if_high_std_error(

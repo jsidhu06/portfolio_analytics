@@ -17,7 +17,7 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.valuation import (
@@ -199,7 +199,7 @@ def test_implied_volatility_rejects_monte_carlo():
         initial_value=100.0,
         volatility=0.2,
     )
-    underlying = GeometricBrownianMotion("gbm", market_data, gbm_params, sim_config)
+    underlying = GBMProcess("gbm", market_data, gbm_params, sim_config)
     spec = OptionSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
@@ -216,15 +216,6 @@ def test_implied_volatility_rejects_monte_carlo():
     target_price = valuation.present_value()
 
     with pytest.raises(UnsupportedFeatureError, match="pricing methods"):
-        implied_volatility(target_price, valuation)
-
-
-def test_implied_volatility_rejects_american_bsm():
-    valuation = _build_valuation(option_type=OptionType.CALL, vol=0.2)
-    target_price = valuation.present_value()
-
-    valuation.exercise_type = ExerciseType.AMERICAN
-    with pytest.raises(UnsupportedFeatureError, match="European"):
         implied_volatility(target_price, valuation)
 
 

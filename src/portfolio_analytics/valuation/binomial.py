@@ -19,7 +19,7 @@ from ..exceptions import (
 from .params import BinomialParams
 
 if TYPE_CHECKING:
-    from .core import OptionValuation
+    from .core import OptionValuation, AsianOptionSpec
 
 
 logger = logging.getLogger(__name__)
@@ -37,14 +37,10 @@ class _BinomialValuationBase:
         self.binom_params: BinomialParams = parent.params
 
     def _setup_binomial_parameters(
-        self, num_steps: int
+        self,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Setup binomial tree parameters and lattice.
 
-        Parameters
-        ==========
-        num_steps: int
-            number of steps in the binomial tree
 
         Returns
         =======
@@ -53,6 +49,7 @@ class _BinomialValuationBase:
             p : shape (num_steps,) — risk-neutral up-move probabilities
             spot_lattice : shape (num_steps+1, num_steps+1) — CRR spot prices
         """
+        num_steps = int(self.binom_params.num_steps)
         start = self.parent.pricing_date
         end = self.parent.maturity
         time_intervals = pd.date_range(start, end, periods=num_steps + 1)
@@ -91,8 +88,6 @@ class _BinomialValuationBase:
             num_steps=num_steps,
             time_intervals=time_intervals,
             up=u,
-            down=d,
-            discount_curve=discount_curve,
         )
 
         discount_factors = np.exp(-forward_rates * delta_t)
@@ -104,12 +99,15 @@ class _BinomialValuationBase:
         num_steps: int,
         time_intervals: pd.DatetimeIndex,
         up: float,
-        down: float,
-        discount_curve,
     ) -> np.ndarray:
-        """Build a CRR spot lattice with time on columns (row=down moves, col=time)."""
+        """Build a CRR spot lattice with time on columns (row=down moves, col=time).
+
+        The down factor is ``1/up`` — the CRR recombining-tree.
+        """
+        down = 1.0 / up
         spot = float(self.parent.underlying.initial_value)
         discrete_dividends = self.parent.underlying.discrete_dividends
+        discount_curve = self.parent.discount_curve
 
         i_idx = np.arange(num_steps + 1)[:, None]
         t_idx = np.arange(num_steps + 1)[None, :]
@@ -122,6 +120,7 @@ class _BinomialValuationBase:
                 curve_date=time_intervals[0],
                 end_date=time_intervals[-1],
                 discount_curve=discount_curve,
+                include_start=True,
             )
             spot = max(spot - pv_all, 0.0)
 
@@ -130,6 +129,9 @@ class _BinomialValuationBase:
         if not discrete_dividends:
             return lattice
 
+        # Escrowed-dividend add-back: at each time step, restore the PV of
+        # dividends that have NOT yet gone ex.  Use include_start=False so
+        # a dividend going ex at exactly *t* is treated as already paid.
         pv_remaining = np.array(
             [
                 pv_discrete_dividends(
@@ -138,6 +140,7 @@ class _BinomialValuationBase:
                     end_date=time_intervals[-1],
                     discount_curve=discount_curve,
                     start_date=t,
+                    include_start=False,
                 )
                 for t in time_intervals
             ],
@@ -161,13 +164,11 @@ class _BinomialValuationBase:
         """
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
-            if K is None:
-                raise ValidationError("strike is required for vanilla call/put payoff.")
             if self.parent.option_type is OptionType.CALL:
                 return np.maximum(instrument_values - K, 0)
             return np.maximum(K - instrument_values, 0)
 
-        payoff_fn = self.parent.spec.payoff
+        payoff_fn = self.parent.spec.payoff  # type: ignore[union-attr]
         return payoff_fn(instrument_values)
 
     # ------------------------------------------------------------------
@@ -181,8 +182,8 @@ class _BinomialValuationBase:
         whose ``solve()`` does not return a 2-D option lattice.
         """
         num_steps = int(self.binom_params.num_steps)
-        _, _, spot_lattice = self._setup_binomial_parameters(num_steps)
-        option_lattice = self.solve()
+        _, _, spot_lattice = self._setup_binomial_parameters()
+        option_lattice = self.solve()  # type: ignore[attr-defined]
         if not isinstance(option_lattice, np.ndarray) or option_lattice.ndim != 2:
             raise UnsupportedFeatureError(
                 "Tree Greeks are only available for vanilla binomial options, "
@@ -250,7 +251,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         """Compute the option value lattice using a binomial tree."""
         num_steps = int(self.binom_params.num_steps)
         logger.debug("Binomial European num_steps=%d", num_steps)
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         option_lattice = np.zeros_like(spot_lattice)
         option_lattice[:, num_steps] = self._get_intrinsic_values(spot_lattice[:, num_steps])
@@ -281,7 +282,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         """Compute the option value lattice using a binomial tree with early exercise."""
         num_steps = int(self.binom_params.num_steps)
         logger.debug("Binomial American num_steps=%d", num_steps)
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         option_lattice = np.zeros_like(spot_lattice)
         intrinsic = self._get_intrinsic_values(spot_lattice)
@@ -309,12 +310,16 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 class _BinomialAsianValuation(_BinomialValuationBase):
     """Asian option valuation using binomial MC sampling or Hull's representative averages."""
 
+    def __init__(self, parent: OptionValuation) -> None:
+        super().__init__(parent)
+        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+
     def _solve_mc(self) -> np.ndarray:
         num_steps = int(self.binom_params.num_steps)
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
         )
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         if self.binom_params.mc_paths is None:
             raise ValidationError("BinomialParams.mc_paths must be set for Asian binomial MC")
@@ -323,8 +328,6 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         rng = np.random.default_rng(self.binom_params.random_seed)
 
         K = self.parent.strike
-        if K is None:
-            raise ValidationError("strike is required for Asian option payoff.")
 
         # Vectorized simulation of binomial paths:
         # draw Bernoulli down-steps for each path and step
@@ -335,21 +338,21 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         row_idx = np.concatenate(
             [np.zeros((mc_paths, 1), dtype=int), down_counts], axis=1
         )  # (I,M+1)
-        col_idx = np.arange(num_steps + 1, dtype=int)  # (M+1,)
+        col_idx: np.ndarray = np.arange(num_steps + 1, dtype=int)  # (M+1,)
 
         # gather prices along each simulated path
         # binomial_matrix is (M+1, M+1)
         # Advanced indexing: col_idx broadcasts to (I, M+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
         prices = spot_lattice[row_idx, col_idx]  # (I, M+1)
-        if self.parent.spec.averaging is AsianAveraging.GEOMETRIC:
+        if self.spec.averaging is AsianAveraging.GEOMETRIC:
             if np.any(prices <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
             avg_s = np.exp(np.mean(np.log(prices), axis=1))  # (I,)
         else:
             avg_s = prices.mean(axis=1)  # (I,)
 
-        if self.parent.spec.call_put is OptionType.CALL:
+        if self.spec.call_put is OptionType.CALL:
             payoffs = np.maximum(avg_s - K, 0.0)
         else:
             payoffs = np.maximum(K - avg_s, 0.0)
@@ -359,9 +362,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
         """Compute Asian option intrinsic payoff given average price(s)."""
         K = self.parent.strike
-        if K is None:
-            raise ValidationError("strike is required for Asian option payoff.")
-        if self.parent.spec.call_put is OptionType.CALL:
+        if self.spec.call_put is OptionType.CALL:
             return np.maximum(avg_price - K, 0.0)
         return np.maximum(K - avg_price, 0.0)
 
@@ -395,7 +396,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             prices_min = lattice[downs_first_rows, time]
             avg_min[: t + 1, t] = prices_min.mean(axis=1)
 
-            ups_first = t - row
+            ups_first: np.ndarray = t - row
             ups_first_rows = np.maximum(0, time - ups_first)
             prices_max = lattice[ups_first_rows, time]
             avg_max[: t + 1, t] = prices_max.mean(axis=1)
@@ -422,9 +423,9 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             num_steps,
             self.binom_params.asian_tree_averages,
         )
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
-        averaging = self.parent.spec.averaging
+        averaging = self.spec.averaging
         if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
             raise ValidationError("Unsupported Asian averaging type for Hull binomial valuation.")
 
@@ -433,7 +434,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 "BinomialParams.asian_tree_averages must be set for Hull binomial Asian valuation"
             )
 
-        averaging_start = self.parent.spec.averaging_start
+        averaging_start = self.spec.averaging_start
         if averaging_start is not None and averaging_start != self.parent.pricing_date:
             raise ValidationError(
                 "Hull binomial Asian valuation requires averaging_start=pricing_date."
@@ -450,7 +451,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         else:
             avg_min, avg_max = self._compute_ordering_bounds(spot_lattice, num_steps)
 
-        avg_grid = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
+        avg_grid: np.ndarray = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):
             rows = np.arange(t + 1)
             alpha = np.linspace(0.0, 1.0, k)[:, None]
@@ -485,7 +486,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
             v_up = np.empty_like(avg_up)
             v_down = np.empty_like(avg_down)
-            for j, row in enumerate(rows):
+            for j, row in enumerate(rows):  # type: ignore[assignment]
                 v_up[:, j] = np.interp(avg_up[:, j], avg_grid[:, row, t + 1], values[:, row, t + 1])
                 v_down[:, j] = np.interp(
                     avg_down[:, j], avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]

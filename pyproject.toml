@@ -57,3 +57,27 @@ target-version = ["py312"]
 pythonpath = ["src"]
 log_cli = true
 log_cli_level = "INFO"
+
+# Mypy (very relaxed / developer-friendly)
+[tool.mypy]
+python_version = "3.12"
+
+# Only check annotated functions
+check_untyped_defs = false
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# Be permissive with imports and third-party libs
+ignore_missing_imports = true
+follow_imports = "skip"
+
+# Be permissive with Optional / Any
+strict_optional = false
+warn_return_any = false
+warn_no_return = false
+warn_unreachable = false
+
+# Reduce stylistic nags
+warn_redundant_casts = false
+warn_unused_ignores = false
+no_implicit_reexport = false

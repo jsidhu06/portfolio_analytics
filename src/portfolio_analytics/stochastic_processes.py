@@ -41,7 +41,7 @@ class SimulationConfig:
     num_steps: int | None = None
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
-    special_dates: set[dt.datetime] = field(default_factory=set)
+    observation_dates: set[dt.datetime] = field(default_factory=set)
     antithetic: bool = True
     moment_matching: bool = True
 
@@ -200,6 +200,18 @@ class SRDParams:
         if float(self.theta) < 0.0:
             raise ValidationError("SRDParams requires theta to be >= 0")
 
+        # Feller condition: 2*kappa*theta >= sigma^2 ensures the process
+        # stays strictly positive almost surely.  When violated the full-
+        # truncation Euler scheme still converges, but paths will touch
+        # zero more frequently.
+        if 2.0 * float(self.kappa) * float(self.theta) < float(self.volatility) ** 2:
+            warnings.warn(
+                f"Feller condition violated: 2·κ·θ = {2 * self.kappa * self.theta:.6g} "
+                f"< σ² = {self.volatility**2:.6g}. "
+                "The CIR process may frequently touch zero.",
+                stacklevel=2,
+            )
+
 
 class PathSimulation(ABC):
     """Providing base methods for simulation classes.
@@ -221,10 +233,8 @@ class PathSimulation(ABC):
 
     Methods
     =======
-    generate_time_grid:
-        returns time grid for simulation
-    get_instrument_values:
-        returns the current instrument values (array)
+    simulate:
+        returns simulated instrument value paths (array)
     """
 
     def __init__(
@@ -248,10 +258,10 @@ class PathSimulation(ABC):
             self.discrete_dividends = tuple()
 
         self.time_grid = sim.time_grid
-        self.special_dates = set(sim.special_dates)
+        self.observation_dates = set(sim.observation_dates)
         if self.discrete_dividends:
             for ex_date, _ in self.discrete_dividends:
-                self.special_dates.add(ex_date)
+                self.observation_dates.add(ex_date)
 
         if corr is not None:
             # only needed in a portfolio context when
@@ -307,38 +317,25 @@ class PathSimulation(ABC):
     def correlation_context(self) -> CorrelationContext | None:
         return self._correlation_context
 
-    def generate_time_grid(self) -> None:
-        "Generate time grid for simulation of stochastic process."
-        self.time_grid = self._build_time_grid()
-
     def _build_time_grid(self) -> np.ndarray:
+        """Build a sorted datetime time grid from the simulation configuration."""
         start = self.pricing_date
         end = self.end_date
 
         if self.num_steps is not None:
-            grid = pd.date_range(
-                start=start,
-                end=end,
-                periods=int(self.num_steps) + 1,
+            dates = pd.date_range(
+                start=start, end=end, periods=int(self.num_steps) + 1
             ).to_pydatetime()
         else:
-            grid = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
+            dates = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
 
-        time_grid = list(grid)
-        if start not in time_grid:
-            time_grid.insert(0, start)
-        if end not in time_grid:
-            time_grid.append(end)
-
-        if self.special_dates:
-            time_grid.extend(self.special_dates)
-            time_grid = sorted(set(time_grid))
-
-        return np.array(time_grid)
+        # Merge generated dates with required boundary + special dates
+        all_dates = set(dates) | {start, end} | self.observation_dates
+        return np.array(sorted(all_dates))
 
     def _ensure_time_grid(self) -> None:
         if self.time_grid is None:
-            self.generate_time_grid()
+            self.time_grid = self._build_time_grid()
 
     def _time_deltas(self) -> np.ndarray:
         self._ensure_time_grid()
@@ -413,7 +410,7 @@ class PathSimulation(ABC):
             "num_steps",
             "day_count_convention",
             "time_grid",
-            "special_dates",
+            "observation_dates",
             "end_date",
             "pricing_date",
             "discount_curve",
@@ -429,7 +426,7 @@ class PathSimulation(ABC):
         cloned = copy.copy(self)
 
         # Detach mutable containers to avoid shared state across clones.
-        cloned.special_dates = set(self.special_dates)
+        cloned.observation_dates = set(self.observation_dates)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
 
         # Handle simple name override
@@ -467,8 +464,8 @@ class PathSimulation(ABC):
             cloned._sim = dc_replace(cloned._sim, **sim_updates)
 
         # Normalize list-like overrides
-        if "special_dates" in kwargs:
-            cloned.special_dates = set(kwargs["special_dates"] or [])
+        if "observation_dates" in kwargs:
+            cloned.observation_dates = set(kwargs["observation_dates"] or [])
 
         if "discrete_dividends" in kwargs:
             cloned.discrete_dividends = tuple(kwargs["discrete_dividends"] or [])
@@ -482,15 +479,15 @@ class PathSimulation(ABC):
             if grid_rebuild_keys.intersection(kwargs):
                 # Grid-shaping parameters changed → must rebuild from scratch.
                 cloned.time_grid = None
-            elif "special_dates" in kwargs and cloned.time_grid is not None:
+            elif "observation_dates" in kwargs and cloned.time_grid is not None:
                 # Explicit-grid mode: augment the existing grid with the new
                 # special dates (there is no end_date/frequency/num_steps to
                 # rebuild from, so nulling the grid would be unrecoverable).
-                augmented = sorted(set(cloned.time_grid) | cloned.special_dates)
+                augmented = sorted(set(cloned.time_grid) | cloned.observation_dates)
                 cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
-            elif "special_dates" in kwargs:
+            elif "observation_dates" in kwargs:
                 # Lazy-build mode: null the grid so _build_time_grid picks up
-                # the updated special_dates on next generate_time_grid() call.
+                # the updated observation_dates on next _ensure_time_grid() call.
                 cloned.time_grid = None
 
         # Update market_data if any related fields were overridden
@@ -511,11 +508,11 @@ class PathSimulation(ABC):
         # Ensure discrete dividend dates are included as special dates.
         if cloned.discrete_dividends:
             for ex_date, _ in cloned.discrete_dividends:
-                cloned.special_dates.add(ex_date)
+                cloned.observation_dates.add(ex_date)
 
         return cloned
 
-    def get_instrument_values(self, random_seed: int | None = None) -> np.ndarray:
+    def simulate(self, random_seed: int | None = None) -> np.ndarray:
         """Generate and return simulated instrument value paths.
 
         Parameters
@@ -526,12 +523,12 @@ class PathSimulation(ABC):
         Returns
         =======
         np.ndarray
-            simulated instrument value paths
+            simulated instrument value paths, shape (time_steps, paths)
         """
-        return self.generate_paths(random_seed=random_seed)
+        return self._generate_paths(random_seed=random_seed)
 
     @abstractmethod
-    def generate_paths(
+    def _generate_paths(
         self,
         random_seed: int | None = None,
     ) -> np.ndarray:
@@ -544,21 +541,16 @@ class PathSimulation(ABC):
         ==========
         random_seed: int, optional
             random seed for reproducibility
-
-        Raises
-        ======
-        NotImplementedError
-            if subclass does not implement this method
         """
-        raise NotImplementedError("Subclasses must implement generate_paths method")
+        raise NotImplementedError
 
 
-class GeometricBrownianMotion(PathSimulation):
+class GBMProcess(PathSimulation):
     """Class to generate simulated paths based on
     the Black-Scholes-Merton geometric Brownian motion model.
     """
 
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+    def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate geometric Brownian motion paths.
 
         Implements the classic Black-Scholes-Merton model:
@@ -636,6 +628,12 @@ class GeometricBrownianMotion(PathSimulation):
             if ex_date in time_set:
                 dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
+        # Apply pricing-date dividend: input spot is cum-dividend, so the
+        # stock goes ex immediately at t=0.
+        div_t0 = dividend_by_date.get(self.time_grid[0])
+        if div_t0 is not None:
+            paths[0] = np.maximum(paths[0] - div_t0, 0.0)
+
         for t in range(1, steps):
             dt_step = time_deltas[t - 1]
             increment = ((r_steps[t - 1] - q_steps[t - 1]) - 0.5 * self.volatility**2) * dt_step
@@ -649,7 +647,7 @@ class GeometricBrownianMotion(PathSimulation):
         return paths
 
 
-class JumpDiffusion(PathSimulation):
+class JDProcess(PathSimulation):
     """Merton (1976) jump diffusion (lognormal jumps).
 
     Risk-neutral discretisation (per step Δt):
@@ -684,7 +682,7 @@ class JumpDiffusion(PathSimulation):
     def delta(self) -> float:
         return self._process_params.delta
 
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+    def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         self._ensure_time_grid()
 
         steps = len(self.time_grid)
@@ -789,7 +787,7 @@ class JumpDiffusion(PathSimulation):
         return paths
 
 
-class SquareRootDiffusion(PathSimulation):
+class SRDProcess(PathSimulation):
     """Cox–Ingersoll–Ross (1985) square-root diffusion (CIR/SRD).
 
     Model (under chosen measure):
@@ -816,27 +814,35 @@ class SquareRootDiffusion(PathSimulation):
     def theta(self) -> float:
         return self._process_params.theta
 
-    def generate_paths(self, random_seed: int | None = None) -> np.ndarray:
-        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths."""
+    def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate Cox-Ingersoll-Ross (square-root diffusion) paths.
+
+        Uses the full-truncation Euler scheme of Lord, Koekkoek & van Dijk
+        (2010) to guarantee non-negative paths: the drift and diffusion
+        coefficients are evaluated at max(x, 0), and the raw Euler step
+        is floored at zero after each increment.
+        """
         self._ensure_time_grid()
 
         steps = len(self.time_grid)
         num_paths = self.paths
 
+        # Truncated paths (non-negative) and raw Euler buffer
         paths = np.zeros((steps, num_paths), dtype=float)
-        paths_hat = np.zeros_like(paths)
+        euler_raw = np.zeros_like(paths)
 
         paths[0] = self.initial_value
-        paths_hat[0] = self.initial_value
+        euler_raw[0] = self.initial_value
 
         z = self._standard_normals(random_seed, steps, num_paths)
         time_deltas = self._time_deltas()
 
         for t in range(1, steps):
             dt_step = time_deltas[t - 1]
-            mean_reversion = self.kappa * (self.theta - paths[t - 1, :]) * dt_step
-            diffusion = np.sqrt(paths[t - 1, :]) * self.volatility * np.sqrt(dt_step) * z[t]
-            paths_hat[t] = paths_hat[t - 1] + mean_reversion + diffusion
-            paths[t] = np.maximum(0, paths_hat[t])
+            x_prev = paths[t - 1, :]  # truncated (non-negative) values
+            mean_reversion = self.kappa * (self.theta - x_prev) * dt_step
+            diffusion = self.volatility * np.sqrt(x_prev * dt_step) * z[t]
+            euler_raw[t] = euler_raw[t - 1] + mean_reversion + diffusion
+            paths[t] = np.maximum(euler_raw[t], 0.0)
 
         return paths

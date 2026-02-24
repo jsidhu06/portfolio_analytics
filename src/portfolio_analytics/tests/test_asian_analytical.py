@@ -21,7 +21,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
-    GeometricBrownianMotion,
+    GBMProcess,
     SimulationConfig,
 )
 from portfolio_analytics.tests.helpers import flat_curve
@@ -99,7 +99,7 @@ def _gbm_underlying(
     paths: int,
     num_steps: int,
     dividend_yield: float = 0.0,
-) -> GeometricBrownianMotion:
+) -> GBMProcess:
     q_curve = (
         None
         if dividend_yield == 0.0
@@ -112,7 +112,7 @@ def _gbm_underlying(
         end_date=maturity,
     )
     params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=q_curve)
-    return GeometricBrownianMotion(
+    return GBMProcess(
         "gbm",
         _market_data(short_rate, maturity),
         params,
@@ -484,6 +484,415 @@ class TestDividendYield:
         ).present_value()
 
         assert pv_with_q < pv_no_q
+
+
+# ---------------------------------------------------------------------------
+# Seasoned Asian (observed_average / observed_count — Hull K* adjustment)
+# ---------------------------------------------------------------------------
+
+
+class TestSeasonedAsian:
+    """Test Hull's K* strike-adjustment for seasoned Asian options.
+
+    When n₁ fixings have already been observed with average S̄, the payoff is:
+
+        max((n₁·S̄ + n₂·S_avg) / (n₁+n₂) − K, 0)
+
+    This equals ``(n₂/(n₁+n₂)) · max(S_avg − K*, 0)`` with:
+
+        K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
+
+    See Hull, "Options, Futures, and Other Derivatives", Section 26.13.
+    """
+
+    SPOT = 50.0
+    VOL = 0.40
+    RATE = 0.10
+    MATURITY = PRICING_DATE + dt.timedelta(days=365)
+
+    def _ud(self) -> UnderlyingPricingData:
+        return _underlying(
+            spot=self.SPOT,
+            vol=self.VOL,
+            short_rate=self.RATE,
+            maturity=self.MATURITY,
+        )
+
+    # ── Validation ────────────────────────────────────────────────────────
+
+    def test_observed_average_requires_observed_count(self):
+        with pytest.raises(Exception, match="observed_average and observed_count"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=50.0,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=5,
+                observed_average=52.0,
+            )
+
+    def test_observed_count_requires_observed_average(self):
+        with pytest.raises(Exception, match="observed_average and observed_count"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=50.0,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=5,
+                observed_count=6,
+            )
+
+    def test_observed_average_must_be_positive(self):
+        with pytest.raises(Exception, match="observed_average must be > 0"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=50.0,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=5,
+                observed_average=-1.0,
+                observed_count=6,
+            )
+
+    def test_observed_count_must_be_positive_int(self):
+        with pytest.raises(Exception, match="observed_count must be a positive integer"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=50.0,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=5,
+                observed_average=52.0,
+                observed_count=0,
+            )
+
+    # ── K* > 0: reduces to fresh Asian ───────────────────────────────────
+
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
+    def test_seasoned_matches_manual_k_star(self, averaging, call_put):
+        """Seasoned PV should equal scale * fresh_PV(K=K*) when K* > 0."""
+        n1, S_bar, K = 6, 52.0, 50.0
+        n2_steps = 5  # n₂ = 6 future observations
+        n2 = n2_steps + 1
+        n_total = n1 + n2
+
+        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
+        assert K_star > 0, "This test requires K* > 0"
+        scale = n2 / n_total
+
+        # Manual: price fresh Asian with K*
+        fresh_spec = AsianOptionSpec(
+            averaging=averaging,
+            call_put=call_put,
+            strike=K_star,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+        )
+        fresh_pv = OptionValuation(
+            "fresh",
+            self._ud(),
+            fresh_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        # Library seasoned
+        seasoned_spec = AsianOptionSpec(
+            averaging=averaging,
+            call_put=call_put,
+            strike=K,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+            observed_average=S_bar,
+            observed_count=n1,
+        )
+        seasoned_pv = OptionValuation(
+            "seasoned",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert np.isclose(seasoned_pv, scale * fresh_pv, rtol=1e-12)
+
+    # ── K* <= 0: certain exercise (call → forward, put → 0) ─────────────
+
+    def test_k_star_negative_call_is_forward(self):
+        """When K* <= 0, the call is certain to be exercised."""
+        n1, S_bar, K = 6, 120.0, 50.0
+        n2_steps = 5
+        n2 = n2_steps + 1
+        n_total = n1 + n2
+        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
+        assert K_star < 0, "This test requires K* < 0"
+
+        seasoned_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=K,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+            observed_average=S_bar,
+            observed_count=n1,
+        )
+        pv = OptionValuation(
+            "seasoned_fwd",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        # Must be strictly positive
+        assert pv > 0.0
+
+        # Manual: scale * (disc_M1 - K* * df)
+        ttm = 1.0
+        df = np.exp(-self.RATE * ttm)
+        zero_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=0.0,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+        )
+        disc_M1 = OptionValuation(
+            "zero",
+            self._ud(),
+            zero_spec,
+            PricingMethod.BSM,
+        ).present_value()
+        scale = n2 / n_total
+        expected = scale * (disc_M1 - K_star * df)
+        assert np.isclose(pv, expected, rtol=1e-12)
+
+    def test_k_star_negative_put_is_zero(self):
+        """When K* <= 0, a put is worthless (average > 0 > K*)."""
+        seasoned_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.PUT,
+            strike=50.0,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=5,
+            observed_average=120.0,
+            observed_count=6,
+        )
+        pv = OptionValuation(
+            "seasoned_put",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert pv == 0.0
+
+    # ── Monotonicity and sanity ──────────────────────────────────────────
+
+    def test_seasoned_less_than_fresh_when_atm(self):
+        """A seasoned ATM call (S̄ = S₀ = K) should be worth less than a fresh one.
+
+        With S̄ = K, some of the averaging period has elapsed at-the-money,
+        leaving the remaining average with less optionality.
+        """
+        K = self.SPOT  # ATM
+        n2_steps = 5
+        n1 = 6
+
+        fresh_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=K,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+        )
+        fresh_pv = OptionValuation(
+            "fresh",
+            self._ud(),
+            fresh_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        seasoned_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=K,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+            observed_average=K,  # ATM: S̄ = K
+            observed_count=n1,
+        )
+        seasoned_pv = OptionValuation(
+            "seasoned",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        assert seasoned_pv < fresh_pv
+
+    def test_higher_observed_average_increases_call_value(self):
+        """A higher observed average should increase the seasoned call value."""
+        n2_steps = 5
+        n1 = 6
+
+        def _seasoned_call(s_bar: float) -> float:
+            spec = AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=self.SPOT,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=n2_steps,
+                observed_average=s_bar,
+                observed_count=n1,
+            )
+            return OptionValuation(
+                "seasoned",
+                self._ud(),
+                spec,
+                PricingMethod.BSM,
+            ).present_value()
+
+        assert _seasoned_call(55.0) > _seasoned_call(50.0) > _seasoned_call(45.0)
+
+    def test_higher_observed_average_decreases_put_value(self):
+        """A higher observed average should decrease the seasoned put value."""
+        n2_steps = 5
+        n1 = 6
+
+        def _seasoned_put(s_bar: float) -> float:
+            spec = AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.PUT,
+                strike=self.SPOT,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=n2_steps,
+                observed_average=s_bar,
+                observed_count=n1,
+            )
+            return OptionValuation(
+                "seasoned",
+                self._ud(),
+                spec,
+                PricingMethod.BSM,
+            ).present_value()
+
+        assert _seasoned_put(45.0) > _seasoned_put(50.0) > _seasoned_put(55.0)
+
+    def test_more_observed_reduces_optionality(self):
+        """More past observations (with S̄ = K) → less optionality → lower call value."""
+        n2_steps = 5
+        K = self.SPOT
+
+        def _seasoned_call(n1: int) -> float:
+            spec = AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=K,
+                maturity=self.MATURITY,
+                currency=CURRENCY,
+                num_steps=n2_steps,
+                observed_average=K,
+                observed_count=n1,
+            )
+            return OptionValuation(
+                "seasoned",
+                self._ud(),
+                spec,
+                PricingMethod.BSM,
+            ).present_value()
+
+        # More past ATM observations → the average is "pinned" closer to K
+        assert _seasoned_call(1) > _seasoned_call(6) > _seasoned_call(50)
+
+    # ── Cross-engine consistency (Binomial / MC) ─────────────────────────
+
+    def test_binomial_seasoned_matches_analytical(self):
+        """Binomial Hull tree seasoned Asian should converge to analytical."""
+        n1, S_bar, K = 6, 52.0, 50.0
+        n2_steps = 60
+
+        seasoned_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=K,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+            observed_average=S_bar,
+            observed_count=n1,
+        )
+
+        bsm_pv = OptionValuation(
+            "seasoned_bsm",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        binom_pv = OptionValuation(
+            "seasoned_binom",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=n2_steps, asian_tree_averages=100),
+        ).present_value()
+
+        assert np.isclose(binom_pv, bsm_pv, rtol=0.01), (
+            f"Binomial={binom_pv:.6f} vs BSM={bsm_pv:.6f}"
+        )
+
+    def test_mc_seasoned_matches_analytical(self):
+        """MC seasoned Asian should converge to analytical."""
+        n1, S_bar, K = 6, 52.0, 50.0
+        n2_steps = 60
+
+        seasoned_spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=K,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=n2_steps,
+            observed_average=S_bar,
+            observed_count=n1,
+        )
+
+        bsm_pv = OptionValuation(
+            "seasoned_bsm",
+            self._ud(),
+            seasoned_spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        gbm = _gbm_underlying(
+            spot=self.SPOT,
+            vol=self.VOL,
+            short_rate=self.RATE,
+            maturity=self.MATURITY,
+            paths=200_000,
+            num_steps=n2_steps,
+        )
+        mc_pv = OptionValuation(
+            "seasoned_mc",
+            gbm,
+            seasoned_spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=42),
+        ).present_value()
+
+        assert np.isclose(mc_pv, bsm_pv, rtol=0.01), f"MC={mc_pv:.6f} vs BSM={bsm_pv:.6f}"
 
     def test_dividend_increases_put(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)

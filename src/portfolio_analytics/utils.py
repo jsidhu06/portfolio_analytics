@@ -19,7 +19,6 @@ if TYPE_CHECKING:
 __all__ = [
     "log_timing",
     "calculate_year_fraction",
-    "get_year_deltas",
     "pv_discrete_dividends",
     "forward_price",
     "put_call_parity_rhs",
@@ -108,32 +107,6 @@ def calculate_year_fraction(
     return year_fraction
 
 
-def get_year_deltas(
-    date_list: list[datetime],
-    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
-) -> np.ndarray:
-    """Return vector of floats with day deltas in year fractions.
-
-    Initial value is normalized to zero. Useful for discount factor
-    calculations and time grid generation.
-
-    Parameters
-    ==========
-    date_list: list or array-like
-        collection of datetime objects
-    day_count_convention: DayCountConvention, default DayCountConvention.ACT_365F
-        number of days per year (day count convention)
-
-    Returns
-    =======
-    delta_list: np.ndarray
-        array of year fractions, first element is always 0
-    """
-    start = min(date_list)
-    delta_list = [calculate_year_fraction(start, date, day_count_convention) for date in date_list]
-    return np.array(delta_list)
-
-
 def pv_discrete_dividends(
     dividends: list[tuple[datetime, float]],
     curve_date: datetime,
@@ -141,10 +114,23 @@ def pv_discrete_dividends(
     discount_curve: DiscountCurve,
     start_date: datetime | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
+    include_start: bool = True,
 ) -> float:
-    """Present value of discrete cash dividends between start_date and end_date.
+    """Present value of discrete cash dividends in a date range.
 
-    Only dividends with start_date < ex_date <= end_date are included.
+    Parameters
+    ----------
+    include_start : bool
+        When True (default), the range is *closed* on the left:
+        ``start_date <= ex_date <= end_date``.  This is the correct
+        convention when computing the clean spot (QuantLib-compatible:
+        the input spot is treated as cum-dividend).
+
+        When False the range is *open* on the left:
+        ``start_date < ex_date <= end_date``.  Use this for the
+        escrowed-dividend add-back at intermediate tree nodes, where a
+        dividend going ex at exactly *t* has already left the stock
+        price.
     """
     if not dividends:
         return 0.0
@@ -155,7 +141,11 @@ def pv_discrete_dividends(
 
     pv = 0.0
     for ex_date, amount in dividends:
-        if start_date < ex_date <= end_date:
+        if include_start:
+            in_range = start_date <= ex_date <= end_date
+        else:
+            in_range = start_date < ex_date <= end_date
+        if in_range:
             t_ex = calculate_year_fraction(curve_date, ex_date, day_count_convention)
             df_ex = float(discount_curve.df(t_ex))
             df = df_ex / df_start
