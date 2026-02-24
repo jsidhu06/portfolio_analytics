@@ -582,122 +582,6 @@ class OptionValuation:
 
         return float(self._apply_control_variate(base_pv))
 
-    # ── Seasoned Asian ───────────────────────────────────────────────────
-
-    def _seasoned_asian_future_obs(self) -> int:
-        """Return the number of *future* averaging observations (n₂).
-
-        ``n₂`` equals the number of price fixings the engine will include in the
-        average of the freshly-issued replacement option.  For the analytical
-        engine that is ``spec.num_steps + 1``; for binomial/MC it is derived from
-        the tree or simulation time-grid size.
-        """
-        spec = self.spec
-        assert isinstance(spec, AsianOptionSpec)
-
-        if self.pricing_method is PricingMethod.BSM:
-            if spec.num_steps is None:
-                raise ValidationError(
-                    "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
-                )
-            return spec.num_steps + 1
-
-        if self.pricing_method is PricingMethod.BINOMIAL:
-            assert isinstance(self.params, BinomialParams)
-            return self.params.num_steps + 1
-
-        if self.pricing_method is PricingMethod.MONTE_CARLO:
-            assert isinstance(self.underlying, PathSimulation)
-            self.underlying._ensure_time_grid()
-            return len(self.underlying.time_grid)
-
-        raise UnsupportedFeatureError(
-            f"Seasoned Asian pricing is not supported for {self.pricing_method.name}."
-        )
-
-    def _seasoned_asian_pv(self) -> float:
-        """Price a seasoned Asian using Hull's adjusted-strike reduction.
-
-        When part of the averaging window has elapsed, the payoff of an
-        average-price call is::
-
-            max((n₁·S̄ + n₂·S_avg_future) / (n₁+n₂) − K, 0)
-
-        which equals ``(n₂/(n₁+n₂)) · max(S_avg_future − K*, 0)`` where::
-
-            K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
-
-        When K* > 0 this is a newly-issued Asian with strike K* scaled by
-        n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised and
-        its value is that of a forward contract on the remaining average.
-
-        See Hull, *Options, Futures, and Other Derivatives*, Section 26.13.
-        """
-        spec = self.spec
-        assert isinstance(spec, AsianOptionSpec)
-        assert spec.observed_average is not None and spec.observed_count is not None
-
-        n1 = spec.observed_count
-        n2 = self._seasoned_asian_future_obs()
-        n_total = n1 + n2
-        S_bar = spec.observed_average
-        K = spec.strike
-
-        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
-        scale = n2 / n_total
-
-        logger.debug(
-            "Seasoned Asian: n1=%d n2=%d S_bar=%.4f K=%.4f K*=%.4f scale=%.4f",
-            n1,
-            n2,
-            S_bar,
-            K,
-            K_star,
-            scale,
-        )
-
-        if K_star > 0.0:
-            # Price a fresh Asian with adjusted strike K*
-            fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
-            fresh_pv = OptionValuation(
-                name=f"{self.name}_seasoned_fresh",
-                underlying=self.underlying,
-                spec=fresh_spec,
-                pricing_method=self.pricing_method,
-                params=self.params,
-            ).present_value()
-            return scale * fresh_pv
-
-        # K* <= 0: option is certain to be exercised → value as forward contract.
-        # For a call:  scale · [M₁·e^{-rT} − K*·e^{-rT}]
-        # For a put:   scale · [K*·e^{-rT} − M₁·e^{-rT}]  (always 0 when K*<=0)
-        # M₁ is the forward of the average over the remaining period.  Rather than
-        # recompute the exact first moment, we price a fresh Asian with strike=0
-        # (deep ITM) which equals the discounted expected average, then apply the
-        # K* offset.
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
-        df = float(self.discount_curve.df(ttm))
-
-        fresh_spec_zero = dc_replace(
-            spec,
-            strike=0.0,
-            observed_average=None,
-            observed_count=None,
-        )
-        # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
-        disc_M1 = OptionValuation(
-            name=f"{self.name}_seasoned_fwd",
-            underlying=self.underlying,
-            spec=dc_replace(fresh_spec_zero, call_put=OptionType.CALL),
-            pricing_method=self.pricing_method,
-            params=self.params,
-        ).present_value()
-
-        if spec.call_put is OptionType.CALL:
-            return scale * (disc_M1 - K_star * df)
-        # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
-        return 0.0
-
     # ── Control variates ─────────────────────────────────────────────────
 
     def _apply_control_variate(self, base_pv: float) -> float:
@@ -839,6 +723,122 @@ class OptionValuation:
         )
 
         return base_pv + (euro_analytical - euro_num)
+
+    # ── Seasoned Asian ───────────────────────────────────────────────────
+
+    def _seasoned_asian_future_obs(self) -> int:
+        """Return the number of *future* averaging observations (n₂).
+
+        ``n₂`` equals the number of price fixings the engine will include in the
+        average of the freshly-issued replacement option.  For the analytical
+        engine that is ``spec.num_steps + 1``; for binomial/MC it is derived from
+        the tree or simulation time-grid size.
+        """
+        spec = self.spec
+        assert isinstance(spec, AsianOptionSpec)
+
+        if self.pricing_method is PricingMethod.BSM:
+            if spec.num_steps is None:
+                raise ValidationError(
+                    "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
+                )
+            return spec.num_steps + 1
+
+        if self.pricing_method is PricingMethod.BINOMIAL:
+            assert isinstance(self.params, BinomialParams)
+            return self.params.num_steps + 1
+
+        if self.pricing_method is PricingMethod.MONTE_CARLO:
+            assert isinstance(self.underlying, PathSimulation)
+            self.underlying._ensure_time_grid()
+            return len(self.underlying.time_grid)
+
+        raise UnsupportedFeatureError(
+            f"Seasoned Asian pricing is not supported for {self.pricing_method.name}."
+        )
+
+    def _seasoned_asian_pv(self) -> float:
+        """Price a seasoned Asian using Hull's adjusted-strike reduction.
+
+        When part of the averaging window has elapsed, the payoff of an
+        average-price call is::
+
+            max((n₁·S̄ + n₂·S_avg_future) / (n₁+n₂) − K, 0)
+
+        which equals ``(n₂/(n₁+n₂)) · max(S_avg_future − K*, 0)`` where::
+
+            K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
+
+        When K* > 0 this is a newly-issued Asian with strike K* scaled by
+        n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised and
+        its value is that of a forward contract on the remaining average.
+
+        See Hull, *Options, Futures, and Other Derivatives*, Section 26.13.
+        """
+        spec = self.spec
+        assert isinstance(spec, AsianOptionSpec)
+        assert spec.observed_average is not None and spec.observed_count is not None
+
+        n1 = spec.observed_count
+        n2 = self._seasoned_asian_future_obs()
+        n_total = n1 + n2
+        S_bar = spec.observed_average
+        K = spec.strike
+
+        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
+        scale = n2 / n_total
+
+        logger.debug(
+            "Seasoned Asian: n1=%d n2=%d S_bar=%.4f K=%.4f K*=%.4f scale=%.4f",
+            n1,
+            n2,
+            S_bar,
+            K,
+            K_star,
+            scale,
+        )
+
+        if K_star > 0.0:
+            # Price a fresh Asian with adjusted strike K*
+            fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
+            fresh_pv = OptionValuation(
+                name=f"{self.name}_seasoned_fresh",
+                underlying=self.underlying,
+                spec=fresh_spec,
+                pricing_method=self.pricing_method,
+                params=self.params,
+            ).present_value()
+            return scale * fresh_pv
+
+        # K* <= 0: option is certain to be exercised → value as forward contract.
+        # For a call:  scale · [M₁·e^{-rT} − K*·e^{-rT}]
+        # For a put:   scale · [K*·e^{-rT} − M₁·e^{-rT}]  (always 0 when K*<=0)
+        # M₁ is the forward of the average over the remaining period.  Rather than
+        # recompute the exact first moment, we price a fresh Asian with strike=0
+        # (deep ITM) which equals the discounted expected average, then apply the
+        # K* offset.
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        df = float(self.discount_curve.df(ttm))
+
+        fresh_spec_zero = dc_replace(
+            spec,
+            strike=0.0,
+            observed_average=None,
+            observed_count=None,
+        )
+        # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
+        disc_M1 = OptionValuation(
+            name=f"{self.name}_seasoned_fwd",
+            underlying=self.underlying,
+            spec=dc_replace(fresh_spec_zero, call_put=OptionType.CALL),
+            pricing_method=self.pricing_method,
+            params=self.params,
+        ).present_value()
+
+        if spec.call_put is OptionType.CALL:
+            return scale * (disc_M1 - K_star * df)
+        # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
+        return 0.0
 
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted pathwise present values.
