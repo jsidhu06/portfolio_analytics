@@ -37,14 +37,10 @@ class _BinomialValuationBase:
         self.binom_params: BinomialParams = parent.params
 
     def _setup_binomial_parameters(
-        self, num_steps: int
+        self,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Setup binomial tree parameters and lattice.
 
-        Parameters
-        ==========
-        num_steps: int
-            number of steps in the binomial tree
 
         Returns
         =======
@@ -53,6 +49,7 @@ class _BinomialValuationBase:
             p : shape (num_steps,) — risk-neutral up-move probabilities
             spot_lattice : shape (num_steps+1, num_steps+1) — CRR spot prices
         """
+        num_steps = int(self.binom_params.num_steps)
         start = self.parent.pricing_date
         end = self.parent.maturity
         time_intervals = pd.date_range(start, end, periods=num_steps + 1)
@@ -91,8 +88,6 @@ class _BinomialValuationBase:
             num_steps=num_steps,
             time_intervals=time_intervals,
             up=u,
-            down=d,
-            discount_curve=discount_curve,
         )
 
         discount_factors = np.exp(-forward_rates * delta_t)
@@ -104,12 +99,15 @@ class _BinomialValuationBase:
         num_steps: int,
         time_intervals: pd.DatetimeIndex,
         up: float,
-        down: float,
-        discount_curve,
     ) -> np.ndarray:
-        """Build a CRR spot lattice with time on columns (row=down moves, col=time)."""
+        """Build a CRR spot lattice with time on columns (row=down moves, col=time).
+
+        The down factor is ``1/up`` — the CRR recombining-tree.
+        """
+        down = 1.0 / up
         spot = float(self.parent.underlying.initial_value)
         discrete_dividends = self.parent.underlying.discrete_dividends
+        discount_curve = self.parent.discount_curve
 
         i_idx = np.arange(num_steps + 1)[:, None]
         t_idx = np.arange(num_steps + 1)[None, :]
@@ -184,7 +182,7 @@ class _BinomialValuationBase:
         whose ``solve()`` does not return a 2-D option lattice.
         """
         num_steps = int(self.binom_params.num_steps)
-        _, _, spot_lattice = self._setup_binomial_parameters(num_steps)
+        _, _, spot_lattice = self._setup_binomial_parameters()
         option_lattice = self.solve()  # type: ignore[attr-defined]
         if not isinstance(option_lattice, np.ndarray) or option_lattice.ndim != 2:
             raise UnsupportedFeatureError(
@@ -253,7 +251,7 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
         """Compute the option value lattice using a binomial tree."""
         num_steps = int(self.binom_params.num_steps)
         logger.debug("Binomial European num_steps=%d", num_steps)
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         option_lattice = np.zeros_like(spot_lattice)
         option_lattice[:, num_steps] = self._get_intrinsic_values(spot_lattice[:, num_steps])
@@ -284,7 +282,7 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
         """Compute the option value lattice using a binomial tree with early exercise."""
         num_steps = int(self.binom_params.num_steps)
         logger.debug("Binomial American num_steps=%d", num_steps)
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         option_lattice = np.zeros_like(spot_lattice)
         intrinsic = self._get_intrinsic_values(spot_lattice)
@@ -321,7 +319,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
         )
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         if self.binom_params.mc_paths is None:
             raise ValidationError("BinomialParams.mc_paths must be set for Asian binomial MC")
@@ -425,7 +423,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             num_steps,
             self.binom_params.asian_tree_averages,
         )
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters(num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
 
         averaging = self.spec.averaging
         if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
