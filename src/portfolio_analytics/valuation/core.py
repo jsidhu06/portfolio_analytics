@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass, replace as dc_replace
 from collections.abc import Callable, Sequence
 import datetime as dt
@@ -32,6 +33,24 @@ from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
 logger = logging.getLogger(__name__)
+
+# ── PV interceptors ─────────────────────────────────────────────────
+# Maps a tag → OptionValuation method name that completely replaces the
+# normal present_value() flow.  Resolved once during __init__ via
+# _resolve_interceptor(); at most one interceptor per instance.
+_PV_INTERCEPTORS: dict[str, str] = {
+    "SEASONED_ASIAN": "_seasoned_asian_pv",
+}
+
+
+def _resolve_interceptor(
+    spec: OptionSpec | PayoffSpec | AsianOptionSpec,
+) -> str | None:
+    """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation."""
+    if isinstance(spec, AsianOptionSpec) and spec.observed_average is not None:
+        return "SEASONED_ASIAN"
+    return None
+
 
 # ── Implementation registries ───────────────────────────────────────
 # Maps (PricingMethod, ExerciseType) → implementation class for vanilla specs.
@@ -161,6 +180,12 @@ class AsianOptionSpec:
         Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
         Contract multiplier (default 100)
+    observed_average : float, optional
+        For seasoned Asians: the realised average price over the already-observed
+        period.  Must be provided together with ``observed_count``.
+    observed_count : int, optional
+        For seasoned Asians: the number of already-observed fixings (n₁).
+        Must be provided together with ``observed_average``.
 
     Notes
     -----
@@ -180,6 +205,8 @@ class AsianOptionSpec:
     num_steps: int | None = None
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
+    observed_average: float | None = None
+    observed_count: int | None = None
 
     def __post_init__(self) -> None:
         """Validate Asian option specification."""
@@ -216,6 +243,25 @@ class AsianOptionSpec:
         if self.num_steps is not None:
             if not isinstance(self.num_steps, int) or self.num_steps < 1:
                 raise ValidationError("num_steps must be a positive integer")
+
+        # Seasoned Asian: observed_average and observed_count must be both set or both None
+        if (self.observed_average is None) != (self.observed_count is None):
+            raise ValidationError(
+                "observed_average and observed_count must both be provided or both omitted."
+            )
+        if self.observed_average is not None:
+            try:
+                obs_avg = float(self.observed_average)
+            except (TypeError, ValueError) as exc:
+                raise ConfigurationError("observed_average must be numeric") from exc
+            if not np.isfinite(obs_avg):
+                raise ValidationError("observed_average must be finite")
+            if obs_avg <= 0.0:
+                raise ValidationError("observed_average must be > 0")
+            object.__setattr__(self, "observed_average", obs_avg)
+
+            if not isinstance(self.observed_count, int) or self.observed_count < 1:
+                raise ValidationError("observed_count must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -437,6 +483,13 @@ class OptionValuation:
                 )
         self._impl = impl_cls(self)
 
+        # Resolve optional PV interceptor (e.g. seasoned Asian K* adjustment)
+        tag = _resolve_interceptor(spec)
+        method_name = _PV_INTERCEPTORS.get(tag) if tag else None  # type: ignore[arg-type]
+        self._pv_interceptor: Callable[[], float] | None = (
+            getattr(self, method_name) if method_name else None
+        )
+
     @property
     def maturity(self) -> dt.datetime:
         return self.spec.maturity
@@ -520,11 +573,132 @@ class OptionValuation:
 
     def present_value(self) -> float:
         """Calculate present value of the derivative."""
+        if self._pv_interceptor is not None:
+            return self._pv_interceptor()
+
         base_pv = float(self._impl.present_value())
         if self.params is None or not getattr(self.params, "control_variate_european", False):
             return base_pv
 
         return float(self._apply_control_variate(base_pv))
+
+    # ── Seasoned Asian ───────────────────────────────────────────────────
+
+    def _seasoned_asian_future_obs(self) -> int:
+        """Return the number of *future* averaging observations (n₂).
+
+        ``n₂`` equals the number of price fixings the engine will include in the
+        average of the freshly-issued replacement option.  For the analytical
+        engine that is ``spec.num_steps + 1``; for binomial/MC it is derived from
+        the tree or simulation time-grid size.
+        """
+        spec = self.spec
+        assert isinstance(spec, AsianOptionSpec)
+
+        if self.pricing_method is PricingMethod.BSM:
+            if spec.num_steps is None:
+                raise ValidationError(
+                    "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
+                )
+            return spec.num_steps + 1
+
+        if self.pricing_method is PricingMethod.BINOMIAL:
+            assert isinstance(self.params, BinomialParams)
+            return self.params.num_steps + 1
+
+        if self.pricing_method is PricingMethod.MONTE_CARLO:
+            assert isinstance(self.underlying, PathSimulation)
+            self.underlying._ensure_time_grid()
+            return len(self.underlying.time_grid)
+
+        raise UnsupportedFeatureError(
+            f"Seasoned Asian pricing is not supported for {self.pricing_method.name}."
+        )
+
+    def _seasoned_asian_pv(self) -> float:
+        """Price a seasoned Asian using Hull's adjusted-strike reduction.
+
+        When part of the averaging window has elapsed, the payoff of an
+        average-price call is::
+
+            max((n₁·S̄ + n₂·S_avg_future) / (n₁+n₂) − K, 0)
+
+        which equals ``(n₂/(n₁+n₂)) · max(S_avg_future − K*, 0)`` where::
+
+            K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
+
+        When K* > 0 this is a newly-issued Asian with strike K* scaled by
+        n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised and
+        its value is that of a forward contract on the remaining average.
+
+        See Hull, *Options, Futures, and Other Derivatives*, Section 26.13.
+        """
+        spec = self.spec
+        assert isinstance(spec, AsianOptionSpec)
+        assert spec.observed_average is not None and spec.observed_count is not None
+
+        n1 = spec.observed_count
+        n2 = self._seasoned_asian_future_obs()
+        n_total = n1 + n2
+        S_bar = spec.observed_average
+        K = spec.strike
+
+        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
+        scale = n2 / n_total
+
+        logger.debug(
+            "Seasoned Asian: n1=%d n2=%d S_bar=%.4f K=%.4f K*=%.4f scale=%.4f",
+            n1,
+            n2,
+            S_bar,
+            K,
+            K_star,
+            scale,
+        )
+
+        if K_star > 0.0:
+            # Price a fresh Asian with adjusted strike K*
+            fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
+            fresh_pv = OptionValuation(
+                name=f"{self.name}_seasoned_fresh",
+                underlying=self.underlying,
+                spec=fresh_spec,
+                pricing_method=self.pricing_method,
+                params=self.params,
+            ).present_value()
+            return scale * fresh_pv
+
+        # K* <= 0: option is certain to be exercised → value as forward contract.
+        # For a call:  scale · [M₁·e^{-rT} − K*·e^{-rT}]
+        # For a put:   scale · [K*·e^{-rT} − M₁·e^{-rT}]  (always 0 when K*<=0)
+        # M₁ is the forward of the average over the remaining period.  Rather than
+        # recompute the exact first moment, we price a fresh Asian with strike=0
+        # (deep ITM) which equals the discounted expected average, then apply the
+        # K* offset.
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        df = float(self.discount_curve.df(ttm))
+
+        fresh_spec_zero = dc_replace(
+            spec,
+            strike=0.0,
+            observed_average=None,
+            observed_count=None,
+        )
+        # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
+        disc_M1 = OptionValuation(
+            name=f"{self.name}_seasoned_fwd",
+            underlying=self.underlying,
+            spec=dc_replace(fresh_spec_zero, call_put=OptionType.CALL),
+            pricing_method=self.pricing_method,
+            params=self.params,
+        ).present_value()
+
+        if spec.call_put is OptionType.CALL:
+            return scale * (disc_M1 - K_star * df)
+        # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
+        return 0.0
+
+    # ── Control variates ─────────────────────────────────────────────────
 
     def _apply_control_variate(self, base_pv: float) -> float:
         if self.exercise_type is not ExerciseType.AMERICAN:
