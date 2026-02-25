@@ -568,12 +568,12 @@ class GBMProcess(PathSimulation):
         """
         self._ensure_time_grid()
 
-        steps = len(self.time_grid)
+        num_steps = len(self.time_grid) - 1
         num_paths = self.paths
 
         # Pre-calculate time deltas and random numbers
         time_deltas = self._time_deltas()
-        z = self._standard_normals(random_seed, steps, num_paths)
+        z = self._standard_normals(random_seed, num_steps, num_paths)
         t_grid = np.array(
             [
                 calculate_year_fraction(
@@ -602,12 +602,11 @@ class GBMProcess(PathSimulation):
 
         # If no discrete dividends, use fully vectorized implementation (faster)
         if not self.discrete_dividends:
-            dt_matrix = time_deltas.reshape(-1, 1)  # (steps-1, 1)
-            z_slice = z[1:]  # (steps-1, paths)
+            dt_matrix = time_deltas.reshape(-1, 1)  # (num_steps, 1)
 
             # log S_t = log S_{t-1} + (r - q - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z
             drift = ((r_steps - q_steps)[:, None] - 0.5 * self.volatility**2) * dt_matrix
-            diffusion = self.volatility * np.sqrt(dt_matrix) * z_slice
+            diffusion = self.volatility * np.sqrt(dt_matrix) * z
 
             log_increments = drift + diffusion
 
@@ -619,7 +618,7 @@ class GBMProcess(PathSimulation):
             return self.initial_value * np.exp(log_paths)
 
         # Fallback to loop for discrete dividends case
-        paths = np.zeros((steps, num_paths), dtype=float)
+        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
         paths[0] = self.initial_value
 
         dividend_by_date: dict[dt.datetime, float] = {}
@@ -634,10 +633,10 @@ class GBMProcess(PathSimulation):
         if div_t0 is not None:
             paths[0] = np.maximum(paths[0] - div_t0, 0.0)
 
-        for t in range(1, steps):
+        for t in range(1, num_steps + 1):
             dt_step = time_deltas[t - 1]
             increment = ((r_steps[t - 1] - q_steps[t - 1]) - 0.5 * self.volatility**2) * dt_step
-            increment += self.volatility * np.sqrt(dt_step) * z[t]
+            increment += self.volatility * np.sqrt(dt_step) * z[t - 1]
             paths[t] = paths[t - 1] * np.exp(increment)
 
             div_amt = dividend_by_date.get(self.time_grid[t])
@@ -685,7 +684,7 @@ class JDProcess(PathSimulation):
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         self._ensure_time_grid()
 
-        steps = len(self.time_grid)
+        num_steps = len(self.time_grid) - 1
         num_paths = self.paths
 
         t_grid = np.array(
@@ -732,16 +731,15 @@ class JDProcess(PathSimulation):
             diffusion_seed = None
             jump_rng = np.random.default_rng()
 
-        z = self._standard_normals(diffusion_seed, steps, num_paths)
+        z = self._standard_normals(diffusion_seed, num_steps, num_paths)
         time_deltas = self._time_deltas()
 
         if not self.discrete_dividends:
-            dt_matrix = time_deltas.reshape(-1, 1)  # (steps-1, 1)
-            z_slice = z[1:]  # (steps-1, paths)
+            dt_matrix = time_deltas.reshape(-1, 1)  # (num_steps, 1)
 
             # 1. Diffusion component
             drift_diffusion = ((r_steps - q_steps)[:, None] - lam * k - 0.5 * vol**2) * dt_matrix
-            diffusion_term = vol * np.sqrt(dt_matrix) * z_slice
+            diffusion_term = vol * np.sqrt(dt_matrix) * z
 
             # 2. Jump component (uses independent RNG stream)
             poi_counts = jump_rng.poisson(lam * dt_matrix, size=(len(dt_matrix), num_paths))
@@ -761,7 +759,7 @@ class JDProcess(PathSimulation):
             return self.initial_value * np.exp(log_paths)
 
         # Fallback loop (discrete dividends)
-        paths = np.zeros((steps, num_paths), dtype=float)
+        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
         paths[0] = self.initial_value
 
         dividend_by_date: dict[dt.datetime, float] = {}
@@ -770,10 +768,10 @@ class JDProcess(PathSimulation):
             if ex_date in time_set:
                 dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
-        for t in range(1, steps):
+        for t in range(1, num_steps + 1):
             dt_step = time_deltas[t - 1]
             drift = ((r_steps[t - 1] - q_steps[t - 1]) - lam * k - 0.5 * vol**2) * dt_step
-            diffusion = vol * np.sqrt(dt_step) * z[t]
+            diffusion = vol * np.sqrt(dt_step) * z[t - 1]
             diffusion_multiplier = np.exp(drift + diffusion)
 
             jump_counts = jump_rng.poisson(lam * dt_step, size=num_paths)
@@ -831,24 +829,24 @@ class SRDProcess(PathSimulation):
         """
         self._ensure_time_grid()
 
-        steps = len(self.time_grid)
+        num_steps = len(self.time_grid) - 1
         num_paths = self.paths
 
         # Truncated paths (non-negative) and raw Euler buffer
-        paths = np.zeros((steps, num_paths), dtype=float)
+        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
         euler_raw = np.zeros_like(paths)
 
         paths[0] = self.initial_value
         euler_raw[0] = self.initial_value
 
-        z = self._standard_normals(random_seed, steps, num_paths)
+        z = self._standard_normals(random_seed, num_steps, num_paths)
         time_deltas = self._time_deltas()
 
-        for t in range(1, steps):
+        for t in range(1, num_steps + 1):
             dt_step = time_deltas[t - 1]
             x_prev = paths[t - 1, :]  # truncated (non-negative) values
             mean_reversion = self.kappa * (self.theta - x_prev) * dt_step
-            diffusion = self.volatility * np.sqrt(x_prev * dt_step) * z[t]
+            diffusion = self.volatility * np.sqrt(x_prev * dt_step) * z[t - 1]
             euler_raw[t] = euler_raw[t - 1] + mean_reversion + diffusion
             paths[t] = np.maximum(euler_raw[t], 0.0)
 
