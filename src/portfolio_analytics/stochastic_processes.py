@@ -651,7 +651,7 @@ class JDProcess(PathSimulation):
     """Merton (1976) jump diffusion (lognormal jumps).
 
     Risk-neutral discretisation (per step Δt):
-        S_{t+Δt} = S_t * exp((r - λk - 0.5σ^2)Δt + σ√Δt Z)
+        S_{t+Δt} = S_t * exp((r - q - λk - 0.5σ^2)Δt + σ√Δt Z)
                         * exp( Σ_{i=1}^{N} Y_i )
 
     where:
@@ -713,13 +713,26 @@ class JDProcess(PathSimulation):
             )
         else:
             q_steps = np.zeros_like(r_steps)
+
         lam = float(self.lambd)
         mu_j = float(self.mu)
         sig_j = float(self.delta)
         vol = float(self.volatility)
         k = np.exp(mu_j + 0.5 * sig_j**2) - 1.0
 
-        z = self._standard_normals(random_seed, steps, num_paths)
+        # Derive independent RNG streams for diffusion and jump components.
+        # Using the same seed for both would create correlated bit streams;
+        # SeedSequence.spawn() guarantees statistical independence.
+        if random_seed is not None:
+            ss = np.random.SeedSequence(random_seed)
+            diffusion_ss, jump_ss = ss.spawn(2)
+            diffusion_seed = int(diffusion_ss.generate_state(1)[0])
+            jump_rng = np.random.default_rng(jump_ss)
+        else:
+            diffusion_seed = None
+            jump_rng = np.random.default_rng()
+
+        z = self._standard_normals(diffusion_seed, steps, num_paths)
         time_deltas = self._time_deltas()
 
         if not self.discrete_dividends:
@@ -730,18 +743,12 @@ class JDProcess(PathSimulation):
             drift_diffusion = ((r_steps - q_steps)[:, None] - lam * k - 0.5 * vol**2) * dt_matrix
             diffusion_term = vol * np.sqrt(dt_matrix) * z_slice
 
-            # 2. Jump component
-            rng = np.random.default_rng(random_seed)
-            # Poisson arrivals per step
-            poi_counts = rng.poisson(lam * dt_matrix, size=(len(dt_matrix), num_paths))
+            # 2. Jump component (uses independent RNG stream)
+            poi_counts = jump_rng.poisson(lam * dt_matrix, size=(len(dt_matrix), num_paths))
 
-            # We need sum of N(mu, delta) for each jump.
-            # Easiest way: generate normal for each potential jump is hard if count varies.
-            # Instead approximation: if poi is small, it's sum of normals = N(n*mu, n*delta^2)
-            # This is mathematically exact: sum of n i.i.d normals is Normal(n*mu, n*sigma^2).
-            # So we generate one normal per step per path scaled by sqrt(n).
-
-            jump_normals = rng.standard_normal(size=(len(dt_matrix), num_paths))
+            # Sum of N_Δ i.i.d. N(μ_J, δ_J²) jumps is N(N_Δ·μ_J, N_Δ·δ_J²).
+            # Sample the sum directly: N_Δ·μ_J + √N_Δ·δ_J·Z_J.
+            jump_normals = jump_rng.standard_normal(size=(len(dt_matrix), num_paths))
             jump_magnitude = np.where(
                 poi_counts > 0, poi_counts * mu_j + np.sqrt(poi_counts) * sig_j * jump_normals, 0.0
             )
@@ -753,10 +760,9 @@ class JDProcess(PathSimulation):
 
             return self.initial_value * np.exp(log_paths)
 
-        # Fallback loop
+        # Fallback loop (discrete dividends)
         paths = np.zeros((steps, num_paths), dtype=float)
         paths[0] = self.initial_value
-        rng = np.random.default_rng(random_seed)
 
         dividend_by_date: dict[dt.datetime, float] = {}
         time_set = set(self.time_grid)
@@ -770,10 +776,11 @@ class JDProcess(PathSimulation):
             diffusion = vol * np.sqrt(dt_step) * z[t]
             diffusion_multiplier = np.exp(drift + diffusion)
 
-            jump_counts = rng.poisson(lam * dt_step, size=num_paths)
+            jump_counts = jump_rng.poisson(lam * dt_step, size=num_paths)
             jump_sum = np.where(
                 jump_counts > 0,
-                jump_counts * mu_j + np.sqrt(jump_counts) * sig_j * rng.standard_normal(num_paths),
+                jump_counts * mu_j
+                + np.sqrt(jump_counts) * sig_j * jump_rng.standard_normal(num_paths),
                 0.0,
             )
             jump_multiplier = np.exp(jump_sum)
