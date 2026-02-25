@@ -22,13 +22,14 @@ def test_forward_price_continuous_dividend_curve():
     spot = 100.0
     r = 0.05
     q = 0.02
+    r_curve = flat_curve(pricing_date, maturity, r)
     q_curve = flat_curve(pricing_date, maturity, q)
 
     fwd = forward_price(
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=r,
+        discount_curve=r_curve,
         dividend_curve=q_curve,
     )
 
@@ -49,7 +50,6 @@ def test_forward_price_discrete_dividends():
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=r,
         discount_curve=curve,
         discrete_dividends=dividends,
     )
@@ -66,13 +66,14 @@ def test_put_call_parity_rhs_and_gap():
     spot = 100.0
     strike = 100.0
     r = 0.05
+    curve = flat_curve(pricing_date, maturity, r)
 
     rhs = put_call_parity_rhs(
         spot=spot,
         strike=strike,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=r,
+        discount_curve=curve,
     )
 
     call_price = 10.0
@@ -85,7 +86,7 @@ def test_put_call_parity_rhs_and_gap():
         strike=strike,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=r,
+        discount_curve=curve,
     )
 
     assert np.isclose(gap, 0.0)
@@ -146,7 +147,7 @@ def test_put_call_parity_bsm_no_dividend():
         strike=strike,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=r,
+        discount_curve=curve,
     )
 
     assert np.isclose(call_price - put_price, rhs, rtol=1e-10)
@@ -210,7 +211,7 @@ def test_put_call_parity_bsm_with_dividend_curve():
         strike=strike,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=r,
+        discount_curve=curve,
         dividend_curve=q_curve,
     )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from math import comb
@@ -158,19 +159,23 @@ def forward_price(
     spot: float,
     pricing_date: datetime,
     maturity: datetime,
-    short_rate: float,
-    discount_curve: DiscountCurve | None = None,
+    discount_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """Compute the no-arbitrage forward price for an equity-style underlying.
 
-    Supports either continuous dividend curve or discrete dividends (not both).
+    Supports continuous dividend curve, discrete dividends, or both.  When both
+    are provided the continuous yield enters the cost-of-carry and the PV of
+    discrete dividends is subtracted from spot.
     """
     if dividend_curve is not None and discrete_dividends:
-        raise ValidationError(
-            "Provide either a continuous dividend_curve or discrete_dividends, not both."
+        warnings.warn(
+            "Both dividend_curve and discrete_dividends provided to forward_price. "
+            "The continuous yield will enter the cost-of-carry and discrete "
+            "dividends will be subtracted from spot.",
+            stacklevel=2,
         )
 
     t = calculate_year_fraction(pricing_date, maturity, day_count_convention)
@@ -178,11 +183,10 @@ def forward_price(
         raise ValidationError("maturity must be after pricing_date")
 
     spot = float(spot)
-    short_rate = float(short_rate)
 
+    # PV of discrete dividends (0 if none)
+    pv_divs = 0.0
     if discrete_dividends:
-        if discount_curve is None:
-            raise ValidationError("discount_curve is required for discrete_dividends.")
         pv_divs = pv_discrete_dividends(
             discrete_dividends,
             curve_date=pricing_date,
@@ -190,11 +194,13 @@ def forward_price(
             discount_curve=discount_curve,
             day_count_convention=day_count_convention,
         )
-        prepaid_forward = spot - pv_divs
-        return float(prepaid_forward * np.exp(short_rate * t))
 
+    # Continuous dividend yield discount factor (1 if none)
     df_q = 1.0 if dividend_curve is None else float(dividend_curve.df(t))
-    return float(spot * np.exp(short_rate * t) * df_q)
+    df_r = float(discount_curve.df(t))
+
+    fwd = (spot - pv_divs) * df_q / df_r
+    return float(fwd)
 
 
 def put_call_parity_rhs(
@@ -203,8 +209,7 @@ def put_call_parity_rhs(
     strike: float,
     pricing_date: datetime,
     maturity: datetime,
-    short_rate: float,
-    discount_curve: DiscountCurve | None = None,
+    discount_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
@@ -221,13 +226,13 @@ def put_call_parity_rhs(
         spot=spot,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=short_rate,
         discount_curve=discount_curve,
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
         day_count_convention=day_count_convention,
     )
-    return float(np.exp(-short_rate * t) * (fwd - float(strike)))
+    df_r = float(discount_curve.df(t))
+    return float(df_r * (fwd - float(strike)))
 
 
 def put_call_parity_gap(
@@ -238,8 +243,7 @@ def put_call_parity_gap(
     strike: float,
     pricing_date: datetime,
     maturity: datetime,
-    short_rate: float,
-    discount_curve: DiscountCurve | None = None,
+    discount_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: list[tuple[datetime, float]] | None = None,
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
@@ -250,7 +254,6 @@ def put_call_parity_gap(
         strike=strike,
         pricing_date=pricing_date,
         maturity=maturity,
-        short_rate=short_rate,
         discount_curve=discount_curve,
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,

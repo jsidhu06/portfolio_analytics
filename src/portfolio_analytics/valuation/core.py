@@ -303,7 +303,14 @@ class UnderlyingPricingData:
             object.__setattr__(self, "discrete_dividends", ())
 
         if self.dividend_curve is not None and self.discrete_dividends:
-            raise ValidationError("Provide either dividend_curve or discrete_dividends, not both.")
+            import warnings
+
+            warnings.warn(
+                "UnderlyingPricingData: both dividend_curve and discrete_dividends "
+                "provided. The continuous yield will enter the drift and discrete "
+                "dividends will be subtracted at each ex-date.",
+                stacklevel=2,
+            )
 
     @property
     def pricing_date(self) -> dt.datetime:

@@ -118,8 +118,11 @@ class GBMParams:
             tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
         )
         if self.dividend_curve is not None and self.discrete_dividends:
-            raise ValidationError(
-                "Provide either dividend_curve or discrete_dividends in GBMParams, not both"
+            warnings.warn(
+                "GBMParams: both dividend_curve and discrete_dividends provided. "
+                "The continuous yield will enter the drift and discrete dividends "
+                "will be subtracted at each ex-date.",
+                stacklevel=2,
             )
 
 
@@ -164,8 +167,11 @@ class JDParams:
             tuple(self.discrete_dividends) if self.discrete_dividends is not None else tuple(),
         )
         if self.dividend_curve is not None and self.discrete_dividends:
-            raise ValidationError(
-                "Provide either dividend_curve or discrete_dividends in JDParams, not both"
+            warnings.warn(
+                "JDParams: both dividend_curve and discrete_dividends provided. "
+                "The continuous yield will enter the drift and discrete dividends "
+                "will be subtracted at each ex-date.",
+                stacklevel=2,
             )
 
 

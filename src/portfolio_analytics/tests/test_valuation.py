@@ -783,9 +783,9 @@ class TestOptionValuation:
                 pricing_method=PricingMethod.MONTE_CARLO,
             )
 
-    def test_underlying_pricing_data_rejects_mixed_dividends(self):
-        """Continuous dividend_curve and discrete_dividends should be mutually exclusive."""
-        with pytest.raises(ValidationError, match="either dividend_curve or discrete_dividends"):
+    def test_underlying_pricing_data_warns_mixed_dividends(self):
+        """Both dividend_curve and discrete_dividends should emit a warning."""
+        with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
             UnderlyingPricingData(
                 initial_value=100.0,
                 volatility=0.2,
