@@ -82,7 +82,7 @@ class OptionSpec:
     exercise_type: ExerciseType  # EUROPEAN / AMERICAN
     strike: float
     maturity: dt.datetime
-    currency: str
+    currency: str | None = None
     contract_size: int | float = 100
 
     def __post_init__(self) -> None:
@@ -130,8 +130,8 @@ class PayoffSpec:
 
     exercise_type: ExerciseType
     maturity: dt.datetime
-    currency: str
     payoff_fn: Callable[[np.ndarray | float], np.ndarray]
+    currency: str | None = None
     contract_size: int | float = 100
 
     # Kept for compatibility with vanilla valuation interfaces
@@ -168,7 +168,7 @@ class AsianOptionSpec:
         Strike price
     maturity : dt.datetime
         Option maturity date
-    currency : str
+    currency : str, optional
         Currency denomination
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
@@ -200,7 +200,7 @@ class AsianOptionSpec:
     call_put: OptionType  # CALL or PUT
     strike: float
     maturity: dt.datetime
-    currency: str
+    currency: str | None = None
     averaging_start: dt.datetime | None = None
     num_steps: int | None = None
     contract_size: int | float = 100
@@ -384,11 +384,10 @@ class OptionValuation:
         )
 
         # --- currency resolution & check (default match) ---
-        # spec.currency may be optional/None; treat None as "same as market currency"
-        eff_spec_ccy = getattr(spec, "currency", None) or underlying.currency
-        self._currency: str = eff_spec_ccy
 
-        if getattr(spec, "currency", None) is not None and eff_spec_ccy != underlying.currency:
+        self._currency = spec.currency or underlying.currency
+
+        if spec.currency is not None and spec.currency != underlying.currency:
             raise UnsupportedFeatureError(
                 "Cross-currency valuation is not supported. "
                 "Option currency must match the underlying market currency."
