@@ -24,7 +24,7 @@ class TestPathSimulation:
         """Test that PathSimulation cannot be instantiated directly due to abstract method"""
         pricing_date = dt.datetime(2025, 1, 1)
         end_date = dt.datetime(2026, 1, 1)
-        curve = flat_curve(pricing_date, end_date, 0.05, name="csr")
+        curve = flat_curve(pricing_date, end_date, 0.05)
         market_data = MarketData(pricing_date, curve, currency="EUR")
         process_params = GBMParams(initial_value=100.0, volatility=0.2)
         sim = SimulationConfig(
@@ -47,7 +47,7 @@ class TestGBMProcess:
         """Set up market environment for GBM tests"""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=36.0, volatility=0.2)
         self.sim = SimulationConfig(
@@ -56,7 +56,6 @@ class TestGBMProcess:
             end_date=self.end_date,
         )
         self.gbm = GBMProcess(
-            "gbm_test",
             self.market_data,
             self.process_params,
             self.sim,
@@ -70,7 +69,6 @@ class TestGBMProcess:
 
         # Create a new instance and generate again with same seed
         gbm_2 = GBMProcess(
-            "gbm_test_2",
             self.market_data,
             self.process_params,
             self.sim,
@@ -129,14 +127,12 @@ class TestGBMProcess:
         high_vol_params = GBMParams(initial_value=100.0, volatility=0.5)
 
         gbm_low = GBMProcess(
-            "gbm_low_vol",
             self.market_data,
             low_vol_params,
             self.sim,
         )
 
         gbm_high = GBMProcess(
-            "gbm_high_vol",
             self.market_data,
             high_vol_params,
             self.sim,
@@ -158,7 +154,7 @@ class TestGBMProcess:
         volatility = 0.2
         pricing_date = dt.datetime(2025, 1, 1)
         end_date = dt.datetime(2026, 1, 1)
-        curve = flat_curve(pricing_date, end_date, short_rate, name="csr")
+        curve = flat_curve(pricing_date, end_date, short_rate)
         market_data = MarketData(pricing_date, curve, currency="USD")
         process_params = GBMParams(initial_value=100.0, volatility=volatility)
         sim_config = SimulationConfig(
@@ -167,7 +163,7 @@ class TestGBMProcess:
             end_date=dt.datetime(2026, 1, 1),
         )
 
-        gbm = GBMProcess("gbm_drift", market_data, process_params, sim_config)
+        gbm = GBMProcess(market_data, process_params, sim_config)
         paths = gbm.simulate(random_seed=42)
 
         # Calculate mean return
@@ -190,7 +186,7 @@ class TestSRDProcess:
         """Set up market environment for SRD tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = SRDParams(
             initial_value=0.03,
@@ -204,7 +200,6 @@ class TestSRDProcess:
             end_date=self.end_date,
         )
         self.srd = SRDProcess(
-            "srd_test",
             self.market_data,
             self.process_params,
             self.sim,
@@ -239,7 +234,6 @@ class TestSRDProcess:
         )
 
         srd_long = SRDProcess(
-            "srd_long",
             self.market_data,
             self.process_params,
             long_sim,
@@ -265,7 +259,6 @@ class TestSRDProcess:
         paths1 = self.srd.simulate(random_seed=123).copy()
 
         srd2 = SRDProcess(
-            "srd_test2",
             self.market_data,
             self.process_params,
             self.sim,
@@ -283,7 +276,7 @@ class TestJDProcess:
         """Set up market environment for Jump Diffusion tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
         self.process_params = JDParams(
             initial_value=100.0,
@@ -298,7 +291,6 @@ class TestJDProcess:
             end_date=self.end_date,
         )
         self.jd = JDProcess(
-            "jd_test",
             self.market_data,
             self.process_params,
             self.sim,
@@ -336,7 +328,6 @@ class TestJDProcess:
             volatility=self.process_params.volatility,
         )
         gbm = GBMProcess(
-            "gbm_comparable",
             self.market_data,
             gbm_params,
             self.sim,
@@ -356,7 +347,6 @@ class TestJDProcess:
         paths1 = self.jd.simulate(random_seed=456).copy()
 
         jd2 = JDProcess(
-            "jd_test2",
             self.market_data,
             self.process_params,
             self.sim,
@@ -377,7 +367,6 @@ class TestJDProcess:
         )
 
         jd_no_jump = JDProcess(
-            "jd_no_jump",
             self.market_data,
             no_jump_params,
             self.sim,
@@ -505,7 +494,7 @@ class TestVarianceReduction:
     def setup_method(self):
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
 
@@ -517,7 +506,7 @@ class TestVarianceReduction:
             antithetic=antithetic,
             moment_matching=moment_matching,
         )
-        return GBMProcess("vr_test", self.market_data, self.process_params, sim, corr=None)
+        return GBMProcess(self.market_data, self.process_params, sim, corr=None)
 
     def test_defaults_are_true(self):
         """SimulationConfig defaults to antithetic=True, moment_matching=True."""
@@ -604,7 +593,7 @@ class TestPathSimulationReplace:
     def setup_method(self):
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
         self.sim = SimulationConfig(
@@ -612,7 +601,7 @@ class TestPathSimulationReplace:
             frequency="ME",
             end_date=self.end_date,
         )
-        self.gbm = GBMProcess("gbm_orig", self.market_data, self.process_params, self.sim)
+        self.gbm = GBMProcess(self.market_data, self.process_params, self.sim)
 
     # --- Type preservation ---
 
@@ -624,7 +613,7 @@ class TestPathSimulationReplace:
     def test_replace_jd_returns_jd(self):
         """replace() on a JDProcess should return a JDProcess."""
         jd_params = JDParams(initial_value=100.0, volatility=0.2, lambd=0.5, mu=-0.1, delta=0.3)
-        jd = JDProcess("jd_orig", self.market_data, jd_params, self.sim)
+        jd = JDProcess(self.market_data, jd_params, self.sim)
         cloned = jd.replace(initial_value=110.0)
         assert type(cloned) is JDProcess
         assert cloned.initial_value == 110.0
@@ -645,7 +634,7 @@ class TestPathSimulationReplace:
 
     def test_replace_dividend_curve(self):
         """replace(dividend_curve=...) routes to process_params."""
-        q_curve = flat_curve(self.pricing_date, self.end_date, 0.02, name="q")
+        q_curve = flat_curve(self.pricing_date, self.end_date, 0.02)
         cloned = self.gbm.replace(dividend_curve=q_curve)
         assert cloned.dividend_curve is q_curve
         assert self.gbm.dividend_curve is None  # original unchanged
@@ -666,7 +655,7 @@ class TestPathSimulationReplace:
     def test_replace_num_steps(self):
         """replace(num_steps=...) routes to sim config."""
         sim_steps = SimulationConfig(paths=1000, num_steps=50, end_date=self.end_date)
-        gbm_steps = GBMProcess("gbm_steps", self.market_data, self.process_params, sim_steps)
+        gbm_steps = GBMProcess(self.market_data, self.process_params, sim_steps)
         cloned = gbm_steps.replace(num_steps=100)
         assert cloned.num_steps == 100
         assert cloned.time_grid is None  # grid-shaping param changed
@@ -677,7 +666,7 @@ class TestPathSimulationReplace:
         """replace(name=...) updates the name."""
         cloned = self.gbm.replace(name="gbm_cloned")
         assert cloned.name == "gbm_cloned"
-        assert self.gbm.name == "gbm_orig"
+        assert self.gbm.name is None
 
     def test_replace_currency(self):
         """replace(currency=...) routes to market_data."""
@@ -687,7 +676,7 @@ class TestPathSimulationReplace:
 
     def test_replace_discount_curve(self):
         """replace(discount_curve=...) routes to market_data."""
-        new_curve = flat_curve(self.pricing_date, self.end_date, 0.08, name="csr2")
+        new_curve = flat_curve(self.pricing_date, self.end_date, 0.08)
         cloned = self.gbm.replace(discount_curve=new_curve)
         assert cloned.discount_curve is new_curve
         assert self.gbm.discount_curve is self.curve  # original unchanged
@@ -719,9 +708,7 @@ class TestPathSimulationReplace:
             ]
         )
         sim_explicit = SimulationConfig(paths=1000, time_grid=explicit_grid)
-        gbm_explicit = GBMProcess(
-            "gbm_explicit", self.market_data, self.process_params, sim_explicit
-        )
+        gbm_explicit = GBMProcess(self.market_data, self.process_params, sim_explicit)
 
         mid_date = dt.datetime(2025, 3, 15)
         cloned = gbm_explicit.replace(observation_dates={mid_date})
@@ -779,7 +766,7 @@ class TestPathSimulationReplace:
         """Replacing a param not on the process_params type should raise."""
         # SRD doesn't have dividend_curve
         srd_params = SRDParams(initial_value=0.03, volatility=0.015, kappa=0.2, theta=0.05)
-        srd = SRDProcess("srd", self.market_data, srd_params, self.sim)
+        srd = SRDProcess(self.market_data, srd_params, self.sim)
         with pytest.raises(ValidationError, match="dividend_curve.*not supported"):
             srd.replace(dividend_curve=self.curve)
 

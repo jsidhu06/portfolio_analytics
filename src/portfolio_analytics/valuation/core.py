@@ -351,8 +351,6 @@ class OptionValuation:
 
     Attributes
     ==========
-    name: str
-        Name of the valuation object/trade.
     underlying: PathSimulation | UnderlyingPricingData
         Stochastic process simulator (Monte Carlo) or minimal data container (BSM, Binomial, PDE).
         For Monte Carlo: must be PathSimulation instance.
@@ -393,13 +391,11 @@ class OptionValuation:
 
     def __init__(
         self,
-        name: str,
         underlying: PathSimulation | UnderlyingPricingData,
         spec: OptionSpec | PayoffSpec | AsianOptionSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ) -> None:
-        self.name = name
         self.underlying = underlying
         self.spec = spec
 
@@ -410,18 +406,18 @@ class OptionValuation:
         else:
             self.option_type = None
 
-        if self.currency != underlying.currency:
-            raise UnsupportedFeatureError(
-                "Cross-currency valuation is not supported. "
-                "Option currency must match the underlying market currency."
-            )
-
         # Validate pricing_method early — comparisons below rely on enum identity
         if not isinstance(pricing_method, PricingMethod):
             raise ConfigurationError(
                 f"pricing_method must be PricingMethod enum, got {type(pricing_method).__name__}"
             )
         self.pricing_method = pricing_method
+
+        if self.currency != underlying.currency:
+            raise UnsupportedFeatureError(
+                "Cross-currency valuation is not supported. "
+                "Option currency must match the underlying market currency."
+            )
 
         self.params: ValuationParams | None = self._resolve_params(
             pricing_method=pricing_method, params=params
@@ -623,7 +619,6 @@ class OptionValuation:
 
         cv_params = dc_replace(self.params, control_variate_european=False)
         euro_num = OptionValuation(
-            name=f"{self.name}_cv_euro_num",
             underlying=self.underlying,
             spec=euro_spec,
             pricing_method=self.pricing_method,
@@ -634,7 +629,6 @@ class OptionValuation:
         bsm_underlying = self._as_underlying_data()
 
         euro_bsm = OptionValuation(
-            name=f"{self.name}_cv_euro_bsm",
             underlying=bsm_underlying,
             spec=euro_spec,
             pricing_method=PricingMethod.BSM,
@@ -696,7 +690,6 @@ class OptionValuation:
         # European Asian — numerical (same method, same parameters)
         euro_spec = dc_replace(spec, exercise_type=ExerciseType.EUROPEAN)
         euro_num = OptionValuation(
-            name=f"{self.name}_cv_euro_num",
             underlying=self.underlying,
             spec=euro_spec,
             pricing_method=self.pricing_method,
@@ -715,7 +708,6 @@ class OptionValuation:
             bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)  # type: ignore[union-attr, arg-type]
 
         euro_analytical = OptionValuation(
-            name=f"{self.name}_cv_euro_analytical",
             underlying=bsm_underlying,
             spec=bsm_spec,
             pricing_method=PricingMethod.BSM,
@@ -809,7 +801,6 @@ class OptionValuation:
             # Price a fresh Asian with adjusted strike K*
             fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
             fresh_pv = OptionValuation(
-                name=f"{self.name}_seasoned_fresh",
                 underlying=self.underlying,
                 spec=fresh_spec,
                 pricing_method=self.pricing_method,
@@ -835,7 +826,6 @@ class OptionValuation:
         )
         # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
         disc_M1 = OptionValuation(
-            name=f"{self.name}_seasoned_fwd",
             underlying=self.underlying,
             spec=dc_replace(fresh_spec_zero, call_put=OptionType.CALL),
             pricing_method=self.pricing_method,
@@ -916,10 +906,9 @@ class OptionValuation:
 
         return greek_calc_method
 
-    def _build_valuation(self, *, name_suffix: str, underlying) -> "OptionValuation":
+    def _build_valuation(self, *, underlying) -> "OptionValuation":
         """Create a sibling valuation with a modified underlying for bump-and-revalue."""
         return OptionValuation(
-            name=f"{self.name}_{name_suffix}",
             underlying=underlying,
             spec=self.spec,
             pricing_method=self.pricing_method,
@@ -975,8 +964,8 @@ class OptionValuation:
         underlying_up = self.underlying.replace(
             initial_value=self.underlying.initial_value + epsilon
         )
-        val_down = self._build_valuation(name_suffix="delta_down", underlying=underlying_down)
-        val_up = self._build_valuation(name_suffix="delta_up", underlying=underlying_up)
+        val_down = self._build_valuation(underlying=underlying_down)
+        val_up = self._build_valuation(underlying=underlying_up)
 
         # Calculate central difference
         value_left = val_down.present_value()
@@ -1036,8 +1025,8 @@ class OptionValuation:
             initial_value=self.underlying.initial_value + epsilon
         )
 
-        val_down = self._build_valuation(name_suffix="gamma_down", underlying=underlying_down)
-        val_up = self._build_valuation(name_suffix="gamma_up", underlying=underlying_up)
+        val_down = self._build_valuation(underlying=underlying_down)
+        val_up = self._build_valuation(underlying=underlying_up)
 
         # Calculate central difference (center uses self.present_value)
         value_left = val_down.present_value()
@@ -1089,8 +1078,8 @@ class OptionValuation:
         underlying_down = self.underlying.replace(volatility=self.underlying.volatility - epsilon)
         underlying_up = self.underlying.replace(volatility=self.underlying.volatility + epsilon)
 
-        val_down = self._build_valuation(name_suffix="vega_down", underlying=underlying_down)
-        val_up = self._build_valuation(name_suffix="vega_up", underlying=underlying_up)
+        val_down = self._build_valuation(underlying=underlying_down)
+        val_up = self._build_valuation(underlying=underlying_up)
 
         # Calculate central difference
         value_left = val_down.present_value()
@@ -1160,7 +1149,6 @@ class OptionValuation:
         underlying_bumped = self.underlying.replace(market_data=bumped_market)
 
         valuation_bumped = OptionValuation(
-            name=f"{self.name}_theta_bumped",
             underlying=underlying_bumped,
             spec=self.spec,
             pricing_method=self.pricing_method,
@@ -1216,12 +1204,10 @@ class OptionValuation:
 
         ttm = calculate_year_fraction(self.pricing_date, self.maturity)
         curve_up = DiscountCurve.flat(
-            f"{self.discount_curve.name}_up",
             rate_up,
             end_time=ttm,
         )
         curve_down = DiscountCurve.flat(
-            f"{self.discount_curve.name}_down",
             rate_down,
             end_time=ttm,
         )
@@ -1232,8 +1218,8 @@ class OptionValuation:
         underlying_up = self.underlying.replace(market_data=md_up)
         underlying_down = self.underlying.replace(market_data=md_down)
 
-        val_up = self._build_valuation(name_suffix="rho_up", underlying=underlying_up)
-        val_down = self._build_valuation(name_suffix="rho_down", underlying=underlying_down)
+        val_up = self._build_valuation(underlying=underlying_up)
+        val_down = self._build_valuation(underlying=underlying_down)
 
         value_up = val_up.present_value()
         value_down = val_down.present_value()

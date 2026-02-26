@@ -69,7 +69,6 @@ def _gbm_underlying(
         discrete_dividends=discrete_dividends,
     )
     return GBMProcess(
-        "gbm",
         _market_data(short_rate, maturity),
         gbm_params,
         sim_config,
@@ -130,11 +129,7 @@ def test_asian_binomial_hull_close_to_mc(
 ):
     maturity = PRICING_DATE + dt.timedelta(days=days)
     spec = _asian_spec(strike=strike, maturity=maturity, call_put=call_put)
-    q_curve = (
-        None
-        if dividend_yield == 0.0
-        else flat_curve(PRICING_DATE, maturity, dividend_yield, name="q")
-    )
+    q_curve = None if dividend_yield == 0.0 else flat_curve(PRICING_DATE, maturity, dividend_yield)
 
     mc_underlying = _gbm_underlying(
         spot=spot,
@@ -146,7 +141,6 @@ def test_asian_binomial_hull_close_to_mc(
         num_steps=NUM_STEPS,
     )
     mc_pv = OptionValuation(
-        "asian_mc",
         mc_underlying,
         spec,
         PricingMethod.MONTE_CARLO,
@@ -162,7 +156,6 @@ def test_asian_binomial_hull_close_to_mc(
     )
 
     binom_mc_pv = OptionValuation(
-        "asian_mc",
         binom_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -174,7 +167,6 @@ def test_asian_binomial_hull_close_to_mc(
     ).present_value()
 
     hull_pv = OptionValuation(
-        "asian_hull",
         binom_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -232,7 +224,6 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
         num_steps=NUM_STEPS,
     )
     mc_pv = OptionValuation(
-        "asian_mc_div",
         mc_underlying,
         spec,
         PricingMethod.MONTE_CARLO,
@@ -248,7 +239,6 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
     )
 
     binom_mc_pv = OptionValuation(
-        "asian_binom_mc_div",
         binom_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -260,7 +250,6 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
     ).present_value()
 
     hull_pv = OptionValuation(
-        "asian_hull_div",
         binom_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -281,7 +270,6 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
         volatility=binom_underlying.volatility * vol_multiplier
     )
     adjusted_hull_pv = OptionValuation(
-        "asian_hull_div_adj",
         adjusted_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -336,7 +324,6 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
     )
 
     euro_pv = OptionValuation(
-        "asian_hull_euro",
         binom_underlying,
         euro_spec,
         PricingMethod.BINOMIAL,
@@ -347,7 +334,6 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
     ).present_value()
 
     amer_pv = OptionValuation(
-        "asian_hull_amer",
         binom_underlying,
         amer_spec,
         PricingMethod.BINOMIAL,
@@ -394,7 +380,6 @@ def test_geometric_asian_mc_positive_value(spot, strike, vol, short_rate, days, 
         num_steps=NUM_STEPS,
     )
     pv = OptionValuation(
-        "asian_geom_mc",
         mc_underlying,
         spec,
         PricingMethod.MONTE_CARLO,
@@ -446,7 +431,6 @@ def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, cal
     )
 
     arith_pv = OptionValuation(
-        "asian_arith_mc",
         mc_underlying,
         arith_spec,
         PricingMethod.MONTE_CARLO,
@@ -454,7 +438,6 @@ def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, cal
     ).present_value()
 
     geom_pv = OptionValuation(
-        "asian_geom_mc",
         mc_underlying,
         geom_spec,
         PricingMethod.MONTE_CARLO,
@@ -496,7 +479,6 @@ def test_geometric_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate
         num_steps=NUM_STEPS,
     )
     mc_pv = OptionValuation(
-        "asian_geom_mc",
         mc_underlying,
         spec,
         PricingMethod.MONTE_CARLO,
@@ -510,7 +492,6 @@ def test_geometric_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate
         maturity=maturity,
     )
     hull_pv = OptionValuation(
-        "asian_geom_hull",
         binom_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -604,7 +585,6 @@ class TestAmericanAsianMC:
             dividend_curve=dividend_curve,
         )
         return OptionValuation(
-            "test_asian_amer",
             underlying,
             spec,
             PricingMethod.MONTE_CARLO,
@@ -627,7 +607,7 @@ class TestAmericanAsianMC:
 
     def test_american_geq_european_call_with_dividends(self):
         """American Asian call >= European when dividends present."""
-        q_curve = flat_curve(PRICING_DATE, self.maturity, 0.04, name="q")
+        q_curve = flat_curve(PRICING_DATE, self.maturity, 0.04)
         euro = self._price(OptionType.CALL, ExerciseType.EUROPEAN, dividend_curve=q_curve)
         amer = self._price(OptionType.CALL, ExerciseType.AMERICAN, dividend_curve=q_curve)
         assert amer >= euro - 1e-6
@@ -673,7 +653,6 @@ class TestAmericanAsianMC:
         # MC American
         mc_underlying = self._mc_underlying()
         mc_pv = OptionValuation(
-            "mc_amer",
             mc_underlying,
             spec,
             PricingMethod.MONTE_CARLO,
@@ -688,7 +667,6 @@ class TestAmericanAsianMC:
             maturity=mat,
         )
         hull_pv = OptionValuation(
-            "hull_amer",
             binom_underlying,
             spec,
             PricingMethod.BINOMIAL,
@@ -729,7 +707,6 @@ class TestAmericanAsianMC:
             num_steps=self.NUM_STEPS,
         )
         ov = OptionValuation(
-            "test_solve",
             underlying,
             spec,
             PricingMethod.MONTE_CARLO,
@@ -759,7 +736,6 @@ class TestAmericanAsianMC:
         )
         with pytest.raises(ValidationError, match="AMERICAN.*BSM|BSM.*AMERICAN"):
             OptionValuation(
-                "test_bsm_amer",
                 binom_underlying,
                 spec,
                 PricingMethod.BSM,

@@ -33,7 +33,7 @@ class TestMCSValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_mcs_european_call_atm(self):
@@ -46,7 +46,6 @@ class TestMCSValuation:
         )
 
         gbm = GBMProcess(
-            "gbm_call",
             self.market_data,
             gbm_params,
             sim_config,
@@ -61,7 +60,6 @@ class TestMCSValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_MCS",
             underlying=gbm,
             spec=call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -84,7 +82,6 @@ class TestMCSValuation:
         )
 
         gbm = GBMProcess(
-            "gbm_put",
             self.market_data,
             gbm_params,
             sim_config,
@@ -99,7 +96,6 @@ class TestMCSValuation:
         )
 
         valuation = OptionValuation(
-            name="PUT_MCS",
             underlying=gbm,
             spec=put_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -130,14 +126,12 @@ class TestMCSValuation:
 
         # First valuation
         gbm1 = GBMProcess(
-            "gbm1",
             self.market_data,
             gbm_params,
             sim_config,
         )
 
         val1 = OptionValuation(
-            name="CALL1",
             underlying=gbm1,
             spec=call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -148,14 +142,12 @@ class TestMCSValuation:
 
         # Second valuation with same seed
         gbm2 = GBMProcess(
-            "gbm2",
             self.market_data,
             gbm_params,
             sim_config,
         )
 
         val2 = OptionValuation(
-            name="CALL2",
             underlying=gbm2,
             spec=call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -177,7 +169,6 @@ class TestMCSValuation:
         )
 
         gbm = GBMProcess(
-            "gbm_am",
             self.market_data,
             gbm_params,
             sim_config,
@@ -192,14 +183,12 @@ class TestMCSValuation:
         )
 
         valuation_deg2 = OptionValuation(
-            name="PUT_AMERICAN_MCS_DEG2",
             underlying=gbm,
             spec=am_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
             params=MonteCarloParams(random_seed=42, deg=2),
         )
         valuation_deg5 = OptionValuation(
-            name="PUT_AMERICAN_MCS_DEG5",
             underlying=gbm,
             spec=am_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -222,7 +211,6 @@ class TestMCSValuation:
         )
 
         binom_valuation = OptionValuation(
-            name="PUT_AMERICAN_BINOMIAL",
             underlying=ud_bin,
             spec=am_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -243,7 +231,6 @@ class TestMCSValuation:
         )
 
         gbm = GBMProcess(
-            "gbm_full",
             self.market_data,
             gbm_params,
             sim_config,
@@ -258,7 +245,6 @@ class TestMCSValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_FULL",
             underlying=gbm,
             spec=call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,

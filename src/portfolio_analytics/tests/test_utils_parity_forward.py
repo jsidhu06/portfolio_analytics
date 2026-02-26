@@ -129,14 +129,12 @@ def test_put_call_parity_bsm_no_dividend():
     )
 
     call_price = OptionValuation(
-        name="CALL",
         underlying=underlying_call,
         spec=call_spec,
         pricing_method=PricingMethod.BSM,
     ).present_value()
 
     put_price = OptionValuation(
-        name="PUT",
         underlying=underlying_put,
         spec=put_spec,
         pricing_method=PricingMethod.BSM,
@@ -193,14 +191,12 @@ def test_put_call_parity_bsm_with_dividend_curve():
     )
 
     call_price = OptionValuation(
-        name="CALL_DIV",
         underlying=underlying_call,
         spec=call_spec,
         pricing_method=PricingMethod.BSM,
     ).present_value()
 
     put_price = OptionValuation(
-        name="PUT_DIV",
         underlying=underlying_put,
         spec=put_spec,
         pricing_method=PricingMethod.BSM,

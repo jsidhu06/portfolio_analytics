@@ -73,7 +73,7 @@ def _pv(
     method: PricingMethod,
     **kw,
 ) -> float:
-    return OptionValuation("edge", ud, spec, method, **kw).present_value()
+    return OptionValuation(ud, spec, method, **kw).present_value()
 
 
 # ═══════════════════════════════════════════════════════════════════════

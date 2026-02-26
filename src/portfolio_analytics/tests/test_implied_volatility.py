@@ -41,11 +41,9 @@ def _build_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    curve = flat_curve(pricing_date, maturity, rate, name="csr")
+    curve = flat_curve(pricing_date, maturity, rate)
     dividend_curve = (
-        None
-        if dividend_rate == 0.0
-        else flat_curve(pricing_date, maturity, dividend_rate, name="q")
+        None if dividend_rate == 0.0 else flat_curve(pricing_date, maturity, dividend_rate)
     )
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
@@ -62,7 +60,6 @@ def _build_valuation(
         currency="USD",
     )
     return OptionValuation(
-        name="test",
         underlying=underlying,
         spec=spec,
         pricing_method=PricingMethod.BSM,
@@ -79,7 +76,7 @@ def _build_discrete_dividend_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = pricing_date + dt.timedelta(days=365)
-    curve = flat_curve(pricing_date, maturity, rate, name="csr")
+    curve = flat_curve(pricing_date, maturity, rate)
     market_data = MarketData(pricing_date, curve, currency="USD")
     divs = [
         (pricing_date + dt.timedelta(days=90), 0.5),
@@ -99,7 +96,6 @@ def _build_discrete_dividend_valuation(
         currency="USD",
     )
     return OptionValuation(
-        name="test_divs",
         underlying=underlying,
         spec=spec,
         pricing_method=PricingMethod.BSM,
@@ -119,11 +115,9 @@ def _build_binomial_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    curve = flat_curve(pricing_date, maturity, rate, name="csr")
+    curve = flat_curve(pricing_date, maturity, rate)
     dividend_curve = (
-        None
-        if dividend_rate == 0.0
-        else flat_curve(pricing_date, maturity, dividend_rate, name="q")
+        None if dividend_rate == 0.0 else flat_curve(pricing_date, maturity, dividend_rate)
     )
     market_data = MarketData(pricing_date, curve, currency="USD")
     underlying = UnderlyingPricingData(
@@ -140,7 +134,6 @@ def _build_binomial_valuation(
         currency="USD",
     )
     return OptionValuation(
-        name="test_binom",
         underlying=underlying,
         spec=spec,
         pricing_method=PricingMethod.BINOMIAL,
@@ -187,7 +180,7 @@ def test_implied_volatility_rejects_out_of_bounds_price():
 def test_implied_volatility_rejects_monte_carlo():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    curve = flat_curve(pricing_date, maturity, 0.05, name="csr")
+    curve = flat_curve(pricing_date, maturity, 0.05)
     market_data = MarketData(pricing_date, curve, currency="USD")
     sim_config = SimulationConfig(
         paths=5_000,
@@ -199,7 +192,7 @@ def test_implied_volatility_rejects_monte_carlo():
         initial_value=100.0,
         volatility=0.2,
     )
-    underlying = GBMProcess("gbm", market_data, gbm_params, sim_config)
+    underlying = GBMProcess(market_data, gbm_params, sim_config)
     spec = OptionSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
@@ -208,7 +201,6 @@ def test_implied_volatility_rejects_monte_carlo():
         currency="USD",
     )
     valuation = OptionValuation(
-        name="test_mc",
         underlying=underlying,
         spec=spec,
         pricing_method=PricingMethod.MONTE_CARLO,

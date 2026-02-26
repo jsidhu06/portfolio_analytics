@@ -11,15 +11,13 @@ def flat_curve(
     pricing_date: dt.datetime,
     maturity: dt.datetime,
     rate: float,
-    name: str = "r",
 ) -> DiscountCurve:
     ttm = calculate_year_fraction(pricing_date, maturity)
-    return DiscountCurve.flat(name, rate, end_time=ttm)
+    return DiscountCurve.flat(rate, end_time=ttm)
 
 
 def build_curve_from_forwards(
     *,
-    name: str,
     times: np.ndarray,
     forwards: np.ndarray,
 ) -> DiscountCurve:
@@ -29,4 +27,4 @@ def build_curve_from_forwards(
         DeprecationWarning,
         stacklevel=2,
     )
-    return DiscountCurve.from_forwards(name=name, times=times, forwards=forwards)
+    return DiscountCurve.from_forwards(times=times, forwards=forwards)

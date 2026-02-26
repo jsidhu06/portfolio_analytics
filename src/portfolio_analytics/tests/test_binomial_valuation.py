@@ -28,7 +28,7 @@ class TestBinomialValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         self.ud = UnderlyingPricingData(
@@ -48,7 +48,6 @@ class TestBinomialValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_BIN",
             underlying=self.ud,
             spec=call_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -91,7 +90,6 @@ class TestBinomialValuation:
         )
 
         eu_val = OptionValuation(
-            name="CALL_EU",
             underlying=ud_eu,
             spec=eu_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -99,7 +97,6 @@ class TestBinomialValuation:
         )
 
         am_val = OptionValuation(
-            name="CALL_AM",
             underlying=ud_am,
             spec=am_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -139,14 +136,13 @@ class TestBinomialValuation:
         )
 
         val_no_div = OptionValuation(
-            "call_no_div",
             ud_no_div,
             spec,
             PricingMethod.BINOMIAL,
             params=BinomialParams(num_steps=500),
         )
         val_div = OptionValuation(
-            "call_div", ud_div, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500)
+            ud_div, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500)
         )
 
         pv_no_div = val_no_div.present_value()
@@ -185,7 +181,6 @@ class TestBinomialValuation:
         )
 
         eu_val = OptionValuation(
-            name="PUT_EU",
             underlying=ud_eu,
             spec=eu_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -193,7 +188,6 @@ class TestBinomialValuation:
         )
 
         am_val = OptionValuation(
-            name="PUT_AM",
             underlying=ud_am,
             spec=am_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -229,7 +223,6 @@ class TestBinomialValuation:
         )
 
         val1 = OptionValuation(
-            name="CALL_100",
             underlying=ud1,
             spec=call_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -237,7 +230,6 @@ class TestBinomialValuation:
         )
 
         val2 = OptionValuation(
-            name="CALL_200",
             underlying=ud2,
             spec=call_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -262,7 +254,6 @@ class TestBinomialValuation:
             currency="USD",
         )
         valuation = OptionValuation(
-            "call_binom",
             self.ud,
             spec,
             PricingMethod.BINOMIAL,

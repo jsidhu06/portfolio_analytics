@@ -57,11 +57,7 @@ def _underlying(
     maturity: dt.datetime,
     dividend_yield: float = 0.0,
 ) -> UnderlyingPricingData:
-    q_curve = (
-        None
-        if dividend_yield == 0.0
-        else flat_curve(PRICING_DATE, maturity, dividend_yield, name="q")
-    )
+    q_curve = None if dividend_yield == 0.0 else flat_curve(PRICING_DATE, maturity, dividend_yield)
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
@@ -100,11 +96,7 @@ def _gbm_underlying(
     num_steps: int,
     dividend_yield: float = 0.0,
 ) -> GBMProcess:
-    q_curve = (
-        None
-        if dividend_yield == 0.0
-        else flat_curve(PRICING_DATE, maturity, dividend_yield, name="q")
-    )
+    q_curve = None if dividend_yield == 0.0 else flat_curve(PRICING_DATE, maturity, dividend_yield)
     sim = SimulationConfig(
         paths=paths,
         day_count_convention=DayCountConvention.ACT_365F,
@@ -113,7 +105,6 @@ def _gbm_underlying(
     )
     params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=q_curve)
     return GBMProcess(
-        "gbm",
         _market_data(short_rate, maturity),
         params,
         sim,
@@ -146,7 +137,6 @@ class TestSmallObservationCounts:
         und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
 
         asian_pv = OptionValuation(
-            "geom_n1",
             und,
             _asian_spec(strike=strike, maturity=maturity, call_put=call_put, num_steps=1),
             PricingMethod.BSM,
@@ -160,7 +150,6 @@ class TestSmallObservationCounts:
             currency=CURRENCY,
         )
         bsm_pv = OptionValuation(
-            "vanilla_bsm",
             und,
             vanilla_spec,
             PricingMethod.BSM,
@@ -192,7 +181,6 @@ class TestGeometricAsianPutCallParity:
         und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
 
         call_pv = OptionValuation(
-            "geom_call",
             und,
             _asian_spec(
                 strike=strike, maturity=maturity, call_put=OptionType.CALL, num_steps=num_obs
@@ -201,7 +189,6 @@ class TestGeometricAsianPutCallParity:
         ).present_value()
 
         put_pv = OptionValuation(
-            "geom_put",
             und,
             _asian_spec(
                 strike=strike, maturity=maturity, call_put=OptionType.PUT, num_steps=num_obs
@@ -251,7 +238,6 @@ class TestAnalyticalVsMC:
         # Analytical
         und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
         analytical_pv = OptionValuation(
-            "geom_analytical",
             und,
             _asian_spec(strike=strike, maturity=maturity, call_put=call_put, num_steps=num_steps),
             PricingMethod.BSM,
@@ -268,7 +254,6 @@ class TestAnalyticalVsMC:
             dividend_yield=q,
         )
         mc_pv = OptionValuation(
-            "geom_mc",
             mc_und,
             _asian_spec(
                 strike=strike,
@@ -307,7 +292,6 @@ class TestGeometricAsianProperties:
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
         pv = OptionValuation(
-            "geom_pos",
             und,
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=12),
             PricingMethod.BSM,
@@ -320,7 +304,6 @@ class TestGeometricAsianProperties:
         for spot in (90, 100, 110):
             und = _underlying(spot=spot, vol=0.2, short_rate=0.05, maturity=maturity)
             pv = OptionValuation(
-                "geom_spot",
                 und,
                 _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=12),
                 PricingMethod.BSM,
@@ -334,7 +317,6 @@ class TestGeometricAsianProperties:
         for spot in (90, 100, 110):
             und = _underlying(spot=spot, vol=0.2, short_rate=0.05, maturity=maturity)
             pv = OptionValuation(
-                "geom_spot",
                 und,
                 _asian_spec(strike=100, maturity=maturity, call_put=OptionType.PUT, num_steps=12),
                 PricingMethod.BSM,
@@ -353,13 +335,11 @@ class TestGeometricAsianProperties:
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(spot=100, vol=0.3, short_rate=0.05, maturity=maturity)
         pv_4 = OptionValuation(
-            "geom_n4",
             und,
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=4),
             PricingMethod.BSM,
         ).present_value()
         pv_252 = OptionValuation(
-            "geom_n252",
             und,
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=252),
             PricingMethod.BSM,
@@ -372,7 +352,6 @@ class TestGeometricAsianProperties:
         und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
 
         geom_pv = OptionValuation(
-            "geom_call",
             und,
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=52),
             PricingMethod.BSM,
@@ -386,7 +365,6 @@ class TestGeometricAsianProperties:
             currency=CURRENCY,
         )
         vanilla_pv = OptionValuation(
-            "vanilla_bsm",
             und,
             vanilla_spec,
             PricingMethod.BSM,
@@ -400,7 +378,6 @@ class TestGeometricAsianProperties:
         und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
 
         geom_pv = OptionValuation(
-            "geom_put",
             und,
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.PUT, num_steps=52),
             PricingMethod.BSM,
@@ -414,7 +391,6 @@ class TestGeometricAsianProperties:
             currency=CURRENCY,
         )
         vanilla_pv = OptionValuation(
-            "vanilla_bsm",
             und,
             vanilla_spec,
             PricingMethod.BSM,
@@ -470,14 +446,12 @@ class TestDividendYield:
     def test_dividend_reduces_call(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            "geom_no_q",
             _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=12),
             PricingMethod.BSM,
         ).present_value()
 
         pv_with_q = OptionValuation(
-            "geom_with_q",
             _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=12),
             PricingMethod.BSM,
@@ -595,7 +569,6 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
         )
         fresh_pv = OptionValuation(
-            "fresh",
             self._ud(),
             fresh_spec,
             PricingMethod.BSM,
@@ -613,7 +586,6 @@ class TestSeasonedAsian:
             observed_count=n1,
         )
         seasoned_pv = OptionValuation(
-            "seasoned",
             self._ud(),
             seasoned_spec,
             PricingMethod.BSM,
@@ -643,7 +615,6 @@ class TestSeasonedAsian:
             observed_count=n1,
         )
         pv = OptionValuation(
-            "seasoned_fwd",
             self._ud(),
             seasoned_spec,
             PricingMethod.BSM,
@@ -664,7 +635,6 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
         )
         disc_M1 = OptionValuation(
-            "zero",
             self._ud(),
             zero_spec,
             PricingMethod.BSM,
@@ -686,7 +656,6 @@ class TestSeasonedAsian:
             observed_count=6,
         )
         pv = OptionValuation(
-            "seasoned_put",
             self._ud(),
             seasoned_spec,
             PricingMethod.BSM,
@@ -715,7 +684,6 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
         )
         fresh_pv = OptionValuation(
-            "fresh",
             self._ud(),
             fresh_spec,
             PricingMethod.BSM,
@@ -732,7 +700,6 @@ class TestSeasonedAsian:
             observed_count=n1,
         )
         seasoned_pv = OptionValuation(
-            "seasoned",
             self._ud(),
             seasoned_spec,
             PricingMethod.BSM,
@@ -757,7 +724,6 @@ class TestSeasonedAsian:
                 observed_count=n1,
             )
             return OptionValuation(
-                "seasoned",
                 self._ud(),
                 spec,
                 PricingMethod.BSM,
@@ -782,7 +748,6 @@ class TestSeasonedAsian:
                 observed_count=n1,
             )
             return OptionValuation(
-                "seasoned",
                 self._ud(),
                 spec,
                 PricingMethod.BSM,
@@ -807,7 +772,6 @@ class TestSeasonedAsian:
                 observed_count=n1,
             )
             return OptionValuation(
-                "seasoned",
                 self._ud(),
                 spec,
                 PricingMethod.BSM,
@@ -835,14 +799,12 @@ class TestSeasonedAsian:
         )
 
         bsm_pv = OptionValuation(
-            "seasoned_bsm",
             self._ud(),
             seasoned_spec,
             PricingMethod.BSM,
         ).present_value()
 
         binom_pv = OptionValuation(
-            "seasoned_binom",
             self._ud(),
             seasoned_spec,
             PricingMethod.BINOMIAL,
@@ -870,7 +832,6 @@ class TestSeasonedAsian:
         )
 
         bsm_pv = OptionValuation(
-            "seasoned_bsm",
             self._ud(),
             seasoned_spec,
             PricingMethod.BSM,
@@ -885,7 +846,6 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
         )
         mc_pv = OptionValuation(
-            "seasoned_mc",
             gbm,
             seasoned_spec,
             PricingMethod.MONTE_CARLO,
@@ -897,14 +857,12 @@ class TestSeasonedAsian:
     def test_dividend_increases_put(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            "geom_no_q",
             _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.PUT, num_steps=12),
             PricingMethod.BSM,
         ).present_value()
 
         pv_with_q = OptionValuation(
-            "geom_with_q",
             _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.PUT, num_steps=12),
             PricingMethod.BSM,
@@ -926,7 +884,6 @@ class TestValidation:
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
         pv = OptionValuation(
-            "arith_bsm",
             und,
             _asian_spec(
                 strike=100,
@@ -944,7 +901,6 @@ class TestValidation:
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
         with pytest.raises(Exception, match="num_steps"):
             OptionValuation(
-                "no_nobs",
                 und,
                 _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL),
                 PricingMethod.BSM,
@@ -1013,14 +969,12 @@ class TestAveragingStart:
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
 
         pv_full = OptionValuation(
-            "geom_full",
             und,
             _asian_spec(strike=100, maturity=maturity, call_put=OptionType.CALL, num_steps=12),
             PricingMethod.BSM,
         ).present_value()
 
         pv_late = OptionValuation(
-            "geom_late",
             und,
             _asian_spec(
                 strike=100,
@@ -1042,7 +996,6 @@ class TestAveragingStart:
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
 
         call_pv = OptionValuation(
-            "geom_c",
             und,
             _asian_spec(
                 strike=100,
@@ -1055,7 +1008,6 @@ class TestAveragingStart:
         ).present_value()
 
         put_pv = OptionValuation(
-            "geom_p",
             und,
             _asian_spec(
                 strike=100,
@@ -1128,7 +1080,7 @@ def test_geometric_asian_four_method_comparison(
     maturity = PRICING_DATE + dt.timedelta(days=days)
     # q_curve = (
     #     None if q == 0.0
-    #     else flat_curve(PRICING_DATE, maturity, q, name="q")
+    #     else flat_curve(PRICING_DATE, maturity, q)
     # )
 
     # --- 1. Analytical (BSM) ---
@@ -1140,7 +1092,6 @@ def test_geometric_asian_four_method_comparison(
         dividend_yield=q,
     )
     analytical_pv = OptionValuation(
-        "geom_analytical",
         und_determ,
         _asian_spec(
             strike=strike,
@@ -1153,7 +1104,6 @@ def test_geometric_asian_four_method_comparison(
 
     # --- 2. Binomial MC ---
     binom_mc_pv = OptionValuation(
-        "geom_binom_mc",
         und_determ,
         _asian_spec(
             strike=strike,
@@ -1171,7 +1121,6 @@ def test_geometric_asian_four_method_comparison(
 
     # --- 3. Binomial Hull tree averages ---
     hull_pv = OptionValuation(
-        "geom_hull",
         und_determ,
         _asian_spec(
             strike=strike,
@@ -1197,7 +1146,6 @@ def test_geometric_asian_four_method_comparison(
         dividend_yield=q,
     )
     mc_pv = OptionValuation(
-        "geom_mc",
         mc_und,
         _asian_spec(
             strike=strike,
@@ -1363,7 +1311,6 @@ class TestArithmeticPutCallParity:
         und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
 
         call_pv = OptionValuation(
-            "arith_call",
             und,
             _asian_spec(
                 strike=strike,
@@ -1376,7 +1323,6 @@ class TestArithmeticPutCallParity:
         ).present_value()
 
         put_pv = OptionValuation(
-            "arith_put",
             und,
             _asian_spec(
                 strike=strike,
@@ -1429,7 +1375,6 @@ class TestArithmeticVsMC:
         # Turnbull-Wakeman analytical
         und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
         analytical_pv = OptionValuation(
-            "arith_analytical",
             und,
             _asian_spec(
                 strike=strike,
@@ -1452,7 +1397,6 @@ class TestArithmeticVsMC:
             dividend_yield=q,
         )
         mc_pv = OptionValuation(
-            "arith_mc",
             mc_und,
             _asian_spec(
                 strike=strike,
@@ -1492,7 +1436,6 @@ class TestArithmeticProperties:
         und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
 
         arith_pv = OptionValuation(
-            "arith",
             und,
             _asian_spec(
                 strike=100,
@@ -1505,7 +1448,6 @@ class TestArithmeticProperties:
         ).present_value()
 
         geom_pv = OptionValuation(
-            "geom",
             und,
             _asian_spec(
                 strike=100,
@@ -1525,7 +1467,6 @@ class TestArithmeticProperties:
         und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
 
         arith_pv = OptionValuation(
-            "arith",
             und,
             _asian_spec(
                 strike=100,
@@ -1538,7 +1479,6 @@ class TestArithmeticProperties:
         ).present_value()
 
         geom_pv = OptionValuation(
-            "geom",
             und,
             _asian_spec(
                 strike=100,
@@ -1558,7 +1498,6 @@ class TestArithmeticProperties:
         und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
 
         arith_pv = OptionValuation(
-            "arith",
             und,
             _asian_spec(
                 strike=100,
@@ -1571,7 +1510,6 @@ class TestArithmeticProperties:
         ).present_value()
 
         vanilla_pv = OptionValuation(
-            "vanilla",
             und,
             OptionSpec(
                 option_type=OptionType.CALL,
@@ -1590,7 +1528,6 @@ class TestArithmeticProperties:
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
         for call_put in (OptionType.CALL, OptionType.PUT):
             pv = OptionValuation(
-                "arith_pos",
                 und,
                 _asian_spec(
                     strike=100,
@@ -1606,7 +1543,6 @@ class TestArithmeticProperties:
     def test_dividend_reduces_call(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            "arith_no_q",
             _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
             _asian_spec(
                 strike=100,
@@ -1619,7 +1555,6 @@ class TestArithmeticProperties:
         ).present_value()
 
         pv_with_q = OptionValuation(
-            "arith_q",
             _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
             _asian_spec(
                 strike=100,

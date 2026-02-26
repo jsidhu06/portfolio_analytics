@@ -224,8 +224,6 @@ class PathSimulation(ABC):
 
     Attributes
     ==========
-    name: str
-        Name of the simulation object (typically the underlying identifier).
     market_data: MarketData
         Market data required for simulation (pricing date, discount curve, currency).
     process_params:
@@ -236,6 +234,8 @@ class PathSimulation(ABC):
     correlation_context: CorrelationContext or None
         Shared correlation/scenario context used in multi-asset simulations.
         If None, the process is simulated independently.
+    name: str or None
+        Optional identifier, required only when using CorrelationContext.
 
     Methods
     =======
@@ -245,11 +245,11 @@ class PathSimulation(ABC):
 
     def __init__(
         self,
-        name: str,
         market_data: MarketData,
         process_params: GBMParams | JDParams | SRDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
+        name: str | None = None,
     ) -> None:
         self._name = name
         self._market_data = market_data
@@ -270,6 +270,11 @@ class PathSimulation(ABC):
                 self.observation_dates.add(ex_date)
 
         if corr is not None:
+            if name is None:
+                raise ValidationError(
+                    "name is required when using CorrelationContext "
+                    "(used to index into corr.rn_set)"
+                )
             # only needed in a portfolio context when
             # risk factors are correlated
             self.cholesky_matrix = corr.cholesky_matrix
@@ -277,7 +282,7 @@ class PathSimulation(ABC):
             self.random_numbers = corr.random_numbers
 
     @property
-    def name(self) -> str:
+    def name(self) -> str | None:
         return self._name
 
     @property
@@ -667,13 +672,13 @@ class JDProcess(PathSimulation):
 
     def __init__(
         self,
-        name: str,
         market_data: MarketData,
         process_params: JDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
+        name: str | None = None,
     ):
-        super().__init__(name, market_data, process_params, sim, corr=corr)
+        super().__init__(market_data, process_params, sim, corr=corr, name=name)
 
     @property
     def lambd(self) -> float:
@@ -809,13 +814,13 @@ class SRDProcess(PathSimulation):
 
     def __init__(
         self,
-        name: str,
         market_data: MarketData,
         process_params: SRDParams,
         sim: SimulationConfig,
         corr: CorrelationContext | None = None,
+        name: str | None = None,
     ):
-        super().__init__(name, market_data, process_params, sim, corr=corr)
+        super().__init__(market_data, process_params, sim, corr=corr, name=name)
 
     @property
     def kappa(self) -> float:

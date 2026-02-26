@@ -113,7 +113,6 @@ def _valuation_with_vol(valuation: OptionValuation, vol: float) -> OptionValuati
 
     bumped_underlying = valuation.underlying.replace(volatility=float(vol))
     return OptionValuation(
-        name=valuation.name,
         underlying=bumped_underlying,
         spec=valuation.spec,
         pricing_method=valuation.pricing_method,
