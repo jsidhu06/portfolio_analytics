@@ -76,7 +76,7 @@ def discount_curve(
     pricing_date: dt.datetime, maturity: dt.datetime, risk_free_rate: float
 ) -> DiscountCurve:
     """Flat discount curve over [pricing_date, maturity]."""
-    return flat_curve(pricing_date, maturity, risk_free_rate, name="csr")
+    return flat_curve(pricing_date, maturity, risk_free_rate)
 
 
 @pytest.fixture()

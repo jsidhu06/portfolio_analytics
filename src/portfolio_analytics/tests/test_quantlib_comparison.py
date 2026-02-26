@@ -218,7 +218,7 @@ def _pde_fd_american(
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type)
-    return OptionValuation("pde_am", ud, spec, PricingMethod.PDE_FD, PDE_CFG).present_value()
+    return OptionValuation(ud, spec, PricingMethod.PDE_FD, PDE_CFG).present_value()
 
 
 @pytest.mark.parametrize(
@@ -296,7 +296,7 @@ def test_american_fd_vs_quantlib_continuous_div(spot, strike, option_type):
 def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = DiscountCurve.from_forwards(name="r_curve", times=times, forwards=forwards)
+    r_curve = DiscountCurve.from_forwards(times=times, forwards=forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -331,11 +331,11 @@ def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
 def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, option_type):
     r_times = np.array([0.0, 1.0])
     r_forwards = np.array([0.04])
-    r_curve = DiscountCurve.from_forwards(name="r_flat", times=r_times, forwards=r_forwards)
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 0.25, 0.5, 1.0])
     q_forwards = np.array([0.00, 0.02, 0.04])
-    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -372,11 +372,11 @@ def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, opt
 def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 0.25, 0.5, 1.0])
     q_forwards = np.array([0.01, 0.02, 0.00])
-    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
 
     pde = _pde_fd_american(
         spot=spot,
@@ -413,7 +413,7 @@ def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, 
 def test_american_fd_vs_quantlib_nonflat_rate_with_discrete_divs(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
 
     q_times = np.array([0.0, 1.0])
     q_dfs = np.array([1.0, 1.0])
@@ -505,7 +505,7 @@ def _bsm_european(
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
-    return OptionValuation("bsm_eu", ud, spec, PricingMethod.BSM).present_value()
+    return OptionValuation(ud, spec, PricingMethod.BSM).present_value()
 
 
 def _binomial_european(
@@ -522,7 +522,7 @@ def _binomial_european(
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
-    return OptionValuation("binom_eu", ud, spec, PricingMethod.BINOMIAL, BINOM_CFG).present_value()
+    return OptionValuation(ud, spec, PricingMethod.BINOMIAL, BINOM_CFG).present_value()
 
 
 def _mc_american(
@@ -543,9 +543,9 @@ def _mc_american(
         end_date=MATURITY,
         num_steps=200,
     )
-    gbm = GBMProcess("mc_gbm", md, gbm_params, sim_config)
+    gbm = GBMProcess(md, gbm_params, sim_config)
     spec = _spec(strike=strike, option_type=option_type)
-    return OptionValuation("mc_am", gbm, spec, PricingMethod.MONTE_CARLO, MC_CFG).present_value()
+    return OptionValuation(gbm, spec, PricingMethod.MONTE_CARLO, MC_CFG).present_value()
 
 
 # ---------------------------------------------------------------------------

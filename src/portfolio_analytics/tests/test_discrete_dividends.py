@@ -27,7 +27,7 @@ def _build_case():
     strike = 50.0
     vol = 0.4
 
-    curve = flat_curve(pricing_date, maturity, r, name="csr")
+    curve = flat_curve(pricing_date, maturity, r)
     market_data = MarketData(pricing_date, curve, currency="USD")
 
     divs = [
@@ -57,7 +57,7 @@ def _build_case():
         end_date=maturity,
     )
     gbm_params = GBMParams(initial_value=spot, volatility=vol, discrete_dividends=divs)
-    gbm = GBMProcess("gbm_div", market_data, gbm_params, sim_config)
+    gbm = GBMProcess(market_data, gbm_params, sim_config)
 
     return market_data, spec, underlying, gbm, divs
 
@@ -67,7 +67,7 @@ def test_discrete_dividend_engine_consistency():
 
     # MC vs PDE (jump model vs PDE jump condition)
     mc_val = OptionValuation(
-        "put_mc", gbm, spec, PricingMethod.MONTE_CARLO, params=MonteCarloParams(random_seed=42)
+        gbm, spec, PricingMethod.MONTE_CARLO, params=MonteCarloParams(random_seed=42)
     )
     mc_pv = mc_val.present_value()
 
@@ -75,7 +75,6 @@ def test_discrete_dividend_engine_consistency():
     assert all(div_date in mc_val.underlying.observation_dates for div_date in div_dates)
     assert all(div_date in mc_val.underlying.time_grid for div_date in div_dates)
     pde_val = OptionValuation(
-        "put_pde",
         underlying,
         spec,
         PricingMethod.PDE_FD,
@@ -86,9 +85,9 @@ def test_discrete_dividend_engine_consistency():
     assert np.isclose(mc_pv, pde_pv, rtol=0.01)
 
     # Binomial vs BSM (prepaid-forward adjustment)
-    bsm_val = OptionValuation("put_bsm", underlying, spec, PricingMethod.BSM)
+    bsm_val = OptionValuation(underlying, spec, PricingMethod.BSM)
     binom_val = OptionValuation(
-        "put_binom", underlying, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1500)
+        underlying, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1500)
     )
 
     bsm_pv = bsm_val.present_value()
@@ -106,11 +105,8 @@ def test_discrete_dividend_engine_consistency():
     vol_multiplier = underlying.initial_value / (underlying.initial_value - pv_divs)
     adjusted_underlying = underlying.replace(volatility=underlying.volatility * vol_multiplier)
 
-    bsm_adj = OptionValuation(
-        "put_bsm_adj", adjusted_underlying, spec, PricingMethod.BSM
-    ).present_value()
+    bsm_adj = OptionValuation(adjusted_underlying, spec, PricingMethod.BSM).present_value()
     binom_adj = OptionValuation(
-        "put_binom_adj",
         adjusted_underlying,
         spec,
         PricingMethod.BINOMIAL,
@@ -125,7 +121,6 @@ def test_binomial_accepts_discrete_dividends_with_nonflat_curve():
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = pricing_date + dt.timedelta(days=365)
     nonflat_curve = DiscountCurve(
-        name="nonflat",
         times=np.array([0.0, 0.5, 1.0]),
         dfs=np.array([1.0, np.exp(-0.03 * 0.5), np.exp(-0.06 * 1.0)]),
     )
@@ -149,7 +144,6 @@ def test_binomial_accepts_discrete_dividends_with_nonflat_curve():
     )
 
     OptionValuation(
-        "put_binom_nonflat",
         underlying,
         spec,
         PricingMethod.BINOMIAL,

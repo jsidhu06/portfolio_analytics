@@ -162,7 +162,7 @@ class TestUnderlyingPricingData:
         """Set up market environment for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
-        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_underlying_data_creation(self):
@@ -195,7 +195,7 @@ class TestOptionValuation:
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
         self.strike = 100.0
-        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.maturity, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         # Standard option spec
@@ -224,12 +224,10 @@ class TestOptionValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_BSM",
             underlying=ud,
             spec=self.call_spec,
             pricing_method=PricingMethod.BSM,
         )
-        assert valuation.name == "CALL_BSM"
         assert valuation.strike == self.strike
         assert isinstance(valuation._impl, _BSMEuropeanValuation)
 
@@ -242,7 +240,6 @@ class TestOptionValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_BINOMIAL",
             underlying=ud,
             spec=self.call_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -252,7 +249,6 @@ class TestOptionValuation:
     def test_bsm_accepts_nonflat_discount_curve(self):
         """BSM should accept time-varying discount curves."""
         nonflat_curve = DiscountCurve(
-            name="nonflat",
             times=np.array([0.0, 0.5, 1.0]),
             dfs=np.array([1.0, np.exp(-0.03 * 0.5), np.exp(-0.06 * 1.0)]),
         )
@@ -264,7 +260,6 @@ class TestOptionValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_BSM_NONFLAT",
             underlying=ud,
             spec=self.call_spec,
             pricing_method=PricingMethod.BSM,
@@ -280,14 +275,12 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         gbm = GBMProcess(
-            "gbm_test",
             self.market_data,
             gbm_params,
             sim_config,
         )
 
         valuation = OptionValuation(
-            name="CALL_MCS",
             underlying=gbm,
             spec=self.call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -313,27 +306,23 @@ class TestOptionValuation:
         )
 
         gbm_no_div = GBMProcess(
-            "gbm_no_div",
             self.market_data,
             gbm_params_no_div,
             sim_config,
         )
         gbm_div = GBMProcess(
-            "gbm_div",
             self.market_data,
             gbm_params_div,
             sim_config,
         )
 
         val_no_div = OptionValuation(
-            name="CALL_MCS_NO_DIV",
             underlying=gbm_no_div,
             spec=self.call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
             params=MonteCarloParams(random_seed=42),
         )
         val_div = OptionValuation(
-            name="CALL_MCS_DIV",
             underlying=gbm_div,
             spec=self.call_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -363,7 +352,6 @@ class TestOptionValuation:
 
         with pytest.raises(ValidationError, match="Option maturity must be after pricing_date"):
             OptionValuation(
-                name="INVALID",
                 underlying=ud,
                 spec=invalid_spec,
                 pricing_method=PricingMethod.BSM,
@@ -389,7 +377,6 @@ class TestOptionValuation:
             UnsupportedFeatureError, match="Cross-currency valuation is not supported"
         ):
             OptionValuation(
-                name="CALL_EUR",
                 underlying=ud,
                 spec=eur_spec,
                 pricing_method=PricingMethod.BSM,
@@ -420,7 +407,6 @@ class TestOptionValuation:
             payoff_fn=condor_spec.terminal_payoff,
         )
         payoff_pv = OptionValuation(
-            name="CONDOR_PAYOFF",
             underlying=ud,
             spec=payoff_spec,
             pricing_method=PricingMethod.BINOMIAL,
@@ -437,7 +423,6 @@ class TestOptionValuation:
                 currency="USD",
             )
             leg_val = OptionValuation(
-                name=f"LEG_{opt_type.value}_{k}",
                 underlying=ud,
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
@@ -457,7 +442,7 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
-        gbm = GBMProcess("gbm", self.market_data, process_params, simulation_config)
+        gbm = GBMProcess(self.market_data, process_params, simulation_config)
 
         strikes = (50.0, 90.0, 110.0, 150.0)
         condor_spec = CondorSpec(
@@ -475,7 +460,6 @@ class TestOptionValuation:
             payoff_fn=condor_spec.terminal_payoff,
         )
         payoff_pv = OptionValuation(
-            name="CONDOR_PAYOFF",
             underlying=gbm,
             spec=payoff_spec,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -492,7 +476,6 @@ class TestOptionValuation:
                 currency="USD",
             )
             leg_val = OptionValuation(
-                name=f"LEG_{opt_type.value}_{k}",
                 underlying=gbm,
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
@@ -519,7 +502,7 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=initial_value, volatility=volatility)
-        gbm = GBMProcess("gbm", self.market_data, process_params, simulation_config)
+        gbm = GBMProcess(self.market_data, process_params, simulation_config)
 
         strikes = (50.0, 90.0, 110.0, 150.0)
         condor_spec = CondorSpec(
@@ -542,7 +525,6 @@ class TestOptionValuation:
             binomial_pv += (
                 w
                 * OptionValuation(
-                    name=f"LEG_BINOM_{opt_type.value}_{k}",
                     underlying=ud,
                     spec=leg_spec,
                     pricing_method=PricingMethod.BINOMIAL,
@@ -562,7 +544,6 @@ class TestOptionValuation:
             mcs_pv += (
                 w
                 * OptionValuation(
-                    name=f"LEG_MCS_{opt_type.value}_{k}",
                     underlying=gbm,
                     spec=leg_spec,
                     pricing_method=PricingMethod.MONTE_CARLO,
@@ -604,14 +585,12 @@ class TestOptionValuation:
             dividend_curve=None,
         )
         pv_binom_am = OptionValuation(
-            name="CUSTOM_AM_BINOM",
             underlying=ud,
             spec=spec_am,
             pricing_method=PricingMethod.BINOMIAL,
             params=BinomialParams(num_steps=500),
         ).present_value()
         pv_binom_eu = OptionValuation(
-            name="CUSTOM_EU_BINOM",
             underlying=ud,
             spec=spec_eu,
             pricing_method=PricingMethod.BINOMIAL,
@@ -624,16 +603,14 @@ class TestOptionValuation:
         # Monte Carlo (PathSimulation) American via LSM
         gbm_params = GBMParams(initial_value=100.0, volatility=0.2)
         sim_config = SimulationConfig(paths=20000, frequency="W", end_date=self.maturity)
-        gbm = GBMProcess("gbm_custom", self.market_data, gbm_params, sim_config)
+        gbm = GBMProcess(self.market_data, gbm_params, sim_config)
         pv_mcs_am = OptionValuation(
-            name="CUSTOM_AM_MCS",
             underlying=gbm,
             spec=spec_am,
             pricing_method=PricingMethod.MONTE_CARLO,
             params=MonteCarloParams(random_seed=42, deg=3),
         ).present_value()
         pv_mcs_eu = OptionValuation(
-            name="CUSTOM_EU_MCS",
             underlying=gbm,
             spec=spec_eu,
             pricing_method=PricingMethod.MONTE_CARLO,
@@ -662,7 +639,6 @@ class TestOptionValuation:
         )
 
         condor_pv = condor_spec.present_value(
-            name="CONDOR_STRATEGY",
             underlying=ud,
             pricing_method=PricingMethod.BINOMIAL,
             params=BinomialParams(num_steps=500),
@@ -685,7 +661,6 @@ class TestOptionValuation:
                 currency="USD",
             )
             leg_val = OptionValuation(
-                name=f"LEG_AM_{opt_type.value}_{k}",
                 underlying=ud,
                 spec=leg_spec,
                 pricing_method=PricingMethod.BINOMIAL,
@@ -704,7 +679,7 @@ class TestOptionValuation:
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
-        gbm = GBMProcess("gbm_am_condor", self.market_data, process_params, simulation_config)
+        gbm = GBMProcess(self.market_data, process_params, simulation_config)
 
         strikes = (50.0, 90.0, 110.0, 150.0)
         condor_spec = CondorSpec(
@@ -732,7 +707,6 @@ class TestOptionValuation:
                 currency="USD",
             )
             leg_val = OptionValuation(
-                name=f"LEG_AM_MCS_{opt_type.value}_{k}",
                 underlying=gbm,
                 spec=leg_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
@@ -741,7 +715,6 @@ class TestOptionValuation:
             leg_pv += w * leg_val.present_value()
 
         condor_pv = condor_spec.present_value(
-            name="CONDOR_STRATEGY_MCS",
             underlying=gbm,
             pricing_method=PricingMethod.MONTE_CARLO,
             params=MonteCarloParams(random_seed=42, deg=3),
@@ -758,7 +731,6 @@ class TestOptionValuation:
 
         with pytest.raises(ConfigurationError, match="pricing_method must be PricingMethod enum"):
             OptionValuation(
-                name="INVALID",
                 underlying=ud,
                 spec=self.call_spec,
                 pricing_method="BSM",  # Invalid: string instead of enum
@@ -777,27 +749,25 @@ class TestOptionValuation:
             match="Monte Carlo pricing requires underlying to be a PathSimulation",
         ):
             OptionValuation(
-                name="INVALID",
                 underlying=ud,
                 spec=self.call_spec,
                 pricing_method=PricingMethod.MONTE_CARLO,
             )
 
-    def test_underlying_pricing_data_rejects_mixed_dividends(self):
-        """Continuous dividend_curve and discrete_dividends should be mutually exclusive."""
-        with pytest.raises(ValidationError, match="either dividend_curve or discrete_dividends"):
+    def test_underlying_pricing_data_warns_mixed_dividends(self):
+        """Both dividend_curve and discrete_dividends should emit a warning."""
+        with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
             UnderlyingPricingData(
                 initial_value=100.0,
                 volatility=0.2,
                 market_data=self.market_data,
-                dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.02, name="q"),
+                dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.02),
                 discrete_dividends=[(self.pricing_date + dt.timedelta(days=90), 1.0)],
             )
 
     def test_option_valuation_binomial_rejects_path_simulation(self):
         """Test that Binomial pricing rejects PathSimulation (should use UnderlyingPricingData)."""
         process = GBMProcess(
-            name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim=SimulationConfig(
@@ -811,7 +781,6 @@ class TestOptionValuation:
             ConfigurationError, match="BINOMIAL pricing does not use stochastic path simulation"
         ):
             OptionValuation(
-                name="INVALID",
                 underlying=process,
                 spec=self.call_spec,
                 pricing_method=PricingMethod.BINOMIAL,
@@ -820,7 +789,6 @@ class TestOptionValuation:
     def test_option_valuation_bsm_rejects_path_simulation(self):
         """Test that BSM pricing rejects PathSimulation (should use UnderlyingPricingData)."""
         process = GBMProcess(
-            name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim=SimulationConfig(
@@ -834,7 +802,6 @@ class TestOptionValuation:
             ConfigurationError, match="BSM pricing does not use stochastic path simulation"
         ):
             OptionValuation(
-                name="INVALID",
                 underlying=process,
                 spec=self.call_spec,
                 pricing_method=PricingMethod.BSM,
@@ -843,7 +810,6 @@ class TestOptionValuation:
     def test_option_valuation_pde_rejects_path_simulation(self):
         """Test that PDE_FD pricing rejects PathSimulation (should use UnderlyingPricingData)."""
         process = GBMProcess(
-            name="STOCK",
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim=SimulationConfig(
@@ -857,7 +823,6 @@ class TestOptionValuation:
             ConfigurationError, match="PDE_FD pricing does not use stochastic path simulation"
         ):
             OptionValuation(
-                name="INVALID",
                 underlying=process,
                 spec=self.call_spec,
                 pricing_method=PricingMethod.PDE_FD,
@@ -882,7 +847,6 @@ class TestOptionValuation:
         # Error is raised during initialization, not present_value
         with pytest.raises(UnsupportedFeatureError, match="BSM is only applicable to European"):
             OptionValuation(
-                name="CALL_AMERICAN_BSM",
                 underlying=ud,
                 spec=american_spec,
                 pricing_method=PricingMethod.BSM,
@@ -903,7 +867,7 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        valuation = OptionValuation("PUT_FD", ud, spec, PricingMethod.PDE_FD)
+        valuation = OptionValuation(ud, spec, PricingMethod.PDE_FD)
         assert isinstance(valuation._impl, _FDAmericanValuation)
 
     def test_american_put_fd_close_to_binomial(self):
@@ -922,7 +886,6 @@ class TestOptionValuation:
         )
 
         fd_val = OptionValuation(
-            "put_fd",
             ud,
             spec,
             PricingMethod.PDE_FD,
@@ -931,7 +894,7 @@ class TestOptionValuation:
         fd_pv = fd_val.present_value()
 
         tree_val = OptionValuation(
-            "put_tree", ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1200)
+            ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1200)
         )
         tree_pv = tree_val.present_value()
 
@@ -943,7 +906,7 @@ class TestOptionValuation:
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
-            dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.03, name="q"),
+            dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.03),
         )
         spec = OptionSpec(
             option_type=OptionType.CALL,
@@ -954,7 +917,6 @@ class TestOptionValuation:
         )
 
         fd_val = OptionValuation(
-            "call_fd",
             ud,
             spec,
             PricingMethod.PDE_FD,
@@ -963,7 +925,7 @@ class TestOptionValuation:
         fd_pv = fd_val.present_value()
 
         tree_val = OptionValuation(
-            "call_tree", ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1200)
+            ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=1200)
         )
         tree_pv = tree_val.present_value()
 
@@ -999,8 +961,8 @@ class TestOptionValuation:
 
         params = PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
 
-        am_val = OptionValuation("call_fd_am", ud, spec_am, PricingMethod.PDE_FD, params=params)
-        eu_val = OptionValuation("call_fd_eu", ud, spec_eu, PricingMethod.PDE_FD, params=params)
+        am_val = OptionValuation(ud, spec_am, PricingMethod.PDE_FD, params=params)
+        eu_val = OptionValuation(ud, spec_eu, PricingMethod.PDE_FD, params=params)
 
         am_pv = am_val.present_value()
         eu_pv = eu_val.present_value()
@@ -1030,7 +992,6 @@ class TestOptionValuation:
         )
 
         fd_val = OptionValuation(
-            "call_fd",
             ud,
             spec_am,
             PricingMethod.PDE_FD,
@@ -1038,7 +999,7 @@ class TestOptionValuation:
         )
         fd_pv = fd_val.present_value()
 
-        bsm_val = OptionValuation("call_bsm", ud, spec_eu, PricingMethod.BSM)
+        bsm_val = OptionValuation(ud, spec_eu, PricingMethod.BSM)
         bsm_pv = bsm_val.present_value()
 
         # American call with no dividends should be near European (no early exercise benefit).
@@ -1068,13 +1029,12 @@ class TestOptionValuation:
         )
 
         binom_val = OptionValuation(
-            "call_binom_div",
             ud,
             spec,
             PricingMethod.BINOMIAL,
             params=BinomialParams(num_steps=1200),
         )
-        bsm_val = OptionValuation("call_bsm_div", ud, spec, PricingMethod.BSM)
+        bsm_val = OptionValuation(ud, spec, PricingMethod.BSM)
 
         binom_pv = binom_val.present_value()
         bsm_pv = bsm_val.present_value()

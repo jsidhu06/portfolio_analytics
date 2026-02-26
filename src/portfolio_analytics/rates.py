@@ -17,7 +17,6 @@ class DiscountCurve:
     Values > 1 are permitted (negative rates) but trigger a warning.
     """
 
-    name: str
     times: np.ndarray
     dfs: np.ndarray
     flat_rate: float | None = None
@@ -33,7 +32,7 @@ class DiscountCurve:
             raise ValidationError("discount factors must be positive")
         if np.any(df > 1.0 + 1e-12):
             warnings.warn(
-                f"Discount factors > 1 detected (negative rates) on curve {self.name!r}",
+                "Discount factors > 1 detected (negative rates)",
                 stacklevel=2,
             )
         if self.flat_rate is not None and not np.isfinite(float(self.flat_rate)):
@@ -50,7 +49,6 @@ class DiscountCurve:
     @classmethod
     def from_forwards(
         cls,
-        name: str,
         times: np.ndarray,
         forwards: np.ndarray,
     ) -> "DiscountCurve":
@@ -58,8 +56,6 @@ class DiscountCurve:
 
         Parameters
         ----------
-        name
-            Curve identifier.
         times
             Year-fraction grid including 0.  Shape ``(N+1,)``.
         forwards
@@ -78,12 +74,11 @@ class DiscountCurve:
         dt_steps = np.diff(times)
         cum_rate = np.concatenate([[0.0], np.cumsum(forwards * dt_steps)])
         dfs = np.exp(-cum_rate)
-        return cls(name=name, times=times, dfs=dfs)
+        return cls(times=times, dfs=dfs)
 
     @classmethod
     def from_zero_rates(
         cls,
-        name: str,
         times: np.ndarray,
         zero_rates: np.ndarray,
     ) -> "DiscountCurve":
@@ -91,8 +86,6 @@ class DiscountCurve:
 
         Parameters
         ----------
-        name
-            Curve identifier.
         times
             Year-fraction grid.  Shape ``(N,)``.
             Must be strictly increasing and start at 0.
@@ -111,12 +104,11 @@ class DiscountCurve:
         if not np.isclose(times[0], 0.0):
             raise ValidationError("times must start at 0.0")
         dfs = np.exp(-zero_rates * times)
-        return cls(name=name, times=times, dfs=dfs)
+        return cls(times=times, dfs=dfs)
 
     @classmethod
     def flat(
         cls,
-        name: str,
         rate: float,
         end_time: float,
         steps: int = 1,
@@ -127,7 +119,7 @@ class DiscountCurve:
             raise ValidationError("steps must be >= 1")
         times = np.linspace(0.0, float(end_time), int(steps) + 1)
         dfs = np.exp(-float(rate) * times)
-        return cls(name=name, times=times, dfs=dfs, flat_rate=float(rate))
+        return cls(times=times, dfs=dfs, flat_rate=float(rate))
 
     def df(self, t: float | np.ndarray) -> np.ndarray:
         """Log-linear interpolation of discount factors."""
@@ -136,7 +128,7 @@ class DiscountCurve:
         outside = (t < t_min) | (t > t_max)
         if np.any(outside):
             warnings.warn(
-                f"Extrapolating discount curve {self.name!r} outside "
+                f"Extrapolating discount curve outside "
                 f"[{t_min:.4f}, {t_max:.4f}] — flat log-DF assumed",
                 stacklevel=2,
             )

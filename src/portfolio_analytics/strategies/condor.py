@@ -91,7 +91,6 @@ class CondorSpec:
     def present_value(
         self,
         *,
-        name: str,
         underlying: PathSimulation | UnderlyingPricingData,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
@@ -124,7 +123,6 @@ class CondorSpec:
                 contract_size=self.contract_size,
             )
             leg_val = OptionValuation(
-                name=f"{name}_leg_{opt_type.value}_{strike}",
                 underlying=underlying,
                 spec=leg_spec,
                 pricing_method=pricing_method,

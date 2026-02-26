@@ -26,7 +26,7 @@ class TestBSMValuation:
         self.volatility = 0.2
         self.rate = 0.05
 
-        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate, name="csr")
+        self.curve = flat_curve(self.pricing_date, self.maturity, self.rate)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         underlying_params = {
@@ -40,7 +40,7 @@ class TestBSMValuation:
         self.ud_div = UnderlyingPricingData(
             **{
                 **underlying_params,
-                "dividend_curve": flat_curve(self.pricing_date, self.maturity, 0.03, name="q"),
+                "dividend_curve": flat_curve(self.pricing_date, self.maturity, 0.03),
             }
         )
 
@@ -55,7 +55,6 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_ATM",
             underlying=self.ud,
             spec=call_spec,
             pricing_method=PricingMethod.BSM,
@@ -94,8 +93,8 @@ class TestBSMValuation:
             discrete_dividends=[(self.pricing_date + dt.timedelta(days=180), 1.0)],
         )
 
-        val_no_div = OptionValuation("call_no_div", ud_no_div, spec, PricingMethod.BSM)
-        val_div = OptionValuation("call_div", ud_div, spec, PricingMethod.BSM)
+        val_no_div = OptionValuation(ud_no_div, spec, PricingMethod.BSM)
+        val_div = OptionValuation(ud_div, spec, PricingMethod.BSM)
 
         pv_no_div = val_no_div.present_value()
         pv_div = val_div.present_value()
@@ -113,7 +112,6 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="PUT_ATM",
             underlying=self.ud,
             spec=put_spec,
             pricing_method=PricingMethod.BSM,
@@ -143,7 +141,6 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL_ITM",
             underlying=ud_itm,
             spec=call_spec,
             pricing_method=PricingMethod.BSM,
@@ -172,7 +169,6 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="PUT_OTM",
             underlying=ud_otm,
             spec=put_spec,
             pricing_method=PricingMethod.BSM,
@@ -197,14 +193,12 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="ZERO_DIVIDEND",
             underlying=self.ud,
             spec=call_spec,
             pricing_method=PricingMethod.BSM,
         )
 
         valuation_div = OptionValuation(
-            name="POSITIVE_DIVIDEND",
             underlying=self.ud_div,
             spec=call_spec,
             pricing_method=PricingMethod.BSM,
@@ -235,7 +229,6 @@ class TestBSMValuation:
         )
 
         call_val = OptionValuation(
-            name="CALL",
             underlying=self.ud,
             spec=call_spec,
             pricing_method=PricingMethod.BSM,
@@ -249,7 +242,6 @@ class TestBSMValuation:
         )
 
         put_val = OptionValuation(
-            name="PUT",
             underlying=ud_put,
             spec=put_spec,
             pricing_method=PricingMethod.BSM,
@@ -275,7 +267,6 @@ class TestBSMValuation:
         )
 
         valuation = OptionValuation(
-            name="CALL",
             underlying=self.ud,
             spec=call_spec,
             pricing_method=PricingMethod.BSM,

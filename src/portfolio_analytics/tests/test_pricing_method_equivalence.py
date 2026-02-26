@@ -48,7 +48,7 @@ def _market_data(r_curve: DiscountCurve | None = None) -> MarketData:
 def _nonflat_r_curve() -> DiscountCurve:
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
-    return DiscountCurve.from_forwards(name="r_curve_nonflat", times=times, forwards=forwards)
+    return DiscountCurve.from_forwards(times=times, forwards=forwards)
 
 
 def _underlying(
@@ -88,7 +88,7 @@ def _gbm(
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
-    return GBMProcess(name, _market_data(r_curve), gbm_params, sim_config)
+    return GBMProcess(_market_data(r_curve), gbm_params, sim_config)
 
 
 def _spec(*, strike: float, option_type: OptionType, exercise_type: ExerciseType) -> OptionSpec:
@@ -124,10 +124,8 @@ def test_pde_fd_european_close_to_bsm(spot, strike, option_type, dividend_yield)
     ud = _underlying(spot=spot, dividend_curve=q_curve)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
-    pde_pv = OptionValuation(
-        "pde_eu", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
-    ).present_value()
-    bsm_pv = OptionValuation("bsm_eu", ud, spec, PricingMethod.BSM).present_value()
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=PDE_CFG).present_value()
+    bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
 
     assert np.isclose(pde_pv, bsm_pv, rtol=0.02)
 
@@ -147,12 +145,8 @@ def test_pde_fd_american_close_to_mc(spot, strike, option_type, dividend_yield):
     gbm = _gbm(spot=spot, dividend_curve=q_curve)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
-    pde_pv = OptionValuation(
-        "pde_am", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
-    ).present_value()
-    mc_pv = OptionValuation(
-        "mc_am", gbm, spec, PricingMethod.MONTE_CARLO, params=MC_CFG_AM
-    ).present_value()
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=PDE_CFG).present_value()
+    mc_pv = OptionValuation(gbm, spec, PricingMethod.MONTE_CARLO, params=MC_CFG_AM).present_value()
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
 
@@ -180,23 +174,19 @@ def test_discrete_dividend_equivalence_across_methods(r_curve):
         r_curve=r_curve,
         discrete_dividends=divs,
         paths=200_000,
-        name="gbm_curve_div",
     )
 
     spec_eu = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.EUROPEAN)
 
-    pde_pv = OptionValuation(
-        "pde_div", ud, spec_eu, PricingMethod.PDE_FD, params=PDE_CFG
-    ).present_value()
+    pde_pv = OptionValuation(ud, spec_eu, PricingMethod.PDE_FD, params=PDE_CFG).present_value()
     mc_pv = OptionValuation(
-        "mc_div", gbm, spec_eu, PricingMethod.MONTE_CARLO, params=MC_CFG_EU
+        gbm, spec_eu, PricingMethod.MONTE_CARLO, params=MC_CFG_EU
     ).present_value()
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
 
-    bsm_pv = OptionValuation("bsm_div", ud, spec_eu, PricingMethod.BSM).present_value()
+    bsm_pv = OptionValuation(ud, spec_eu, PricingMethod.BSM).present_value()
     binom_pv = OptionValuation(
-        "binom_div",
         ud,
         spec_eu,
         PricingMethod.BINOMIAL,
@@ -214,9 +204,8 @@ def test_discrete_dividend_equivalence_across_methods(r_curve):
     vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)
     adjusted_ud = ud.replace(volatility=ud.volatility * vol_multiplier)
 
-    bsm_adj = OptionValuation("bsm_adj", adjusted_ud, spec_eu, PricingMethod.BSM).present_value()
+    bsm_adj = OptionValuation(adjusted_ud, spec_eu, PricingMethod.BSM).present_value()
     binom_adj = OptionValuation(
-        "binom_adj",
         adjusted_ud,
         spec_eu,
         PricingMethod.BINOMIAL,
@@ -255,15 +244,12 @@ def test_discrete_dividend_american_matches_mc(spot, strike, r_curve):
         r_curve=r_curve,
         discrete_dividends=divs,
         paths=60_000,
-        name="gbm_curve_div",
     )
     spec_am = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
-    pde_pv = OptionValuation(
-        "pde_am_div", ud, spec_am, PricingMethod.PDE_FD, params=PDE_CFG
-    ).present_value()
+    pde_pv = OptionValuation(ud, spec_am, PricingMethod.PDE_FD, params=PDE_CFG).present_value()
     mc_pv = OptionValuation(
-        "mc_am_div", gbm, spec_am, PricingMethod.MONTE_CARLO, params=MC_CFG_AM
+        gbm, spec_am, PricingMethod.MONTE_CARLO, params=MC_CFG_AM
     ).present_value()
 
     assert np.isclose(pde_pv, mc_pv, rtol=0.02)
@@ -278,9 +264,7 @@ def test_pde_fd_grid_method_equivalence_european():
     spec = _spec(strike=strike, option_type=OptionType.CALL, exercise_type=ExerciseType.EUROPEAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
-    baseline = OptionValuation(
-        "pde_base", ud, spec, PricingMethod.PDE_FD, params=base_params
-    ).present_value()
+    baseline = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=base_params).present_value()
 
     for method in (
         PDEMethod.IMPLICIT,
@@ -302,14 +286,10 @@ def test_pde_fd_grid_method_equivalence_european():
                 and grid is PDESpaceGrid.SPOT
             ):
                 with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
-                    OptionValuation(
-                        "pde_var", ud, spec, PricingMethod.PDE_FD, params=params
-                    ).present_value()
+                    OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
                 continue
 
-            pv = OptionValuation(
-                "pde_var", ud, spec, PricingMethod.PDE_FD, params=params
-            ).present_value()
+            pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
             assert np.isclose(pv, baseline, rtol=0.005)
 
 
@@ -322,9 +302,7 @@ def test_pde_fd_grid_method_equivalence_american():
     spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
-    baseline = OptionValuation(
-        "pde_base_am", ud, spec, PricingMethod.PDE_FD, params=base_params
-    ).present_value()
+    baseline = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=base_params).present_value()
 
     for method in (
         PDEMethod.IMPLICIT,
@@ -351,7 +329,7 @@ def test_pde_fd_grid_method_equivalence_american():
                         UnsupportedFeatureError, match="GAUSS_SEIDEL is not supported"
                     ):
                         OptionValuation(
-                            "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
+                            ud, spec, PricingMethod.PDE_FD, params=params
                         ).present_value()
                     continue
 
@@ -361,13 +339,11 @@ def test_pde_fd_grid_method_equivalence_american():
                 ):
                     with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
                         OptionValuation(
-                            "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
+                            ud, spec, PricingMethod.PDE_FD, params=params
                         ).present_value()
                     continue
 
-                pv = OptionValuation(
-                    "pde_var_am", ud, spec, PricingMethod.PDE_FD, params=params
-                ).present_value()
+                pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
                 assert np.isclose(pv, baseline, rtol=0.005)
 
 
@@ -413,8 +389,8 @@ def test_european_method_equivalence_with_forward_curves(
     q_forwards,
 ):
     """European BSM, MC, PDE FD, and binomial should agree under time-varying curves."""
-    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
-    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
+    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
     gbm = _gbm(
@@ -422,23 +398,18 @@ def test_european_method_equivalence_with_forward_curves(
         r_curve=r_curve,
         dividend_curve=q_curve,
         paths=150_000,
-        name="gbm_curve",
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
-    bsm_pv = OptionValuation("bsm_curve_eu", ud, spec, PricingMethod.BSM).present_value()
-    pde_pv = OptionValuation(
-        "pde_curve_eu", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
-    ).present_value()
+    bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=PDE_CFG).present_value()
     binom_pv = OptionValuation(
-        "binom_curve_eu",
         ud,
         spec,
         PricingMethod.BINOMIAL,
         params=BinomialParams(num_steps=1500),
     ).present_value()
     mc_pv = OptionValuation(
-        "mc_curve_eu",
         gbm,
         spec,
         PricingMethod.MONTE_CARLO,
@@ -492,8 +463,8 @@ def test_american_method_equivalence_with_forward_curves(
     q_forwards,
 ):
     """American MC, PDE FD, and binomial should agree under time-varying curves."""
-    r_curve = DiscountCurve.from_forwards(name="r_curve", times=r_times, forwards=r_forwards)
-    q_curve = DiscountCurve.from_forwards(name="q_curve", times=q_times, forwards=q_forwards)
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
+    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
 
     ud = _underlying_curves(spot=spot, r_curve=r_curve, q_curve=q_curve)
     gbm = _gbm(
@@ -501,22 +472,17 @@ def test_american_method_equivalence_with_forward_curves(
         r_curve=r_curve,
         dividend_curve=q_curve,
         paths=150_000,
-        name="gbm_curve",
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
-    pde_pv = OptionValuation(
-        "pde_curve_am", ud, spec, PricingMethod.PDE_FD, params=PDE_CFG
-    ).present_value()
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=PDE_CFG).present_value()
     binom_pv = OptionValuation(
-        "binom_curve_am",
         ud,
         spec,
         PricingMethod.BINOMIAL,
         params=BinomialParams(num_steps=1500),
     ).present_value()
     mc_pv = OptionValuation(
-        "mc_curve_am",
         gbm,
         spec,
         PricingMethod.MONTE_CARLO,

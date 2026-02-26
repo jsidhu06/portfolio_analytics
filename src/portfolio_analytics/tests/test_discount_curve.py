@@ -16,57 +16,53 @@ class TestDiscountCurveConstruction:
     """Validate DiscountCurve constructor guards."""
 
     def test_flat_curve_basic(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=1.0)
-        assert curve.name == "r"
+        curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
         assert curve.flat_rate == 0.05
         assert float(curve.df(0.0)) == pytest.approx(1.0)
         assert float(curve.df(1.0)) == pytest.approx(np.exp(-0.05))
 
     def test_flat_curve_multiple_steps(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=2.0, steps=10)
+        curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=10)
         assert curve.times.size == 11
         assert float(curve.df(1.0)) == pytest.approx(np.exp(-0.05))
 
     def test_flat_curve_zero_rate(self):
-        curve = DiscountCurve.flat("r", rate=0.0, end_time=1.0)
+        curve = DiscountCurve.flat(rate=0.0, end_time=1.0)
         assert float(curve.df(0.5)) == pytest.approx(1.0)
 
     def test_flat_curve_negative_end_time_raises(self):
         with pytest.raises(ValidationError, match="end_time must be positive"):
-            DiscountCurve.flat("r", rate=0.05, end_time=-1.0)
+            DiscountCurve.flat(rate=0.05, end_time=-1.0)
 
     def test_flat_curve_zero_end_time_raises(self):
         with pytest.raises(ValidationError, match="end_time must be positive"):
-            DiscountCurve.flat("r", rate=0.05, end_time=0.0)
+            DiscountCurve.flat(rate=0.05, end_time=0.0)
 
     def test_flat_curve_zero_steps_raises(self):
         with pytest.raises(ValidationError, match="steps must be >= 1"):
-            DiscountCurve.flat("r", rate=0.05, end_time=1.0, steps=0)
+            DiscountCurve.flat(rate=0.05, end_time=1.0, steps=0)
 
     def test_non_increasing_times_raises(self):
         with pytest.raises(ValidationError, match="strictly increasing"):
-            DiscountCurve(
-                name="bad", times=np.array([0.0, 0.5, 0.5]), dfs=np.array([1.0, 0.98, 0.96])
-            )
+            DiscountCurve(times=np.array([0.0, 0.5, 0.5]), dfs=np.array([1.0, 0.98, 0.96]))
 
     def test_negative_df_raises(self):
         with pytest.raises(ValidationError, match="discount factors must be positive"):
-            DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0, -0.5]))
+            DiscountCurve(times=np.array([0.0, 1.0]), dfs=np.array([1.0, -0.5]))
 
     def test_df_greater_than_one_warns(self):
         """Discount factors > 1 (negative rates) are allowed but warn."""
         with pytest.warns(match="Discount factors > 1 detected"):
-            DiscountCurve(name="neg_rate", times=np.array([0.0, 1.0]), dfs=np.array([1.0, 1.5]))
+            DiscountCurve(times=np.array([0.0, 1.0]), dfs=np.array([1.0, 1.5]))
 
     def test_mismatched_arrays_raises(self):
         with pytest.raises(ValidationError, match="same length"):
-            DiscountCurve(name="bad", times=np.array([0.0, 1.0]), dfs=np.array([1.0]))
+            DiscountCurve(times=np.array([0.0, 1.0]), dfs=np.array([1.0]))
 
     def test_inconsistent_flat_rate_raises(self):
         """flat_rate provided but dfs don't match exp(-r*t)."""
         with pytest.raises(ValidationError, match="flat_rate is only allowed"):
             DiscountCurve(
-                name="bad",
                 times=np.array([0.0, 1.0]),
                 dfs=np.array([1.0, 0.90]),
                 flat_rate=0.05,
@@ -77,13 +73,13 @@ class TestDiscountCurveConstruction:
         t = np.array([0.0, 1.0])
         rate = 0.03
         dfs = np.exp(-rate * t)
-        curve = DiscountCurve(name="r", times=t, dfs=dfs, flat_rate=rate)
+        curve = DiscountCurve(times=t, dfs=dfs, flat_rate=rate)
         assert curve.flat_rate == rate
 
     def test_frozen_dataclass(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=1.0)
+        curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
         with pytest.raises(AttributeError):
-            curve.name = "new_name"  # type: ignore[misc]
+            curve.flat_rate = 0.10  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +95,7 @@ class TestDiscountCurveDf:
         """Non-flat curve for interpolation testing."""
         times = np.array([0.0, 0.5, 1.0, 2.0])
         dfs = np.array([1.0, 0.975, 0.95, 0.90])
-        return DiscountCurve(name="test", times=times, dfs=dfs)
+        return DiscountCurve(times=times, dfs=dfs)
 
     def test_exact_node(self, curve: DiscountCurve):
         assert float(curve.df(0.5)) == pytest.approx(0.975)
@@ -142,12 +138,12 @@ class TestDiscountCurveForwardRate:
     """Test forward_rate() and step_forward_rates()."""
 
     def test_flat_curve_forward_rate_equals_flat_rate(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=2.0, steps=4)
+        curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=4)
         fwd = curve.forward_rate(0.25, 0.75)
         assert fwd == pytest.approx(0.05, rel=1e-10)
 
     def test_forward_rate_t1_le_t0_raises(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=1.0)
+        curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
         with pytest.raises(ValidationError, match="Need t1 > t0"):
             curve.forward_rate(0.5, 0.5)
 
@@ -155,7 +151,7 @@ class TestDiscountCurveForwardRate:
         """f(t0,t1) should satisfy df(t1) = df(t0) * exp(-f*(t1-t0))."""
         times = np.array([0.0, 0.5, 1.0, 2.0])
         dfs = np.array([1.0, 0.975, 0.95, 0.90])
-        curve = DiscountCurve(name="test", times=times, dfs=dfs)
+        curve = DiscountCurve(times=times, dfs=dfs)
 
         t0, t1 = 0.25, 1.5
         fwd = curve.forward_rate(t0, t1)
@@ -166,14 +162,14 @@ class TestDiscountCurveForwardRate:
         assert reconstructed == pytest.approx(df_t1, rel=1e-10)
 
     def test_step_forward_rates_flat(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=2.0, steps=4)
+        curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=4)
         grid = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
         fwds = curve.step_forward_rates(grid)
         assert fwds.shape == (4,)
         np.testing.assert_allclose(fwds, 0.05, rtol=1e-10)
 
     def test_step_forward_rates_non_increasing_raises(self):
-        curve = DiscountCurve.flat("r", rate=0.05, end_time=1.0)
+        curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
         with pytest.raises(ValidationError, match="strictly increasing"):
             curve.step_forward_rates(np.array([0.0, 0.5, 0.5]))
 
@@ -189,6 +185,6 @@ class TestDiscountCurveForwardRate:
                 np.exp(-0.03 * 0.5 - 0.05 * 0.5 - 0.04 * 1.0),
             ]
         )
-        curve = DiscountCurve(name="test", times=times, dfs=dfs)
+        curve = DiscountCurve(times=times, dfs=dfs)
         fwds = curve.step_forward_rates(times)
         np.testing.assert_allclose(fwds, [0.03, 0.05, 0.04], rtol=1e-10)
