@@ -454,13 +454,38 @@ def _check_explicit_spot_stability(
     time_to_maturity: float,
     discount_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None,
+    hull_discounting: bool,
 ) -> None:
-    """Check CFL-type stability conditions for the explicit spot-grid scheme.
+    """CFL-style stability checks for an explicit scheme on a uniform spot grid.
 
-    Raises StabilityError if the drift or time-step size violates the
-    stability bound for the forward-Euler discretisation on a uniform
-    spot grid.
+    The dominant restriction comes from the diffusion term::
+
+        dt <= dS² / (σ² S_max²)
+
+    When *hull_discounting* is ``False`` (pure explicit), the reaction
+    term :math:`-rV` is discretised explicitly too, giving the tighter
+    bound::
+
+        dt <= 1 / (σ² S_max² / dS² + r_max)
+
+    With Hull implicit discounting, ``r`` is handled implicitly via the
+    :math:`1/(1 + r \Delta t)` divisor so only diffusion matters.
+
+    A secondary check enforces the central-difference stencil monotonicity
+    condition :math:`\alpha, \gamma \ge 0`, i.e. diffusion dominates drift
+    at the worst-case grid node (``S_max``).
+
+    Raises ``StabilityError`` if any condition is violated.
     """
+    if tau_grid.size < 2:
+        return
+
+    dt_steps = np.diff(tau_grid).astype(float)
+    max_dt = float(np.max(dt_steps))
+    if max_dt <= 0.0:
+        return
+
+    # Forward rates for each tau step (calendar times: t = T - tau)
     t_prev = time_to_maturity - tau_grid[:-1]
     t_next = time_to_maturity - tau_grid[1:]
     r_steps = np.array(
@@ -475,24 +500,41 @@ def _check_explicit_spot_stability(
     else:
         q_steps = np.zeros_like(r_steps)
 
-    drift = float(np.max(np.abs(r_steps - q_steps)))
-    if drift > volatility**2:
+    rq_abs_max = float(np.max(np.abs(r_steps - q_steps)))
+
+    # (A) Diffusion CFL bound
+    diffusion_max = (volatility**2) * (smax**2) / (dS**2)
+
+    if hull_discounting:
+        # r handled implicitly — only diffusion constrains dt
+        dt_max = 1.0 / diffusion_max
+        mode = "Hull implicit discounting"
+    else:
+        # Pure explicit: tighten for the reaction term -rV
+        r_pos = max(float(np.max(r_steps)), 0.0)
+        dt_max = (
+            1.0 / (diffusion_max + r_pos) if (diffusion_max + r_pos) > 0.0 else 1.0 / diffusion_max
+        )
+        mode = "pure explicit discounting"
+
+    if max_dt > dt_max:
+        min_steps = int(math.ceil(time_to_maturity / dt_max))
         raise StabilityError(
-            "Explicit spot-grid scheme unstable: max |r-q| must be <= sigma^2. "
-            "Use log-spot or implicit/CN."
+            f"Explicit spot-grid scheme likely unstable (CFL violation, {mode}). "
+            f"max_dt={max_dt:.4g} exceeds dt_max={dt_max:.4g}. "
+            f"Increase time_steps to >= {min_steps}, or use log-spot/implicit/CN."
         )
 
-    denom = (volatility**2) * (smax**2) / (dS**2) + max(float(np.max(r_steps)), 0.0)
-    if denom > 0.0:
-        dt_max = 1.0 / denom
-        max_dt = float(np.max(np.diff(tau_grid)))
-        if max_dt > dt_max:
-            min_steps = int(math.ceil(time_to_maturity / dt_max))
-            raise StabilityError(
-                "Explicit spot-grid scheme unstable: time step too large. "
-                f"max_dt={max_dt:.4g} exceeds dt_max={dt_max:.4g}. "
-                f"Increase time_steps to >= {min_steps} or use log-spot/implicit/CN."
-            )
+    # (B) Drift monotonicity: central-difference stencil requires
+    #     diffusion >= |drift| at worst-case S for alpha, gamma >= 0.
+    drift_max = rq_abs_max * smax / dS
+    if drift_max > diffusion_max:
+        raise StabilityError(
+            "Explicit spot-grid scheme likely unstable/oscillatory: drift dominates "
+            "diffusion in the central-difference stencil. "
+            f"diffusion_max={diffusion_max:.4g}, drift_max={drift_max:.4g}. "
+            "Refine the spot grid (smaller dS), reduce smax, or use log-spot/implicit/CN."
+        )
 
 
 def _build_time_step_schedule(
@@ -614,6 +656,7 @@ def _vanilla_fd_core(
             time_to_maturity=time_to_maturity,
             discount_curve=discount_curve,
             dividend_curve=dividend_curve,
+            hull_discounting=method is PDEMethod.EXPLICIT_HULL,
         )
 
     # March forward in tau: 0 -> T (equivalently backward in calendar time)

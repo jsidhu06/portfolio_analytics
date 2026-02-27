@@ -285,7 +285,9 @@ def test_pde_fd_grid_method_equivalence_european():
                 method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
                 and grid is PDESpaceGrid.SPOT
             ):
-                with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
+                with pytest.raises(
+                    StabilityError, match="Explicit spot-grid scheme likely unstable"
+                ):
                     OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
                 continue
 
@@ -337,7 +339,9 @@ def test_pde_fd_grid_method_equivalence_american():
                     method in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL)
                     and grid is PDESpaceGrid.SPOT
                 ):
-                    with pytest.raises(StabilityError, match="Explicit spot-grid scheme unstable"):
+                    with pytest.raises(
+                        StabilityError, match="Explicit spot-grid scheme likely unstable"
+                    ):
                         OptionValuation(
                             ud, spec, PricingMethod.PDE_FD, params=params
                         ).present_value()
