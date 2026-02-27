@@ -20,8 +20,17 @@ class MonteCarloParams:
     random_seed:
         Random seed for reproducibility. If None, uses random state.
     deg:
-        Polynomial degree for Longstaff-Schwartz regression (American only).
-        Typical range: 2-5. Default: 2.
+        Laguerre polynomial degree for Longstaff-Schwartz regression
+        (American only). Typical range: 2-3. Default: 3.
+    ridge_lambda:
+        Ridge (Tikhonov) regularisation parameter for the LSM regression.
+        A small positive value stabilises the solve when ITM points are
+        few or collinear.  Default: 1e-8.
+    min_itm:
+        Minimum number of in-the-money paths required to run the regression
+        at each exercise date.  If fewer paths are ITM, the continuation
+        value falls back to the discounted next-step value (path-wise).
+        Default: 25.
     log_timings:
         If True, log debug timing for solver execution.
     std_error_warn_ratio:
@@ -34,7 +43,9 @@ class MonteCarloParams:
     """
 
     random_seed: int | None = None
-    deg: int = 2
+    deg: int = 3
+    ridge_lambda: float = 1e-8
+    min_itm: int = 25
     log_timings: bool = False
     std_error_warn_ratio: float | None = 0.1
     control_variate_european: bool = False
@@ -42,6 +53,10 @@ class MonteCarloParams:
     def __post_init__(self) -> None:
         if self.deg is not None and self.deg < 1:
             raise ValidationError(f"deg must be >= 1, got {self.deg}")
+        if self.ridge_lambda < 0:
+            raise ValidationError(f"ridge_lambda must be >= 0, got {self.ridge_lambda}")
+        if self.min_itm < 1:
+            raise ValidationError(f"min_itm must be >= 1, got {self.min_itm}")
         if self.std_error_warn_ratio is not None and self.std_error_warn_ratio <= 0:
             raise ValidationError(
                 f"std_error_warn_ratio must be > 0 when set, got {self.std_error_warn_ratio}"

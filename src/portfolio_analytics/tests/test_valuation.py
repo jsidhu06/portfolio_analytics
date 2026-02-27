@@ -403,8 +403,8 @@ class TestOptionValuation:
         payoff_spec = PayoffSpec(
             exercise_type=ExerciseType.EUROPEAN,
             maturity=self.maturity,
-            currency="USD",
             payoff_fn=condor_spec.terminal_payoff,
+            currency="USD",
         )
         payoff_pv = OptionValuation(
             underlying=ud,
@@ -456,8 +456,8 @@ class TestOptionValuation:
         payoff_spec = PayoffSpec(
             exercise_type=ExerciseType.EUROPEAN,
             maturity=self.maturity,
-            currency="USD",
             payoff_fn=condor_spec.terminal_payoff,
+            currency="USD",
         )
         payoff_pv = OptionValuation(
             underlying=gbm,
@@ -567,14 +567,14 @@ class TestOptionValuation:
         spec_am = PayoffSpec(
             exercise_type=ExerciseType.AMERICAN,
             maturity=self.maturity,
-            currency="USD",
             payoff_fn=capped_payoff,
+            currency="USD",
         )
         spec_eu = PayoffSpec(
             exercise_type=ExerciseType.EUROPEAN,
             maturity=self.maturity,
-            currency="USD",
             payoff_fn=capped_payoff,
+            currency="USD",
         )
 
         # Binomial (UnderlyingPricingData)
