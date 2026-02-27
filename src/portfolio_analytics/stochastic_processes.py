@@ -273,13 +273,10 @@ class PathSimulation(ABC):
             if name is None:
                 raise ValidationError(
                     "name is required when using CorrelationContext "
-                    "(used to index into corr.rn_set)"
+                    "(used to look up the asset index)"
                 )
-            # only needed in a portfolio context when
-            # risk factors are correlated
-            self.cholesky_matrix = corr.cholesky_matrix
-            self.rn_set = corr.rn_set[self._name]
-            self.random_numbers = corr.random_numbers
+            # Validate early: fail now rather than at simulation time.
+            self._rn_index: int = corr.asset_index(name)
 
     @property
     def name(self) -> str | None:
@@ -388,8 +385,8 @@ class PathSimulation(ABC):
 
         corr = self.correlation_context
         base = corr.random_numbers[:, :steps, :]
-        correlated = np.einsum("ij,jtk->itk", corr.cholesky_matrix, base)
-        return correlated[self.rn_set]
+        correlated = np.einsum("ij,jtp->itp", corr.cholesky_matrix, base)
+        return correlated[self._rn_index]
 
     @property
     def pricing_date(self) -> dt.datetime:
