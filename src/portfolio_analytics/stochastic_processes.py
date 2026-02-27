@@ -626,7 +626,7 @@ class GBMProcess(PathSimulation):
             return self.initial_value * np.exp(log_paths)
 
         # Fallback to loop for discrete dividends case
-        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
+        paths: np.ndarray = np.zeros((num_steps + 1, num_paths), dtype=float)
         paths[0] = self.initial_value
 
         dividend_by_date: dict[dt.datetime, float] = {}
@@ -637,7 +637,7 @@ class GBMProcess(PathSimulation):
 
         # Apply pricing-date dividend: input spot is cum-dividend, so the
         # stock goes ex immediately at t=0.
-        div_t0 = dividend_by_date.get(self.time_grid[0])
+        div_t0 = dividend_by_date.get(self.time_grid[0])  # type: ignore[call-overload]
         if div_t0 is not None:
             paths[0] = np.maximum(paths[0] - div_t0, 0.0)
 
@@ -647,7 +647,7 @@ class GBMProcess(PathSimulation):
             increment += self.volatility * np.sqrt(dt_step) * z[t - 1]
             paths[t] = paths[t - 1] * np.exp(increment)
 
-            div_amt = dividend_by_date.get(self.time_grid[t])
+            div_amt = dividend_by_date.get(self.time_grid[t])  # type: ignore[call-overload]
             if div_amt is not None:
                 paths[t] = np.maximum(paths[t] - div_amt, 0.0)
 
@@ -666,6 +666,8 @@ class JDProcess(PathSimulation):
         Y_i ~ Normal(μ, δ^2)
         k = E[e^Y - 1] = exp(μ + 0.5δ^2) - 1
     """
+
+    _process_params: JDParams
 
     def __init__(
         self,
@@ -767,7 +769,7 @@ class JDProcess(PathSimulation):
             return self.initial_value * np.exp(log_paths)
 
         # Fallback loop (discrete dividends)
-        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
+        paths: np.ndarray = np.zeros((num_steps + 1, num_paths), dtype=float)
         paths[0] = self.initial_value
 
         dividend_by_date: dict[dt.datetime, float] = {}
@@ -793,7 +795,7 @@ class JDProcess(PathSimulation):
 
             paths[t] = paths[t - 1] * diffusion_multiplier * jump_multiplier
 
-            div_amt = dividend_by_date.get(self.time_grid[t])
+            div_amt = dividend_by_date.get(self.time_grid[t])  # type: ignore[call-overload]
             if div_amt is not None:
                 paths[t] = np.maximum(paths[t] - div_amt, 0.0)
 
@@ -808,6 +810,8 @@ class SRDProcess(PathSimulation):
 
     Uses full truncation Euler to preserve non-negativity.
     """
+
+    _process_params: SRDParams
 
     def __init__(
         self,
@@ -841,7 +845,7 @@ class SRDProcess(PathSimulation):
         num_paths = self.paths
 
         # Truncated paths (non-negative) and raw Euler buffer
-        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
+        paths: np.ndarray = np.zeros((num_steps + 1, num_paths), dtype=float)
         euler_raw = np.zeros_like(paths)
 
         paths[0] = self.initial_value
