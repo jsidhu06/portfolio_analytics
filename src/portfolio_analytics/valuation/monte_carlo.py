@@ -87,6 +87,101 @@ def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) ->
     return np.maximum(strike - spot, 0.0)
 
 
+# ---------------------------------------------------------------------------
+# Laguerre basis + ridge regression for Longstaff-Schwartz
+# ---------------------------------------------------------------------------
+
+
+def _laguerre_basis(x: np.ndarray, deg: int) -> np.ndarray:
+    """Build a Laguerre polynomial design matrix of shape ``(n, deg+1)``.
+
+    Uses the standard (physicists') Laguerre recurrence::
+
+        L_0(x) = 1
+        L_1(x) = 1 - x
+        L_{k+1}(x) = ((2k + 1 - x) L_k(x) - k L_{k-1}(x)) / (k + 1)
+
+    These form an orthogonal basis on [0, inf) w.r.t. e^{-x}, which
+    provides far better conditioning than raw power polynomials in spot.
+    """
+    x = np.asarray(x, dtype=float)
+    cols: list[np.ndarray] = [np.ones_like(x)]
+    if deg >= 1:
+        cols.append(1.0 - x)
+    for k in range(1, deg):
+        cols.append(((2 * k + 1 - x) * cols[k] - k * cols[k - 1]) / (k + 1))
+    return np.column_stack(cols)
+
+
+def _ridge_lsm_continuation(
+    S_t: np.ndarray,
+    Y: np.ndarray,
+    itm: np.ndarray,
+    strike: float | None,
+    deg: int,
+    ridge_lambda: float,
+    min_itm: int,
+) -> np.ndarray:
+    """Robust continuation-value estimate for Longstaff-Schwartz.
+
+    Regresses discounted next-step values onto a Laguerre polynomial basis
+    in moneyness ``S/K`` using ridge (Tikhonov) regularisation.
+
+    When too few ITM paths are available for a stable regression the
+    continuation value falls back to the discounted next-step value
+    (path-wise), which is the conservative "do no harm" default.
+
+    Parameters
+    ----------
+    S_t : np.ndarray
+        Spot prices at this time step for all paths.
+    Y : np.ndarray
+        Discounted next-step values for all paths.
+    itm : np.ndarray
+        Boolean mask indicating in-the-money paths.
+    strike : float | None
+        Option strike price (used to compute moneyness ``S/K``).
+        When ``None`` (custom payoff), the mean ITM spot is used as the
+        normaliser so the Laguerre basis inputs remain well-scaled.
+    deg : int
+        Laguerre polynomial degree.
+    ridge_lambda : float
+        Ridge regularisation parameter (>= 0).
+    min_itm : int
+        Minimum ITM paths required for regression; fewer triggers fallback.
+
+    Returns
+    -------
+    np.ndarray
+        Estimated continuation value for every path (zero for OTM paths).
+    """
+    cont = np.zeros_like(S_t, dtype=float)
+    if not np.any(itm):
+        return cont
+
+    S_itm = S_t[itm]
+    Y_itm = Y[itm]
+    n = S_itm.size
+
+    # Too few ITM points for a stable fit — use cross-sectional mean
+    # (degree-0 regression) to avoid path-wise foresight bias.
+    if n < max(min_itm, deg + 1):
+        cont[itm] = np.mean(Y_itm)
+        return cont
+
+    normaliser = strike if strike is not None else max(float(np.mean(S_itm)), 1e-12)
+    x = S_itm / normaliser  # moneyness, always positive
+    X = _laguerre_basis(x, deg=deg)
+    p = X.shape[1]
+
+    # Ridge solve:  beta = (X^T X + lambda I)^{-1} X^T y
+    XtX = X.T @ X
+    Xty = X.T @ Y_itm
+    beta = np.linalg.solve(XtX + ridge_lambda * np.eye(p), Xty)
+    cont[itm] = X @ beta
+    return cont
+
+
 def _year_fractions(pricing_date, dates: np.ndarray) -> np.ndarray:
     return np.array(
         [calculate_year_fraction(pricing_date, d) for d in dates],
@@ -224,12 +319,15 @@ class _MCAmericanValuation:
             df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic_values[t] > 0
 
-            continuation = np.zeros_like(spot_paths[t])
-            if np.any(itm):
-                S_itm = spot_paths[t][itm]
-                V_itm = df_step * values[t + 1][itm]
-                poly = np.polynomial.Polynomial.fit(S_itm, V_itm, deg=self.mc_params.deg)
-                continuation[itm] = poly(spot_paths[t][itm])
+            continuation = _ridge_lsm_continuation(
+                S_t=spot_paths[t],
+                Y=df_step * values[t + 1],
+                itm=itm,
+                strike=self.parent.strike,
+                deg=self.mc_params.deg,
+                ridge_lambda=self.mc_params.ridge_lambda,
+                min_itm=self.mc_params.min_itm,
+            )
 
             values[t] = np.where(
                 intrinsic_values[t] > continuation,
@@ -515,11 +613,20 @@ class _MCAsianAmericanValuation:
                 S_itm = averaging_paths[t][itm]
                 A_itm = running_avg[t][itm]
                 V_itm = df_step * values[t + 1][itm]
+                n_itm = S_itm.size
 
-                # 2-D polynomial regression on (S, A)
-                X = _build_2d_design_matrix(S_itm, A_itm, deg)
-                coefs, *_ = np.linalg.lstsq(X, V_itm, rcond=None)
-                continuation[itm] = X @ coefs
+                # Fallback: too few ITM points — degree-0 (mean) to
+                # avoid path-wise foresight bias.
+                if n_itm < max(self.mc_params.min_itm, deg + 1):
+                    continuation[itm] = np.mean(V_itm)
+                else:
+                    # 2-D polynomial regression on (S, A) with ridge
+                    X = _build_2d_design_matrix(S_itm, A_itm, deg)
+                    p = X.shape[1]
+                    XtX = X.T @ X
+                    Xty = X.T @ V_itm
+                    beta = np.linalg.solve(XtX + self.mc_params.ridge_lambda * np.eye(p), Xty)
+                    continuation[itm] = X @ beta
 
             values[t] = np.where(
                 intrinsic[t] > continuation,
