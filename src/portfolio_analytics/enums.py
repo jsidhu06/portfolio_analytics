@@ -48,6 +48,8 @@ class GreekCalculationMethod(Enum):
     ANALYTICAL = "analytical"
     TREE = "tree"
     NUMERICAL = "numerical"
+    PATHWISE = "pathwise"
+    LIKELIHOOD_RATIO = "likelihood_ratio"
 
 
 class ImpliedVolMethod(Enum):

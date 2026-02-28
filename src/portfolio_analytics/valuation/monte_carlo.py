@@ -247,6 +247,116 @@ class _MCEuropeanValuation:
         discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
+    # ------------------------------------------------------------------
+    # MC Greeks — pathwise and likelihood-ratio estimators
+    # ------------------------------------------------------------------
+
+    def _simulate_terminal(self) -> tuple[np.ndarray, int, float, float]:
+        """Simulate paths and return terminal prices with key scalars.
+
+        Returns
+        -------
+        (ST, idx, ttm, df) — terminal spot array, time-grid index of
+        maturity, time to maturity in years, and risk-free discount factor.
+        """
+        paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
+        time_grid = self.underlying.time_grid
+        idx = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        ST: np.ndarray = paths[idx]
+        ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
+        df = float(self.parent.discount_curve.df(ttm))
+        return ST, idx, ttm, df
+
+    def _effective_terminal_z(self, idx: int, ttm: float) -> np.ndarray:
+        r"""Compute the effective terminal standard normal from cached per-step normals.
+
+        .. math::
+            Z_{\text{eff}}
+            = \frac{\sum_i \sqrt{\Delta t_i}\,Z_i}{\sqrt{T}}
+
+        Must be called **after** :meth:`_simulate_terminal` (which populates
+        :pyattr:`PathSimulation.last_normals`).
+        """
+        z_all = self.underlying.last_normals  # (num_steps, num_paths)
+        if z_all is None:
+            raise ValidationError(
+                "You must run PathSimulation.simulate() before calling likelihood-ratio Greeks."
+            )
+        time_deltas = self.underlying._time_deltas()  # (num_steps,)
+        sqrt_dt = np.sqrt(time_deltas[:idx])
+        return sqrt_dt @ z_all[:idx] / np.sqrt(ttm)
+
+    # --- pathwise Greeks --------------------------------------------------
+
+    def delta_pathwise(self) -> float:
+        r"""Pathwise (IPA) delta estimator.
+
+        Call: :math:`\\Delta = e^{-rT}\\,\\mathbb{E}[\\mathbf{1}_{S_T>K}\\,S_T/S_0]`
+
+        Put:  :math:`\\Delta = -e^{-rT}\\,\\mathbb{E}[\\mathbf{1}_{S_T<K}\\,S_T/S_0]`
+        """
+        ST, _idx, _ttm, df = self._simulate_terminal()
+        S0 = float(self.underlying.initial_value)
+        K = self.parent.strike
+        if self.parent.option_type is OptionType.CALL:
+            return float(np.mean(df * (ST > K) * (ST / S0)))
+        return float(np.mean(-df * (ST < K) * (ST / S0)))
+
+    def vega_pathwise(self) -> float:
+        r"""Pathwise (IPA) vega estimator (per 1 pp change in vol).
+
+        Uses :math:`\\partial S_T/\\partial\\sigma = S_T(-\\sigma T + \\sqrt{T}\\,Z)`.
+
+        Call: :math:`\\nu = e^{-rT}\\,\\mathbb{E}[\\mathbf{1}_{S_T>K}\\,S_T(-\\sigma T+\\sqrt{T}Z)]`
+
+        Put:  :math:`\\nu = -e^{-rT}\\,\\mathbb{E}[\\mathbf{1}_{S_T<K}\\,S_T(-\\sigma T+\\sqrt{T}Z)]`
+        """
+        ST, idx, ttm, df = self._simulate_terminal()
+        Z = self._effective_terminal_z(idx, ttm)
+        sigma = float(self.underlying.volatility)
+        K = self.parent.strike
+        dST_dsigma = ST * (-sigma * ttm + np.sqrt(ttm) * Z)
+        if self.parent.option_type is OptionType.CALL:
+            return float(np.mean(df * (ST > K) * dST_dsigma)) / 100
+        return float(np.mean(-df * (ST < K) * dST_dsigma)) / 100
+
+    # --- likelihood-ratio Greeks ------------------------------------------
+
+    def delta_lr(self) -> float:
+        r"""Likelihood-ratio (score-function) delta estimator.
+
+        :math:`\\Delta = e^{-rT}\\,\\mathbb{E}\\!\\left[\\Phi(S_T)\\,
+        \\frac{Z}{\\sigma\\sqrt{T}\\,S_0}\\right]`
+        """
+        ST, idx, ttm, df = self._simulate_terminal()
+        Z = self._effective_terminal_z(idx, ttm)
+        S0 = float(self.underlying.initial_value)
+        sigma = float(self.underlying.volatility)
+        K = self.parent.strike
+        payoff = _vanilla_payoff(self.parent.option_type, K, ST)
+        return float(np.mean(df * payoff * Z / (sigma * np.sqrt(ttm) * S0)))
+
+    def vega_lr(self) -> float:
+        r"""Likelihood-ratio (score-function) vega estimator (per 1 pp).
+
+        The score of the lognormal density w.r.t. :math:`\\sigma` is
+
+        .. math::
+            \\frac{\\partial\\ln p}{\\partial\\sigma}
+            = \\frac{Z^2 - 1}{\\sigma} \\;-\\; Z\\sqrt{T}
+
+        The second term arises because the risk-neutral drift
+        :math:`\\mu = r - q - \\tfrac12\\sigma^2` depends on :math:`\\sigma`
+        via the Itô correction.
+        """
+        ST, idx, ttm, df = self._simulate_terminal()
+        Z = self._effective_terminal_z(idx, ttm)
+        sigma = float(self.underlying.volatility)
+        K = self.parent.strike
+        payoff = _vanilla_payoff(self.parent.option_type, K, ST)
+        score = (Z**2 - 1) / sigma - Z * np.sqrt(ttm)
+        return float(np.mean(df * payoff * score)) / 100
+
 
 class _MCAmericanValuation:
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""

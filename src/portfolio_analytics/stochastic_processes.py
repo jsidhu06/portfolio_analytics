@@ -263,6 +263,7 @@ class PathSimulation(ABC):
         else:
             self.discrete_dividends = tuple()
 
+        self._last_normals: np.ndarray | None = None
         self.time_grid = sim.time_grid
         self.observation_dates = set(sim.observation_dates)
         if self.discrete_dividends:
@@ -325,6 +326,15 @@ class PathSimulation(ABC):
     def correlation_context(self) -> CorrelationContext | None:
         return self._correlation_context
 
+    @property
+    def last_normals(self) -> np.ndarray | None:
+        """Standard normals from the most recent :meth:`simulate` call.
+
+        Shape ``(num_steps, num_paths)``.  Returns ``None`` before the
+        first simulation.
+        """
+        return self._last_normals
+
     def _build_time_grid(self) -> np.ndarray:
         """Build a sorted datetime time grid from the simulation configuration."""
         start = self.pricing_date
@@ -381,12 +391,15 @@ class PathSimulation(ABC):
                 # Moment matching: centre and scale to N(0,1)
                 ran = (ran - np.mean(ran)) / np.std(ran)
 
+            self._last_normals = ran
             return ran
 
         corr = self.correlation_context
         base = corr.random_numbers[:, :steps, :]
         correlated = np.einsum("ij,jtp->itp", corr.cholesky_matrix, base)
-        return correlated[self._rn_index]
+        result = correlated[self._rn_index]
+        self._last_normals = result
+        return result
 
     @property
     def pricing_date(self) -> dt.datetime:
@@ -436,6 +449,7 @@ class PathSimulation(ABC):
         # Detach mutable containers to avoid shared state across clones.
         cloned.observation_dates = set(self.observation_dates)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
+        cloned._last_normals = None
 
         # Handle simple name override
         if "name" in kwargs:
