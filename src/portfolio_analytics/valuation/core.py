@@ -1028,6 +1028,11 @@ class OptionValuation:
                     f"{greek_calc_method.value} greeks are only implemented for "
                     "vanilla European options (OptionSpec)."
                 )
+            if self._underlying.discrete_dividends:
+                raise UnsupportedFeatureError(
+                    "Pathwise and likelihood-ratio MC Greeks are not supported "
+                    "with discrete dividends."
+                )
 
         return greek_calc_method
 

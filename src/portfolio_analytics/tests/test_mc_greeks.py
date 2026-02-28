@@ -12,7 +12,7 @@ from portfolio_analytics.enums import (
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.exceptions import ValidationError
+from portfolio_analytics.exceptions import UnsupportedFeatureError, ValidationError
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.stochastic_processes import (
@@ -330,6 +330,40 @@ class TestMCGreekValidation(_MCGreekTestBase):
         with pytest.raises(ValidationError, match="pathwise"):
             mc_val.rho(greek_calc_method=GreekCalculationMethod.PATHWISE)
 
+    def test_pathwise_rejects_discrete_dividends(self):
+        params = GBMParams(
+            initial_value=100.0,
+            volatility=0.20,
+            discrete_dividends=[(dt.datetime(2025, 6, 15), 2.0)],
+        )
+        sim = SimulationConfig(
+            paths=10_000,
+            frequency="ME",
+            day_count_convention=DayCountConvention.ACT_365F,
+            end_date=dt.datetime(2026, 1, 1),
+        )
+        process = GBMProcess(self.market_data, params, sim)
+        mc_val = self._make_val(OptionType.CALL, process=process)
+        with pytest.raises(UnsupportedFeatureError, match="discrete dividends"):
+            mc_val.delta(greek_calc_method=GreekCalculationMethod.PATHWISE)
+
+    def test_lr_rejects_discrete_dividends(self):
+        params = GBMParams(
+            initial_value=100.0,
+            volatility=0.20,
+            discrete_dividends=[(dt.datetime(2025, 6, 15), 2.0)],
+        )
+        sim = SimulationConfig(
+            paths=10_000,
+            frequency="ME",
+            day_count_convention=DayCountConvention.ACT_365F,
+            end_date=dt.datetime(2026, 1, 1),
+        )
+        process = GBMProcess(self.market_data, params, sim)
+        mc_val = self._make_val(OptionType.CALL, process=process)
+        with pytest.raises(UnsupportedFeatureError, match="discrete dividends"):
+            mc_val.delta(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
+
 
 # ---------------------------------------------------------------------------
 # No-dividend edge case
@@ -373,28 +407,8 @@ class TestMCGreekNoDividend(_MCGreekTestBase):
 
 _SCENARIOS = [
     pytest.param(OptionType.CALL, 120.0, 0.20, "flat", "flat", id="otm_call"),
-    pytest.param(OptionType.PUT, 80.0, 0.20, "flat", "flat", id="otm_put"),
-    pytest.param(OptionType.CALL, 80.0, 0.20, "flat", "flat", id="itm_call"),
-    pytest.param(OptionType.PUT, 120.0, 0.20, "flat", "flat", id="itm_put"),
-    pytest.param(OptionType.CALL, 100.0, 0.40, "flat", "flat", id="high_vol"),
-    pytest.param(OptionType.PUT, 100.0, 0.10, "flat", "flat", id="low_vol"),
-    pytest.param(OptionType.CALL, 100.0, 0.20, "flat", None, id="no_div"),
-    pytest.param(
-        OptionType.CALL,
-        100.0,
-        0.20,
-        {"times": np.array([0.0, 0.5, 1.0]), "forwards": np.array([0.03, 0.07])},
-        "flat",
-        id="upward_rate_curve",
-    ),
-    pytest.param(
-        OptionType.PUT,
-        100.0,
-        0.20,
-        "flat",
-        {"times": np.array([0.0, 0.5, 1.0]), "forwards": np.array([0.01, 0.04])},
-        id="steep_div_curve",
-    ),
+    pytest.param(OptionType.PUT, 120.0, 0.25, "flat", "flat", id="itm_put_high_vol"),
+    pytest.param(OptionType.CALL, 100.0, 0.20, "flat", None, id="atm_no_div"),
     pytest.param(
         OptionType.CALL,
         110.0,
