@@ -263,6 +263,7 @@ class PathSimulation(ABC):
         else:
             self.discrete_dividends = tuple()
 
+        self._last_normals: np.ndarray | None = None
         self.time_grid = sim.time_grid
         self.observation_dates = set(sim.observation_dates)
         if self.discrete_dividends:
@@ -273,13 +274,10 @@ class PathSimulation(ABC):
             if name is None:
                 raise ValidationError(
                     "name is required when using CorrelationContext "
-                    "(used to index into corr.rn_set)"
+                    "(used to look up the asset index)"
                 )
-            # only needed in a portfolio context when
-            # risk factors are correlated
-            self.cholesky_matrix = corr.cholesky_matrix
-            self.rn_set = corr.rn_set[self._name]
-            self.random_numbers = corr.random_numbers
+            # Validate early: fail now rather than at simulation time.
+            self._rn_index: int = corr.asset_index(name)
 
     @property
     def name(self) -> str | None:
@@ -327,6 +325,15 @@ class PathSimulation(ABC):
     @property
     def correlation_context(self) -> CorrelationContext | None:
         return self._correlation_context
+
+    @property
+    def last_normals(self) -> np.ndarray | None:
+        """Standard normals from the most recent :meth:`simulate` call.
+
+        Shape ``(num_steps, num_paths)``.  Returns ``None`` before the
+        first simulation.
+        """
+        return self._last_normals
 
     def _build_time_grid(self) -> np.ndarray:
         """Build a sorted datetime time grid from the simulation configuration."""
@@ -384,12 +391,15 @@ class PathSimulation(ABC):
                 # Moment matching: centre and scale to N(0,1)
                 ran = (ran - np.mean(ran)) / np.std(ran)
 
+            self._last_normals = ran
             return ran
 
         corr = self.correlation_context
         base = corr.random_numbers[:, :steps, :]
-        correlated = np.einsum("ij,jtk->itk", corr.cholesky_matrix, base)
-        return correlated[self.rn_set]
+        correlated = np.einsum("ij,jtp->itp", corr.cholesky_matrix, base)
+        result = correlated[self._rn_index]
+        self._last_normals = result
+        return result
 
     @property
     def pricing_date(self) -> dt.datetime:
@@ -439,6 +449,7 @@ class PathSimulation(ABC):
         # Detach mutable containers to avoid shared state across clones.
         cloned.observation_dates = set(self.observation_dates)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
+        cloned._last_normals = None
 
         # Handle simple name override
         if "name" in kwargs:
@@ -629,7 +640,7 @@ class GBMProcess(PathSimulation):
             return self.initial_value * np.exp(log_paths)
 
         # Fallback to loop for discrete dividends case
-        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
+        paths: np.ndarray = np.zeros((num_steps + 1, num_paths), dtype=float)
         paths[0] = self.initial_value
 
         dividend_by_date: dict[dt.datetime, float] = {}
@@ -640,7 +651,7 @@ class GBMProcess(PathSimulation):
 
         # Apply pricing-date dividend: input spot is cum-dividend, so the
         # stock goes ex immediately at t=0.
-        div_t0 = dividend_by_date.get(self.time_grid[0])
+        div_t0 = dividend_by_date.get(self.time_grid[0])  # type: ignore[call-overload]
         if div_t0 is not None:
             paths[0] = np.maximum(paths[0] - div_t0, 0.0)
 
@@ -650,7 +661,7 @@ class GBMProcess(PathSimulation):
             increment += self.volatility * np.sqrt(dt_step) * z[t - 1]
             paths[t] = paths[t - 1] * np.exp(increment)
 
-            div_amt = dividend_by_date.get(self.time_grid[t])
+            div_amt = dividend_by_date.get(self.time_grid[t])  # type: ignore[call-overload]
             if div_amt is not None:
                 paths[t] = np.maximum(paths[t] - div_amt, 0.0)
 
@@ -669,6 +680,8 @@ class JDProcess(PathSimulation):
         Y_i ~ Normal(μ, δ^2)
         k = E[e^Y - 1] = exp(μ + 0.5δ^2) - 1
     """
+
+    _process_params: JDParams
 
     def __init__(
         self,
@@ -770,7 +783,7 @@ class JDProcess(PathSimulation):
             return self.initial_value * np.exp(log_paths)
 
         # Fallback loop (discrete dividends)
-        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
+        paths: np.ndarray = np.zeros((num_steps + 1, num_paths), dtype=float)
         paths[0] = self.initial_value
 
         dividend_by_date: dict[dt.datetime, float] = {}
@@ -796,7 +809,7 @@ class JDProcess(PathSimulation):
 
             paths[t] = paths[t - 1] * diffusion_multiplier * jump_multiplier
 
-            div_amt = dividend_by_date.get(self.time_grid[t])
+            div_amt = dividend_by_date.get(self.time_grid[t])  # type: ignore[call-overload]
             if div_amt is not None:
                 paths[t] = np.maximum(paths[t] - div_amt, 0.0)
 
@@ -811,6 +824,8 @@ class SRDProcess(PathSimulation):
 
     Uses full truncation Euler to preserve non-negativity.
     """
+
+    _process_params: SRDParams
 
     def __init__(
         self,
@@ -844,7 +859,7 @@ class SRDProcess(PathSimulation):
         num_paths = self.paths
 
         # Truncated paths (non-negative) and raw Euler buffer
-        paths = np.zeros((num_steps + 1, num_paths), dtype=float)
+        paths: np.ndarray = np.zeros((num_steps + 1, num_paths), dtype=float)
         euler_raw = np.zeros_like(paths)
 
         paths[0] = self.initial_value

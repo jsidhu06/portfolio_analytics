@@ -14,7 +14,7 @@ from .exceptions import (
     ConvergenceError,
     StabilityError,
 )
-from .market_environment import MarketData
+from .market_environment import MarketData, CorrelationContext
 from .rates import DiscountCurve
 from .stochastic_processes import (
     SimulationConfig,
@@ -55,6 +55,7 @@ from .valuation.implied_volatility import implied_volatility
 __all__ = [
     # Market data
     "MarketData",
+    "CorrelationContext",
     "DiscountCurve",
     # Stochastic processes
     "SimulationConfig",

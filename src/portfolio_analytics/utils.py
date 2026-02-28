@@ -6,7 +6,7 @@ import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from math import comb
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Sequence
 from collections.abc import Iterator
 import time
 import numpy as np
@@ -109,7 +109,7 @@ def calculate_year_fraction(
 
 
 def pv_discrete_dividends(
-    dividends: list[tuple[datetime, float]],
+    dividends: Sequence[tuple[datetime, float]],
     curve_date: datetime,
     end_date: datetime,
     discount_curve: DiscountCurve,

@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 import datetime as dt
 import logging
 import numpy as np
-from ..stochastic_processes import PathSimulation
+from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
     OptionType,
@@ -478,7 +478,15 @@ class OptionValuation:
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
-        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
+        method = self._resolve_greek_method(
+            greek_calc_method,
+            tree_capable=True,
+            mc_analytic_capable=True,
+        )
+        if method == GreekCalculationMethod.PATHWISE:
+            return float(self._impl.delta_pathwise())
+        if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
+            return float(self._impl.delta_lr())
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.delta())
 
@@ -502,7 +510,18 @@ class OptionValuation:
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
-        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
+        method = self._resolve_greek_method(
+            greek_calc_method,
+            tree_capable=True,
+            mc_analytic_capable=True,
+        )
+        if method == GreekCalculationMethod.PATHWISE:
+            return float(self._impl.gamma_pathwise_fd(epsilon))
+        if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
+            raise ValidationError(
+                "likelihood_ratio is not available for gamma. "
+                "Use PATHWISE (central-difference of pathwise delta) or NUMERICAL."
+            )
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.gamma())
 
@@ -530,7 +549,11 @@ class OptionValuation:
         epsilon: float = 0.01,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
-        method = self._resolve_greek_method(greek_calc_method)
+        method = self._resolve_greek_method(greek_calc_method, mc_analytic_capable=True)
+        if method == GreekCalculationMethod.PATHWISE:
+            return float(self._impl.vega_pathwise())
+        if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
+            return float(self._impl.vega_lr())
         if method == GreekCalculationMethod.ANALYTICAL:
             return float(self._impl.vega())
 
@@ -950,6 +973,7 @@ class OptionValuation:
         greek_calc_method: GreekCalculationMethod | None,
         *,
         tree_capable: bool = False,
+        mc_analytic_capable: bool = False,
     ) -> GreekCalculationMethod:
         if greek_calc_method is not None and not isinstance(
             greek_calc_method, GreekCalculationMethod
@@ -982,6 +1006,36 @@ class OptionValuation:
                 raise ValidationError(
                     "Tree extraction is not available for this greek. "
                     "Only delta, gamma, and theta support GreekCalculationMethod.TREE."
+                )
+
+        if greek_calc_method in (
+            GreekCalculationMethod.PATHWISE,
+            GreekCalculationMethod.LIKELIHOOD_RATIO,
+        ):
+            if self._pricing_method != PricingMethod.MONTE_CARLO:
+                raise ValidationError(
+                    f"{greek_calc_method.value} greeks are only available for "
+                    "MONTE_CARLO pricing method."
+                )
+
+            if not isinstance(self.underlying, GBMProcess):
+                raise ValidationError("MC greeks are only available for GBMProcess underlying.")
+
+            if not mc_analytic_capable:
+                raise ValidationError(
+                    f"{greek_calc_method.value} is not available for this greek. "
+                    "Only delta, gamma, and vega support PATHWISE; "
+                    "only delta and vega support LIKELIHOOD_RATIO."
+                )
+            if not isinstance(self._spec, OptionSpec):
+                raise ValidationError(
+                    f"{greek_calc_method.value} greeks are only implemented for "
+                    "vanilla European options (OptionSpec)."
+                )
+            if self._underlying.discrete_dividends:
+                raise UnsupportedFeatureError(
+                    "Pathwise and likelihood-ratio MC Greeks are not supported "
+                    "with discrete dividends."
                 )
 
         return greek_calc_method
