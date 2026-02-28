@@ -220,27 +220,20 @@ class SRDParams:
 
 
 class PathSimulation(ABC):
-    """Providing base methods for simulation classes.
+    """Base class for one-factor stochastic process path simulations.
 
-    Attributes
-    ==========
-    market_data: MarketData
-        Market data required for simulation (pricing date, discount curve, currency).
-    process_params:
-        Model-specific parameters for the stochastic process
-        (e.g. GBMParams, JDParams, SRDParams).
-    sim: SimulationConfig
-        Simulation configuration (paths, frequency, time grid, special dates).
-    correlation_context: CorrelationContext or None
-        Shared correlation/scenario context used in multi-asset simulations.
-        If None, the process is simulated independently.
-    name: str or None
-        Optional identifier, required only when using CorrelationContext.
-
-    Methods
-    =======
-    simulate:
-        returns simulated instrument value paths (array)
+    Parameters
+    ----------
+    market_data
+        Market data used by the process (pricing date, discount curve, currency).
+    process_params
+        Model-specific process parameters (for example GBM, JD, or SRD parameters).
+    sim
+        Simulation configuration controlling path count and time grid rules.
+    corr
+        Optional multi-asset correlation context.
+    name
+        Optional process name; required when ``corr`` is provided.
     """
 
     def __init__(
@@ -281,42 +274,52 @@ class PathSimulation(ABC):
 
     @property
     def name(self) -> str | None:
+        """Optional process identifier."""
         return self._name
 
     @property
     def market_data(self) -> MarketData:
+        """Market data bound to the process."""
         return self._market_data
 
     @property
     def initial_value(self) -> float:
+        """Initial state value at pricing date."""
         return self._process_params.initial_value
 
     @property
     def volatility(self) -> float:
+        """Instantaneous volatility parameter."""
         return self._process_params.volatility
 
     @property
     def dividend_curve(self) -> DiscountCurve | None:
+        """Continuous dividend discount curve, if provided."""
         return getattr(self._process_params, "dividend_curve", None)
 
     @property
     def paths(self) -> int:
+        """Number of Monte Carlo paths."""
         return self._sim.paths
 
     @property
     def frequency(self) -> str | None:
+        """Pandas frequency string for generated calendar grids."""
         return self._sim.frequency
 
     @property
     def num_steps(self) -> int | None:
+        """Number of time steps for uniform-step grids."""
         return self._sim.num_steps
 
     @property
     def day_count_convention(self) -> DayCountConvention:
+        """Day-count basis used to convert dates to year fractions."""
         return self._sim.day_count_convention
 
     @property
     def end_date(self) -> dt.datetime | None:
+        """Simulation horizon end date."""
         # Computed based on time_grid if present, else from sim config
         if self.time_grid is not None:
             return max(self.time_grid)
@@ -324,6 +327,7 @@ class PathSimulation(ABC):
 
     @property
     def correlation_context(self) -> CorrelationContext | None:
+        """Correlation context for multi-asset path generation, if used."""
         return self._correlation_context
 
     @property
@@ -336,7 +340,7 @@ class PathSimulation(ABC):
         return self._last_normals
 
     def _build_time_grid(self) -> np.ndarray:
-        """Build a sorted datetime time grid from the simulation configuration."""
+        """Build a sorted datetime grid from simulation settings."""
         start = self.pricing_date
         end = self.end_date
 
@@ -352,10 +356,12 @@ class PathSimulation(ABC):
         return np.array(sorted(all_dates))
 
     def _ensure_time_grid(self) -> None:
+        """Populate ``time_grid`` lazily when not explicitly provided."""
         if self.time_grid is None:
             self.time_grid = self._build_time_grid()
 
     def _time_deltas(self) -> np.ndarray:
+        """Return year-fraction deltas between consecutive grid dates."""
         self._ensure_time_grid()
         deltas = []
         for t in range(1, len(self.time_grid)):
@@ -369,6 +375,7 @@ class PathSimulation(ABC):
         return np.array(deltas, dtype=float)
 
     def _standard_normals(self, random_seed: int | None, steps: int, paths: int) -> np.ndarray:
+        """Generate or extract standard-normal shocks for path simulation."""
         if self.correlation_context is None:
             rng = np.random.default_rng(random_seed)
 
@@ -403,21 +410,32 @@ class PathSimulation(ABC):
 
     @property
     def pricing_date(self) -> dt.datetime:
+        """Pricing date from market data."""
         return self._market_data.pricing_date
 
     @property
     def currency(self) -> str:
+        """Market-data currency."""
         return self._market_data.currency
 
     @property
     def discount_curve(self) -> DiscountCurve:
+        """Discount curve from market data."""
         return self._market_data.discount_curve
 
     def replace(self, **kwargs) -> "PathSimulation":
-        """Return a shallow-cloned instance with selected attributes replaced.
+        """Return a cloned instance with selected attributes replaced.
 
-        This avoids in-place mutation and clears cached instrument values by default,
-        which is important for bump-and-revalue workflows and thread safety.
+        Parameters
+        ----------
+        **kwargs
+            Supported overrides for process params, simulation config, and
+            market data fields.
+
+        Returns
+        -------
+        PathSimulation
+            Clone with requested updates and cleared simulation caches.
         """
         allowed_fields = {
             "name",
@@ -538,14 +556,14 @@ class PathSimulation(ABC):
         """Generate and return simulated instrument value paths.
 
         Parameters
-        ==========
-        random_seed: int, optional
-            random seed for path generation
+        ----------
+        random_seed
+            Random seed for reproducible path generation.
 
         Returns
-        =======
+        -------
         np.ndarray
-            simulated instrument value paths, shape (time_steps, paths)
+            Simulated paths with shape ``(num_times, num_paths)``.
         """
         return self._generate_paths(random_seed=random_seed)
 
@@ -560,9 +578,9 @@ class PathSimulation(ABC):
         path generation logic.
 
         Parameters
-        ==========
-        random_seed: int, optional
-            random seed for reproducibility
+        ----------
+        random_seed
+            Random seed for reproducibility.
         """
         raise NotImplementedError
 
@@ -579,12 +597,12 @@ class GBMProcess(PathSimulation):
         dS_t = mu * S_t * dt + sigma * S_t * dW_t
 
         Parameters
-        ==========
-        random_seed: int, optional
-            random seed for reproducibility
+        ----------
+        random_seed
+            Random seed for reproducibility.
 
         Notes
-        =====
+        -----
         The drift term (mu) is derived from the risk-free rate
         to ensure the model is calibrated to the discount curve.
         """
@@ -695,17 +713,32 @@ class JDProcess(PathSimulation):
 
     @property
     def lambd(self) -> float:
+        """Jump intensity parameter λ (per year)."""
         return self._process_params.lambd
 
     @property
     def mu(self) -> float:
+        """Mean of log jump size distribution."""
         return self._process_params.mu
 
     @property
     def delta(self) -> float:
+        """Standard deviation of log jump size distribution."""
         return self._process_params.delta
 
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate jump-diffusion paths.
+
+        Parameters
+        ----------
+        random_seed
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated paths with shape ``(num_times, num_paths)``.
+        """
         self._ensure_time_grid()
 
         num_steps = len(self.time_grid) - 1
@@ -839,10 +872,12 @@ class SRDProcess(PathSimulation):
 
     @property
     def kappa(self) -> float:
+        """Mean reversion speed parameter."""
         return self._process_params.kappa
 
     @property
     def theta(self) -> float:
+        """Long-run mean level parameter."""
         return self._process_params.theta
 
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
@@ -852,6 +887,16 @@ class SRDProcess(PathSimulation):
         (2010) to guarantee non-negative paths: the drift and diffusion
         coefficients are evaluated at max(x, 0), and the raw Euler step
         is floored at zero after each increment.
+
+        Parameters
+        ----------
+        random_seed
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated non-negative SRD paths with shape ``(num_times, num_paths)``.
         """
         self._ensure_time_grid()
 

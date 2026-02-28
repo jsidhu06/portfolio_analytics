@@ -66,6 +66,16 @@ class CondorSpec:
     def terminal_payoff(self, spot: np.ndarray | float) -> np.ndarray:
         """Vectorized terminal payoff at maturity as a function of spot.
 
+        Parameters
+        ----------
+        spot
+            Spot value(s) at maturity.
+
+        Returns
+        -------
+        np.ndarray
+            Terminal strategy payoff for each input spot.
+
         Notes
         -----
         This is a *terminal payoff* function (European-style payoff). For AMERICAN
@@ -102,15 +112,18 @@ class CondorSpec:
         independently exercisable (so the strategy PV is the sum of leg PVs).
 
         Parameters
-        ==========
-        name:
-            Base name used when constructing per-leg valuation objects.
-        underlying:
-            Underlying model/data passed through to per-leg `OptionValuation`.
-        pricing_method:
-            PricingMethod used for each leg.
-        params:
-            Params applied to each per-leg valuation.
+        ----------
+        underlying
+            Underlying model/data passed through to each leg valuation.
+        pricing_method
+            Pricing method used for each leg.
+        params
+            Optional valuation parameters shared across all legs.
+
+        Returns
+        -------
+        float
+            Present value of the full condor strategy.
         """
         total = 0.0
         for opt_type, strike, weight in self.leg_definitions():

@@ -52,6 +52,22 @@ def _solve_tridiagonal_thomas(
       - lower: subdiagonal (length n-1)  -> A[i, i-1]
       - diag:  main diagonal (length n)  -> A[i, i]
       - upper: superdiagonal (length n-1)-> A[i, i+1]
+
+    Parameters
+    ----------
+    lower
+        Subdiagonal coefficients.
+    diag
+        Main diagonal coefficients.
+    upper
+        Superdiagonal coefficients.
+    rhs
+        Right-hand-side vector.
+
+    Returns
+    -------
+    np.ndarray
+        Solution vector of the tridiagonal system.
     """
     n = diag.size
     if rhs.size != n:
@@ -585,6 +601,13 @@ def _vanilla_fd_core(
     tol: float | None = None,
     max_iter: int | None = None,
 ) -> tuple[float, np.ndarray, np.ndarray]:
+    """Core finite-difference solver for vanilla option valuation.
+
+    Returns
+    -------
+    tuple[float, np.ndarray, np.ndarray]
+        ``(price, spot_grid, value_grid_at_pricing_time)``.
+    """
     _validate_fd_inputs(
         option_type=option_type,
         time_to_maturity=time_to_maturity,
@@ -882,6 +905,7 @@ class _FDEuropeanValuation:
         return pv, S, V
 
     def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
+        """Run the PDE finite-difference solve for a European option."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
@@ -930,6 +954,7 @@ class _FDEuropeanValuation:
         )
 
     def present_value(self) -> float:
+        """Return European present value from the PDE solve."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
@@ -950,6 +975,7 @@ class _FDAmericanValuation:
         return pv, S, V
 
     def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
+        """Run the PDE finite-difference solve for an American option."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
@@ -1006,6 +1032,7 @@ class _FDAmericanValuation:
         )
 
     def present_value(self) -> float:
+        """Return American present value from the PDE solve."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")

@@ -380,6 +380,17 @@ class _MCEuropeanValuation:
         .. math::
             \Gamma \approx
             \frac{\Delta_{\text{pw}}(S_0+h) - \Delta_{\text{pw}}(S_0-h)}{2h}
+
+        Parameters
+        ----------
+        epsilon
+            Spot bump size ``h`` for central differences. If ``None``, uses
+            ``S0 / 100``.
+
+        Returns
+        -------
+        float
+            Gamma estimate.
         """
         ST, _idx, _ttm, df = self._simulate_terminal()
         S0 = float(self.underlying.initial_value)
@@ -424,7 +435,7 @@ class _MCAmericanValuation:
         """Generate underlying paths and intrinsic payoff matrix over time.
 
         Returns
-        =======
+        -------
         tuple of (spot_paths, payoff, time_index_start, time_index_end)
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)

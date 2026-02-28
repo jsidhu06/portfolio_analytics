@@ -41,6 +41,18 @@ class ImpliedVolResult:
 
 
 def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, float]:
+    """Return dividend-adjusted spot and continuous-dividend discount factor.
+
+    Parameters
+    ----------
+    valuation
+        Valuation object containing underlying, dates, and discount curves.
+
+    Returns
+    -------
+    tuple[float, float]
+        ``(spot_adjusted_for_discrete_dividends, df_q)``.
+    """
     spot = float(valuation.underlying.initial_value)
     dividend_curve = valuation.underlying.dividend_curve
     discrete_dividends = valuation.underlying.discrete_dividends
@@ -72,6 +84,18 @@ def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, f
 
 
 def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
+    """Compute no-arbitrage lower/upper bounds for option price.
+
+    Parameters
+    ----------
+    valuation
+        Option valuation describing contract style and market inputs.
+
+    Returns
+    -------
+    tuple[float, float]
+        Price interval ``(lower, upper)``.
+    """
     time_to_maturity = calculate_year_fraction(
         valuation.pricing_date,
         valuation.maturity,
@@ -106,6 +130,7 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
 
 
 def _valuation_with_vol(valuation: OptionValuation, vol: float) -> OptionValuation:
+    """Clone valuation with bumped volatility."""
     if not isinstance(valuation.underlying, UnderlyingPricingData):
         raise ConfigurationError(
             "Implied volatility requires UnderlyingPricingData (not PathSimulation)."
@@ -126,6 +151,7 @@ def _non_bsm_initial_guess(
     low: float,
     high: float,
 ) -> float:
+    """Heuristic initial volatility for non-BSM implied-vol solves."""
     spot = float(valuation.underlying.initial_value)
     strike = float(valuation.strike)
     time_to_maturity = calculate_year_fraction(
@@ -153,6 +179,7 @@ def _bracket_volatility(
     high: float,
     max_expansions: int = 6,
 ) -> tuple[float, float, float, float]:
+    """Expand volatility interval until target residual is bracketed."""
     f_low = f(low)
     f_high = f(high)
 
@@ -183,6 +210,7 @@ def _newton_raphson(
     tol: float,
     max_iter: int,
 ) -> ImpliedVolResult:
+    """Run safeguarded Newton-Raphson updates for implied volatility."""
     vol = float(initial)
     iterations = 0
 
@@ -223,6 +251,7 @@ def _bisection(
     tol: float,
     max_iter: int,
 ) -> ImpliedVolResult:
+    """Run bisection on the implied-vol residual function."""
     f_low = f(low)
     f_high = f(high)
 
@@ -257,34 +286,36 @@ def implied_volatility(
     """Solve for implied volatility using BSM, binomial, or PDE pricing.
 
     Parameters
-    ==========
-    target_price:
-        Observed option price (per unit, not multiplied by contract size).
-    valuation:
-        OptionValuation configured for BSM (European) or BINOMIAL/PDE_FD (European/American).
-    method:
-        Root-finding method to use for the solver.
-    initial_vol:
-        Initial guess for volatility (annualized, decimal). If None, uses
-        valuation.underlying.volatility or 0.2.
-    vol_bounds:
-        Lower/upper bounds for volatility search.
-    tol:
-        Absolute tolerance on price difference.
-    max_iter:
-        Maximum iterations for iterative solvers.
+    ----------
+    target_price
+        Observed option price per unit (not multiplied by contract size).
+    valuation
+        Option valuation configured for BSM (European) or
+        BINOMIAL/PDE_FD (European/American).
+    method
+        Root-finding method.
+    initial_vol
+        Optional initial annualized volatility guess. If ``None``, a
+        model-specific default/heuristic is used.
+    vol_bounds
+        Lower/upper bounds for the volatility search interval.
+    tol
+        Absolute tolerance for the pricing residual.
+    max_iter
+        Maximum number of iterations for iterative solvers.
+    log_timings
+        When ``True``, emit timing logs for the solver section.
 
     Notes
-    =====
+    -----
     Vega is expected in per-1% volatility terms. The solver rescales vega to a
     per-1.0 volatility derivative when computing Newton updates.
 
     Returns
-    =======
+    -------
     ImpliedVolResult
-        implied_vol: implied volatility (annualized, decimal)
-        iterations: number of iterations performed
-        converged: whether solver reached tolerance
+        Solver output including implied volatility, iteration count, and
+        convergence status.
     """
 
     if not isinstance(valuation, OptionValuation):

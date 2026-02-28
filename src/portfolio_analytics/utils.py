@@ -34,7 +34,17 @@ SECONDS_IN_DAY = 86400
 
 @contextmanager
 def log_timing(logger, label: str, enabled: bool) -> Iterator[None]:
-    """Log timing for a code block when enabled is True."""
+    """Context manager that logs elapsed time for a code block.
+
+    Parameters
+    ----------
+    logger
+        Logger instance used for debug timing output.
+    label
+        Label included in the log message.
+    enabled
+        When ``True``, timing is measured and emitted at ``DEBUG`` level.
+    """
     if not enabled:
         yield
         return
@@ -67,25 +77,22 @@ def calculate_year_fraction(
     """Calculate year fraction between two dates.
 
     Parameters
-    ==========
-    start_date: datetime
-        starting date
-    end_date: datetime
-        ending date
-    day_count_convention: DayCountConvention, default DayCountConvention.ACT_365F
-        Day-count basis. Supported:
-        - DayCountConvention.ACT_365F
-        - DayCountConvention.ACT_360
-        - DayCountConvention.ACT_365_25
-        - DayCountConvention.THIRTY_360_US
+    ----------
+    start_date
+        Start date.
+    end_date
+        End date.
+    day_count_convention
+        Day-count basis. Supported values are ``ACT_365F``, ``ACT_360``,
+        ``ACT_365_25``, and ``THIRTY_360_US``.
 
     Returns
-    =======
-    year_fraction: float
-        year fraction between start_date and end_date
+    -------
+    float
+        Year fraction between ``start_date`` and ``end_date``.
 
     Examples
-    ========
+    --------
     >>> from datetime import datetime
     >>> start = datetime(2025, 1, 1)
     >>> end = datetime(2025, 1, 2)
@@ -169,6 +176,28 @@ def forward_price(
     Supports continuous dividend curve, discrete dividends, or both.  When both
     are provided the continuous yield enters the cost-of-carry and the PV of
     discrete dividends is subtracted from spot.
+
+    Parameters
+    ----------
+    spot
+        Spot price at ``pricing_date``.
+    pricing_date
+        Curve/valuation anchor date.
+    maturity
+        Forward maturity date.
+    discount_curve
+        Risk-free discount curve.
+    dividend_curve
+        Optional continuous dividend discount curve.
+    discrete_dividends
+        Optional discrete dividends as ``(ex_date, amount)`` pairs.
+    day_count_convention
+        Day-count convention used for year-fraction conversion.
+
+    Returns
+    -------
+    float
+        No-arbitrage forward price.
     """
     if dividend_curve is not None and discrete_dividends:
         warnings.warn(
@@ -266,13 +295,13 @@ def binomial_pmf(k: np.ndarray | int, n: int, p: float) -> np.ndarray:
     """Binomial(n, p) probability mass function.
 
     Parameters
-    ==========
-    k:
-        Success count(s). Can be an int or a numpy array of ints.
-    n:
-        Number of trials (>= 0).
-    p:
-        Success probability in [0, 1].
+    ----------
+    k
+        Success count(s). Can be an integer or an integer array.
+    n
+        Number of trials, must be non-negative.
+    p
+        Success probability in ``[0, 1]``.
     """
     if n < 0:
         raise ValidationError("n must be >= 0")
@@ -301,8 +330,22 @@ def expected_binomial(
 ) -> float:
     """Compute $\mathbb{E}[f(K)]$ where $K \sim \text{Binomial}(n, p)$.
 
-    This is a small convenience wrapper around the explicit sum
+    This is a convenience wrapper around the explicit sum
     $\sum_{k=0}^n \binom{n}{k} p^k (1-p)^{n-k} f(k)$.
+
+    Parameters
+    ----------
+    n
+        Number of Bernoulli trials.
+    p
+        Success probability.
+    f
+        Vectorized function evaluated on ``k = 0, ..., n``.
+
+    Returns
+    -------
+    float
+        Expected value under the ``Binomial(n, p)`` distribution.
     """
     if n < 0:
         raise ValidationError("n must be >= 0")
@@ -332,19 +375,23 @@ def expected_binomial_payoff(
     """Expected vanilla payoff under a binomial terminal distribution.
 
     Parameters
-    ==========
-    S0:
+    ----------
+    S0
         Initial spot.
-    n:
-        Number of steps.
-    T:
-        Time to maturity (years).
-    option_type: OptionType
-        Option type (Call or Put).
-    K:
-        Strike.
-    u:
-        Up multiplier for one step. Down multiplier is set to d = 1 / u.
+    n
+        Number of binomial time steps.
+    T
+        Time to maturity in years.
+    option_type
+        Option payoff direction (call or put).
+    K
+        Strike price.
+    r
+        Continuously-compounded risk-free rate.
+    q
+        Continuously-compounded dividend yield.
+    u
+        Up multiplier per step. Down multiplier is set to ``d = 1 / u``.
 
     Notes
     -----

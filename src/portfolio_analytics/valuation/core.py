@@ -314,14 +314,17 @@ class UnderlyingPricingData:
 
     @property
     def pricing_date(self) -> dt.datetime:
+        """Pricing date from ``market_data``."""
         return self.market_data.pricing_date
 
     @property
     def discount_curve(self) -> DiscountCurve:
+        """Discount curve from ``market_data``."""
         return self.market_data.discount_curve
 
     @property
     def currency(self) -> str:
+        """Currency from ``market_data``."""
         return self.market_data.currency
 
     def replace(self, **kwargs: object) -> "UnderlyingPricingData":
@@ -478,6 +481,23 @@ class OptionValuation:
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
+        """Compute option delta.
+
+        Parameters
+        ----------
+        epsilon
+            Spot bump size used by central-difference numerical delta.
+            Ignored for analytical, tree, pathwise, and likelihood-ratio methods.
+            If ``None``, defaults to ``spot / 100``.
+        greek_calc_method
+            Greek computation method. When ``None``, the method is selected
+            automatically from pricing-engine capabilities.
+
+        Returns
+        -------
+        float
+            First derivative of option value with respect to spot.
+        """
         method = self._resolve_greek_method(
             greek_calc_method,
             tree_capable=True,
@@ -510,6 +530,22 @@ class OptionValuation:
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
+        """Compute option gamma.
+
+        Parameters
+        ----------
+        epsilon
+            Spot bump size used for finite-difference estimation when required.
+            If ``None``, defaults to ``spot / 100``.
+        greek_calc_method
+            Greek computation method. Supports analytical/tree methods where
+            available, pathwise finite-difference for Monte Carlo, or numerical.
+
+        Returns
+        -------
+        float
+            Second derivative of option value with respect to spot.
+        """
         method = self._resolve_greek_method(
             greek_calc_method,
             tree_capable=True,
@@ -549,6 +585,22 @@ class OptionValuation:
         epsilon: float = 0.01,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
+        """Compute option vega.
+
+        Parameters
+        ----------
+        epsilon
+            Volatility bump used by central-difference numerical vega.
+            The default corresponds to a 1 vol-point bump.
+        greek_calc_method
+            Greek computation method. Supports analytical, pathwise, and
+            likelihood-ratio methods where available; otherwise numerical.
+
+        Returns
+        -------
+        float
+            Vega reported per 1 vol-point (1%) change in volatility.
+        """
         method = self._resolve_greek_method(greek_calc_method, mc_analytic_capable=True)
         if method == GreekCalculationMethod.PATHWISE:
             return float(self._impl.vega_pathwise())
@@ -571,6 +623,21 @@ class OptionValuation:
         greek_calc_method: GreekCalculationMethod | None = None,
         time_bump_days: float = 1.0,
     ) -> float:
+        """Compute option theta.
+
+        Parameters
+        ----------
+        greek_calc_method
+            Greek computation method. Tree/analytical theta is used when available;
+            otherwise bump-and-revalue is used.
+        time_bump_days
+            Calendar day bump applied to the pricing date for numerical theta.
+
+        Returns
+        -------
+        float
+            Value change per day.
+        """
         method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.theta())
@@ -602,6 +669,21 @@ class OptionValuation:
         greek_calc_method: GreekCalculationMethod | None = None,
         rate_bump: float = 0.01,
     ) -> float:
+        """Compute option rho.
+
+        Parameters
+        ----------
+        greek_calc_method
+            Greek computation method. Analytical rho is used for BSM by default;
+            otherwise finite-difference bump-and-revalue is used.
+        rate_bump
+            Absolute bump in annualized flat rate for numerical rho.
+
+        Returns
+        -------
+        float
+            Rho reported per 1% rate move.
+        """
         method = self._resolve_greek_method(greek_calc_method)
         if method == GreekCalculationMethod.ANALYTICAL:
             return float(self._impl.rho())
@@ -633,51 +715,63 @@ class OptionValuation:
 
     @property
     def underlying(self) -> PathSimulation | UnderlyingPricingData:
+        """Underlying data/process used by this valuation instance."""
         return self._underlying
 
     @property
     def spec(self) -> OptionSpec | PayoffSpec | AsianOptionSpec:
+        """Contract specification object for the valued instrument."""
         return self._spec
 
     @property
     def pricing_method(self) -> PricingMethod:
+        """Pricing method selected for dispatch."""
         return self._pricing_method
 
     @property
     def params(self) -> ValuationParams | None:
+        """Method-specific valuation parameters, if applicable."""
         return self._params
 
     @property
     def option_type(self) -> OptionType | None:
+        """Resolved option type for vanilla-like specs, else ``None``."""
         return self._option_type
 
     @property
     def maturity(self) -> dt.datetime:
+        """Contract maturity datetime."""
         return self._spec.maturity
 
     @property
     def strike(self) -> float | None:
+        """Contract strike when defined on the specification."""
         return self._spec.strike
 
     @property
     def currency(self) -> str:
+        """Valuation currency after constructor resolution/checks."""
         # effective currency resolved in __init__
         return self._currency
 
     @property
     def exercise_type(self) -> ExerciseType:
+        """Exercise style of the contract."""
         return self._spec.exercise_type
 
     @property
     def contract_size(self) -> int | float:
+        """Contract multiplier."""
         return self._spec.contract_size
 
     @property
     def pricing_date(self) -> dt.datetime:
+        """Pricing date associated with underlying market data."""
         return self._underlying.pricing_date
 
     @property
     def discount_curve(self) -> DiscountCurve:
+        """Discount curve used for valuation."""
         return self._underlying.discount_curve
 
     # ──────────────────────────────
@@ -746,6 +840,18 @@ class OptionValuation:
         )
 
     def _apply_control_variate(self, base_pv: float) -> float:
+        """Apply European control-variate adjustment to American base PV.
+
+        Parameters
+        ----------
+        base_pv
+            Raw American option present value from the selected numerical method.
+
+        Returns
+        -------
+        float
+            Control-variate adjusted present value.
+        """
         if self._spec.exercise_type is not ExerciseType.AMERICAN:
             raise ValidationError(
                 "control_variate_european is only valid for options with American exercise."
@@ -806,6 +912,18 @@ class OptionValuation:
         return self._underlying
 
     def _apply_asian_control_variate(self, base_pv: float) -> float:
+        """Apply Asian-option European control-variate adjustment.
+
+        Parameters
+        ----------
+        base_pv
+            Raw American Asian present value from the selected numerical method.
+
+        Returns
+        -------
+        float
+            Control-variate adjusted present value.
+        """
         if self._pricing_method not in (PricingMethod.BINOMIAL, PricingMethod.MONTE_CARLO):
             raise UnsupportedFeatureError(
                 "Asian control_variate_european is only supported for "
