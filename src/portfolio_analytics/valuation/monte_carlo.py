@@ -284,6 +284,11 @@ class _MCEuropeanValuation:
             )
         time_deltas = self.underlying._time_deltas()  # (num_steps,)
         sqrt_dt = np.sqrt(time_deltas[:idx])
+
+        if not np.isclose(time_deltas[:idx].sum(), ttm):
+            raise NumericalError(
+                f"Time deltas sum {time_deltas[:idx].sum()} does not match time to maturity {ttm}"
+            )
         return sqrt_dt @ z_all[:idx] / np.sqrt(ttm)
 
     # --- pathwise Greeks --------------------------------------------------

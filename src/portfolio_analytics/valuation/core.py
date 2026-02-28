@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 import datetime as dt
 import logging
 import numpy as np
-from ..stochastic_processes import PathSimulation
+from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
     OptionType,
@@ -1017,6 +1017,10 @@ class OptionValuation:
                     f"{greek_calc_method.value} greeks are only available for "
                     "MONTE_CARLO pricing method."
                 )
+
+            if not isinstance(self.underlying, GBMProcess):
+                raise ValidationError("MC greeks are only available for GBMProcess underlying.")
+
             if not mc_analytic_capable:
                 raise ValidationError(
                     f"{greek_calc_method.value} is not available for this greek. "
