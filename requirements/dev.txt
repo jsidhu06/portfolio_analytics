@@ -16,6 +16,8 @@ click==8.3.1
     #   pip-tools
 distlib==0.4.0
     # via virtualenv
+execnet==2.1.2
+    # via pytest-xdist
 filelock==3.24.3
     # via virtualenv
 identify==2.6.16
@@ -66,6 +68,10 @@ pyproject-hooks==1.2.0
     #   build
     #   pip-tools
 pytest==9.0.2
+    # via
+    #   portfolio_analytics (pyproject.toml)
+    #   pytest-xdist
+pytest-xdist==3.8.0
     # via portfolio_analytics (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via pandas
