@@ -357,6 +357,47 @@ class _MCEuropeanValuation:
         score = (Z**2 - 1) / sigma - Z * np.sqrt(ttm)
         return float(np.mean(df * payoff * score)) / 100
 
+    # --- finite-difference of pathwise delta ------------------------------
+
+    def gamma_pathwise_fd(self, epsilon: float | None = None) -> float:
+        r"""Gamma via central difference of pathwise deltas on one simulation.
+
+        Under GBM, :math:`S_T` scales linearly with :math:`S_0`, so bumped
+        terminal values are obtained analytically from a single set of paths:
+
+        .. math::
+            S_T^{\pm} = S_T \cdot (S_0 \pm h) / S_0
+
+        The pathwise delta at each bumped spot is computed on these
+        rescaled terminals (same random draws), and gamma follows from
+        the standard central-difference formula:
+
+        .. math::
+            \Gamma \approx
+            \frac{\Delta_{\text{pw}}(S_0+h) - \Delta_{\text{pw}}(S_0-h)}{2h}
+        """
+        ST, _idx, _ttm, df = self._simulate_terminal()
+        S0 = float(self.underlying.initial_value)
+        K = self.parent.strike
+        is_call = self.parent.option_type is OptionType.CALL
+
+        if epsilon is None:
+            epsilon = S0 / 100  # 1 % of spot
+
+        S0_up = S0 + epsilon
+        S0_dn = S0 - epsilon
+        ST_up = ST * (S0_up / S0)
+        ST_dn = ST * (S0_dn / S0)
+
+        if is_call:
+            delta_up = float(np.mean(df * (ST_up > K) * (ST_up / S0_up)))
+            delta_dn = float(np.mean(df * (ST_dn > K) * (ST_dn / S0_dn)))
+        else:
+            delta_up = float(np.mean(-df * (ST_up < K) * (ST_up / S0_up)))
+            delta_dn = float(np.mean(-df * (ST_dn < K) * (ST_dn / S0_dn)))
+
+        return (delta_up - delta_dn) / (2 * epsilon)
+
 
 class _MCAmericanValuation:
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""

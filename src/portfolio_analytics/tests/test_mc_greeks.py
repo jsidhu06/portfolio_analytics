@@ -315,10 +315,10 @@ class TestMCGreekValidation(_MCGreekTestBase):
         with pytest.raises(ValidationError, match="likelihood_ratio"):
             bsm.delta(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
 
-    def test_pathwise_rejects_gamma(self):
+    def test_lr_rejects_gamma(self):
         mc_val = self._make_val(OptionType.CALL)
-        with pytest.raises(ValidationError, match="pathwise"):
-            mc_val.gamma(greek_calc_method=GreekCalculationMethod.PATHWISE)
+        with pytest.raises(ValidationError, match="likelihood_ratio"):
+            mc_val.gamma(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
 
     def test_lr_rejects_theta(self):
         mc_val = self._make_val(OptionType.CALL)
@@ -407,6 +407,7 @@ _SCENARIOS = [
 
 _GREEKS = [
     pytest.param("delta", id="delta"),
+    pytest.param("gamma", id="gamma"),
     pytest.param("vega", id="vega"),
 ]
 
@@ -479,7 +480,9 @@ class TestMCGreekMethodAgreement:
         mc_val = self._build_mc(option_type, strike, vol, rate_spec, div_spec)
         greek_fn = getattr(mc_val, greek)
         pw = greek_fn(greek_calc_method=GreekCalculationMethod.PATHWISE)
-        lr = greek_fn(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
         num = greek_fn(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-        assert np.isclose(pw, lr, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs LR {lr:.6f}"
         assert np.isclose(pw, num, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs NUM {num:.6f}"
+        # LR is available for delta/vega only, not gamma
+        if greek != "gamma":
+            lr = greek_fn(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
+            assert np.isclose(pw, lr, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs LR {lr:.6f}"

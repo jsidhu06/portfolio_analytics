@@ -510,7 +510,18 @@ class OptionValuation:
         epsilon: float | None = None,
         greek_calc_method: GreekCalculationMethod | None = None,
     ) -> float:
-        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
+        method = self._resolve_greek_method(
+            greek_calc_method,
+            tree_capable=True,
+            mc_analytic_capable=True,
+        )
+        if method == GreekCalculationMethod.PATHWISE:
+            return float(self._impl.gamma_pathwise_fd(epsilon))
+        if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
+            raise ValidationError(
+                "likelihood_ratio is not available for gamma. "
+                "Use PATHWISE (central-difference of pathwise delta) or NUMERICAL."
+            )
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.gamma())
 
@@ -1009,7 +1020,8 @@ class OptionValuation:
             if not mc_analytic_capable:
                 raise ValidationError(
                     f"{greek_calc_method.value} is not available for this greek. "
-                    "Only delta and vega support PATHWISE / LIKELIHOOD_RATIO."
+                    "Only delta, gamma, and vega support PATHWISE; "
+                    "only delta and vega support LIKELIHOOD_RATIO."
                 )
             if not isinstance(self._spec, OptionSpec):
                 raise ValidationError(
