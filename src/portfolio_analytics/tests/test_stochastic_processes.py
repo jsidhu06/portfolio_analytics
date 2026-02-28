@@ -35,7 +35,7 @@ class TestPathSimulation:
 
         with pytest.raises(
             TypeError,
-            match="Can't instantiate abstract class PathSimulation without an implementation for abstract method '_generate_paths'",
+            match=r"Can't instantiate abstract class PathSimulation.*_generate_paths",
         ):
             PathSimulation("test_name", market_data, process_params, sim, corr=None)
 
