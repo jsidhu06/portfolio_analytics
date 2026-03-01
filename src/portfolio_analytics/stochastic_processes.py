@@ -42,6 +42,7 @@ class SimulationConfig:
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
     observation_dates: set[dt.datetime] = field(default_factory=set)
+    grid_start: dt.datetime | None = None
     antithetic: bool = True
     moment_matching: bool = True
 
@@ -92,6 +93,12 @@ class SimulationConfig:
                 raise ConfigurationError("SimulationConfig.num_steps must be an integer") from exc
             if steps <= 0:
                 raise ValidationError("SimulationConfig.num_steps must be a positive integer")
+
+    def _can_rebuild_grid(self) -> bool:
+        """True when the config has end_date + a discretisation method."""
+        return self.end_date is not None and (
+            self.num_steps is not None or self.frequency is not None
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -313,6 +320,16 @@ class PathSimulation(ABC):
         return self._sim.num_steps
 
     @property
+    def grid_start(self) -> dt.datetime | None:
+        """Start of the dense time grid region.
+
+        When set, ``num_steps`` equally-spaced intervals are placed in
+        ``[grid_start, end_date]`` rather than ``[pricing_date, end_date]``.
+        Defaults to ``None`` (dense grid starts at ``pricing_date``).
+        """
+        return self._sim.grid_start
+
+    @property
     def day_count_convention(self) -> DayCountConvention:
         """Day-count basis used to convert dates to year fractions."""
         return self._sim.day_count_convention
@@ -340,19 +357,30 @@ class PathSimulation(ABC):
         return self._last_normals
 
     def _build_time_grid(self) -> np.ndarray:
-        """Build a sorted datetime grid from simulation settings."""
-        start = self.pricing_date
+        """Build a sorted datetime grid from simulation settings.
+
+        When ``grid_start`` is set (e.g. for forward-starting Asians),
+        the dense equally-spaced grid covers ``[grid_start, end_date]``
+        with ``num_steps + 1`` points (or at the requested ``frequency``).
+        ``pricing_date`` is always included as a boundary so the diffusion
+        spans the full ``[pricing_date, end_date]`` interval.
+
+        ``num_steps`` guarantees *at least* N+1 equally-spaced points in
+        the dense region; ``observation_dates`` (e.g. ex-dividend dates)
+        may add more.
+        """
+        dense_start = self.grid_start or self.pricing_date
         end = self.end_date
 
         if self.num_steps is not None:
             dates = pd.date_range(
-                start=start, end=end, periods=int(self.num_steps) + 1
+                start=dense_start, end=end, periods=int(self.num_steps) + 1
             ).to_pydatetime()
         else:
-            dates = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
+            dates = pd.date_range(start=dense_start, end=end, freq=self.frequency).to_pydatetime()
 
         # Merge generated dates with required boundary + special dates
-        all_dates = set(dates) | {start, end} | self.observation_dates
+        all_dates = set(dates) | {self.pricing_date, dense_start, end} | self.observation_dates
         return np.array(sorted(all_dates))
 
     def _ensure_time_grid(self) -> None:
@@ -450,6 +478,7 @@ class PathSimulation(ABC):
             "day_count_convention",
             "time_grid",
             "observation_dates",
+            "grid_start",
             "end_date",
             "pricing_date",
             "discount_curve",
@@ -488,7 +517,14 @@ class PathSimulation(ABC):
                 cloned._process_params = dc_replace(cloned._process_params, **param_updates)
 
         # Build updated sim config if any of its fields changed
-        sim_keys = {"paths", "frequency", "num_steps", "day_count_convention", "end_date"}
+        sim_keys = {
+            "paths",
+            "frequency",
+            "num_steps",
+            "day_count_convention",
+            "end_date",
+            "grid_start",
+        }
         if sim_keys.intersection(kwargs):
             sim_updates = {}
             if "paths" in kwargs:
@@ -501,6 +537,8 @@ class PathSimulation(ABC):
                 sim_updates["day_count_convention"] = kwargs["day_count_convention"]
             if "end_date" in kwargs:
                 sim_updates["end_date"] = kwargs["end_date"]
+            if "grid_start" in kwargs:
+                sim_updates["grid_start"] = kwargs["grid_start"]
             cloned._sim = dc_replace(cloned._sim, **sim_updates)
 
         # Normalize list-like overrides
@@ -515,10 +553,16 @@ class PathSimulation(ABC):
                 None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
             )
         else:
-            grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps"}
+            grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps", "grid_start"}
             if grid_rebuild_keys.intersection(kwargs):
                 # Grid-shaping parameters changed → must rebuild from scratch.
                 cloned.time_grid = None
+                if cloned._sim.grid_start is not None and not cloned._sim._can_rebuild_grid():
+                    raise ConfigurationError(
+                        "grid_start requires end_date + num_steps or frequency "
+                        "for grid generation. Cannot set grid_start on a "
+                        "SimulationConfig that lacks a discretisation method."
+                    )
             elif "observation_dates" in kwargs and cloned.time_grid is not None:
                 # Explicit-grid mode: augment the existing grid with the new
                 # special dates (there is no end_date/frequency/num_steps to

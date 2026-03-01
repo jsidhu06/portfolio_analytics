@@ -409,12 +409,27 @@ class OptionValuation:
         if self.maturity <= self.pricing_date:
             raise ValidationError("Option maturity must be after pricing_date.")
 
-        # Merge pricing_date + maturity into the simulation's observation_dates
-        # via replace() so the caller's PathSimulation is never mutated.
+        # Merge pricing_date + maturity into the simulation's
+        # observation_dates via replace() so the caller's PathSimulation
+        # is never mutated.
         if isinstance(underlying, PathSimulation):
-            merged = underlying.observation_dates | {self.pricing_date, self.maturity}
+            key_dates = {self.pricing_date, self.maturity}
+            merged = underlying.observation_dates | key_dates
+            replace_kw: dict = {}
             if merged != underlying.observation_dates:
-                underlying = underlying.replace(observation_dates=merged)
+                replace_kw["observation_dates"] = merged
+            # For forward-starting Asians, shift the dense grid region
+            # so num_steps points cover [averaging_start, maturity].
+            # averaging_start itself will land on the grid because
+            # _build_time_grid includes grid_start in all_dates.
+            if (
+                isinstance(spec, AsianOptionSpec)
+                and spec.averaging_start is not None
+                and underlying.grid_start != spec.averaging_start
+            ):
+                replace_kw["grid_start"] = spec.averaging_start
+            if replace_kw:
+                underlying = underlying.replace(**replace_kw)
             self._underlying = underlying
 
         # Validate that MC requires PathSimulation
