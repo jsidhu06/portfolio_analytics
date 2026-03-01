@@ -451,21 +451,9 @@ class PathSimulation(ABC):
         """Discount curve from market data."""
         return self._market_data.discount_curve
 
-    def replace(self, **kwargs) -> "PathSimulation":
-        """Return a cloned instance with selected attributes replaced.
-
-        Parameters
-        ----------
-        **kwargs
-            Supported overrides for process params, simulation config, and
-            market data fields.
-
-        Returns
-        -------
-        PathSimulation
-            Clone with requested updates and cleared simulation caches.
-        """
-        allowed_fields = {
+    @staticmethod
+    def _replace_allowed_fields() -> set[str]:
+        return {
             "name",
             "market_data",
             "initial_value",
@@ -484,6 +472,9 @@ class PathSimulation(ABC):
             "discount_curve",
             "currency",
         }
+
+    def _validate_replace_kwargs(self, kwargs: dict) -> None:
+        allowed_fields = self._replace_allowed_fields()
         unknown = set(kwargs).difference(allowed_fields)
         if unknown:
             raise ValidationError(
@@ -491,32 +482,37 @@ class PathSimulation(ABC):
                 f"unknown: {sorted(unknown)}"
             )
 
+    def _clone_for_replace(self) -> PathSimulation:
         cloned = copy.copy(self)
-
-        # Detach mutable containers to avoid shared state across clones.
         cloned.observation_dates = set(self.observation_dates)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
         cloned._last_normals = None
+        return cloned
 
-        # Handle simple name override
+    @staticmethod
+    def _apply_name_override(cloned: PathSimulation, kwargs: dict) -> None:
         if "name" in kwargs:
             cloned._name = kwargs["name"]
 
-        # Build updated process_params if any of its fields changed
+    @staticmethod
+    def _apply_process_param_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         process_param_keys = {"initial_value", "volatility", "dividend_curve", "discrete_dividends"}
-        if process_param_keys.intersection(kwargs):
-            param_updates = {}
-            for key in ("initial_value", "volatility", "dividend_curve", "discrete_dividends"):
-                if key in kwargs:
-                    if not hasattr(cloned._process_params, key):
-                        raise ValidationError(
-                            f"{key} is not supported for {type(cloned._process_params).__name__}"
-                        )
-                    param_updates[key] = kwargs[key]
-            if param_updates:
-                cloned._process_params = dc_replace(cloned._process_params, **param_updates)
+        if not process_param_keys.intersection(kwargs):
+            return
 
-        # Build updated sim config if any of its fields changed
+        param_updates = {}
+        for key in ("initial_value", "volatility", "dividend_curve", "discrete_dividends"):
+            if key in kwargs:
+                if not hasattr(cloned._process_params, key):
+                    raise ValidationError(
+                        f"{key} is not supported for {type(cloned._process_params).__name__}"
+                    )
+                param_updates[key] = kwargs[key]
+        if param_updates:
+            cloned._process_params = dc_replace(cloned._process_params, **param_updates)
+
+    @staticmethod
+    def _apply_sim_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         sim_keys = {
             "paths",
             "frequency",
@@ -525,75 +521,122 @@ class PathSimulation(ABC):
             "end_date",
             "grid_start",
         }
-        if sim_keys.intersection(kwargs):
-            sim_updates = {}
-            if "paths" in kwargs:
-                sim_updates["paths"] = kwargs["paths"]
-            if "frequency" in kwargs:
-                sim_updates["frequency"] = kwargs["frequency"]
-            if "num_steps" in kwargs:
-                sim_updates["num_steps"] = kwargs["num_steps"]
-            if "day_count_convention" in kwargs:
-                sim_updates["day_count_convention"] = kwargs["day_count_convention"]
-            if "end_date" in kwargs:
-                sim_updates["end_date"] = kwargs["end_date"]
-            if "grid_start" in kwargs:
-                sim_updates["grid_start"] = kwargs["grid_start"]
-            cloned._sim = dc_replace(cloned._sim, **sim_updates)
+        if not sim_keys.intersection(kwargs):
+            return
 
-        # Normalize list-like overrides
+        sim_updates = {}
+        if "paths" in kwargs:
+            sim_updates["paths"] = kwargs["paths"]
+        if "frequency" in kwargs:
+            sim_updates["frequency"] = kwargs["frequency"]
+        if "num_steps" in kwargs:
+            sim_updates["num_steps"] = kwargs["num_steps"]
+        if "day_count_convention" in kwargs:
+            sim_updates["day_count_convention"] = kwargs["day_count_convention"]
+        if "end_date" in kwargs:
+            sim_updates["end_date"] = kwargs["end_date"]
+        if "grid_start" in kwargs:
+            sim_updates["grid_start"] = kwargs["grid_start"]
+        cloned._sim = dc_replace(cloned._sim, **sim_updates)
+
+    @staticmethod
+    def _apply_observation_dates_override(cloned: PathSimulation, kwargs: dict) -> None:
         if "observation_dates" in kwargs:
             cloned.observation_dates = set(kwargs["observation_dates"] or [])
 
+    @staticmethod
+    def _apply_discrete_dividends_override(cloned: PathSimulation, kwargs: dict) -> None:
         if "discrete_dividends" in kwargs:
             cloned.discrete_dividends = tuple(kwargs["discrete_dividends"] or [])
 
-        if "time_grid" in kwargs:
-            cloned.time_grid = (
-                None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
-            )
-        else:
-            grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps", "grid_start"}
-            if grid_rebuild_keys.intersection(kwargs):
-                # Grid-shaping parameters changed → must rebuild from scratch.
-                cloned.time_grid = None
-                if cloned._sim.grid_start is not None and not cloned._sim._can_rebuild_grid():
-                    raise ConfigurationError(
-                        "grid_start requires end_date + num_steps or frequency "
-                        "for grid generation. Cannot set grid_start on a "
-                        "SimulationConfig that lacks a discretisation method."
-                    )
-            elif "observation_dates" in kwargs and cloned.time_grid is not None:
-                # Explicit-grid mode: augment the existing grid with the new
-                # special dates (there is no end_date/frequency/num_steps to
-                # rebuild from, so nulling the grid would be unrecoverable).
-                augmented = sorted(set(cloned.time_grid) | cloned.observation_dates)
-                cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
-            elif "observation_dates" in kwargs:
-                # Lazy-build mode: null the grid so _build_time_grid picks up
-                # the updated observation_dates on next _ensure_time_grid() call.
-                cloned.time_grid = None
+    @staticmethod
+    def _apply_time_grid_override(cloned: PathSimulation, kwargs: dict) -> bool:
+        if "time_grid" not in kwargs:
+            return False
+        cloned.time_grid = (
+            None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
+        )
+        return True
 
-        # Update market_data if any related fields were overridden
+    @staticmethod
+    def _needs_grid_rebuild(kwargs: dict) -> bool:
+        grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps", "grid_start"}
+        return bool(grid_rebuild_keys.intersection(kwargs))
+
+    @staticmethod
+    def _handle_grid_state_after_overrides(cloned: PathSimulation, kwargs: dict) -> None:
+        if PathSimulation._needs_grid_rebuild(kwargs):
+            cloned.time_grid = None
+            if cloned._sim.grid_start is not None and not cloned._sim._can_rebuild_grid():
+                raise ConfigurationError(
+                    "grid_start requires end_date + num_steps or frequency "
+                    "for grid generation. Cannot set grid_start on a "
+                    "SimulationConfig that lacks a discretisation method."
+                )
+            return
+
+        if "observation_dates" in kwargs and cloned.time_grid is not None:
+            augmented = sorted(set(cloned.time_grid) | cloned.observation_dates)
+            cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
+            return
+
+        if "observation_dates" in kwargs:
+            cloned.time_grid = None
+
+    @staticmethod
+    def _apply_market_data_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         if "market_data" in kwargs:
             cloned._market_data = kwargs["market_data"]
-        else:
-            market_data_keys = {"pricing_date", "discount_curve", "currency"}
-            if market_data_keys.intersection(kwargs):
-                updates = {}
-                if "pricing_date" in kwargs:
-                    updates["pricing_date"] = kwargs["pricing_date"]
-                if "discount_curve" in kwargs:
-                    updates["discount_curve"] = kwargs["discount_curve"]
-                if "currency" in kwargs:
-                    updates["currency"] = kwargs["currency"]
-                cloned._market_data = dc_replace(cloned._market_data, **updates)
+            return
 
-        # Ensure discrete dividend dates are included as special dates.
+        market_data_keys = {"pricing_date", "discount_curve", "currency"}
+        if not market_data_keys.intersection(kwargs):
+            return
+
+        updates = {}
+        if "pricing_date" in kwargs:
+            updates["pricing_date"] = kwargs["pricing_date"]
+        if "discount_curve" in kwargs:
+            updates["discount_curve"] = kwargs["discount_curve"]
+        if "currency" in kwargs:
+            updates["currency"] = kwargs["currency"]
+        cloned._market_data = dc_replace(cloned._market_data, **updates)
+
+    @staticmethod
+    def _sync_dividend_dates_into_observation_dates(cloned: PathSimulation) -> None:
         if cloned.discrete_dividends:
             for ex_date, _ in cloned.discrete_dividends:
                 cloned.observation_dates.add(ex_date)
 
+    def replace(self, **kwargs) -> PathSimulation:
+        """Return a cloned instance with selected attributes replaced.
+
+        Parameters
+        ----------
+        **kwargs
+            Supported overrides for process params, simulation config, and
+            market data fields.
+
+        Returns
+        -------
+        PathSimulation
+            Clone with requested updates and cleared simulation caches.
+        """
+        self._validate_replace_kwargs(kwargs)
+
+        cloned = self._clone_for_replace()
+        self._apply_name_override(cloned, kwargs)
+        self._apply_process_param_overrides(cloned, kwargs)
+        self._apply_sim_overrides(cloned, kwargs)
+        self._apply_observation_dates_override(cloned, kwargs)
+        self._apply_discrete_dividends_override(cloned, kwargs)
+
+        explicit_grid_override = self._apply_time_grid_override(cloned, kwargs)
+        if not explicit_grid_override:
+            self._handle_grid_state_after_overrides(cloned, kwargs)
+
+        self._apply_market_data_overrides(cloned, kwargs)
+        self._sync_dividend_dates_into_observation_dates(cloned)
         return cloned
 
     def simulate(self, random_seed: int | None = None) -> np.ndarray:
