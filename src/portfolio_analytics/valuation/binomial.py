@@ -43,7 +43,7 @@ class _BinomialValuationBase:
 
 
         Returns
-        =======
+        -------
         tuple of (discount_factors, p, spot_lattice)
             discount_factors : shape (num_steps,) — per-step discount factors
             p : shape (num_steps,) — risk-neutral up-move probabilities
@@ -153,14 +153,14 @@ class _BinomialValuationBase:
         """Calculate intrinsic values at each node.
 
         Parameters
-        ==========
-        instrument_values: np.ndarray
-            price of underlying at each node
+        ----------
+        instrument_values
+            Underlying prices at each node.
 
         Returns
-        =======
+        -------
         np.ndarray
-            intrinsic values
+            Intrinsic payoff values.
         """
         K = self.parent.strike
         if self.parent.option_type in (OptionType.CALL, OptionType.PUT):
@@ -315,6 +315,13 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
 
     def _solve_mc(self) -> np.ndarray:
+        """Price Asian option via Monte Carlo sampling on the binomial tree.
+
+        Returns
+        -------
+        np.ndarray
+            Discounted pathwise payoffs.
+        """
         num_steps = int(self.binom_params.num_steps)
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
@@ -412,7 +419,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         averaging, all state variables are stored in log space.
 
         Returns
-        =======
+        -------
         tuple of (values, avg_grid)
             values : shape (k, num_steps+1, num_steps+1) — option values per average bucket
             avg_grid : shape (k, num_steps+1, num_steps+1) — representative averages
@@ -506,6 +513,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         return values, avg_grid
 
     def present_value(self) -> float:
+        """Return present value for Asian option under selected binomial mode."""
         with log_timing(logger, "Binomial Asian present_value", self.binom_params.log_timings):
             if self.binom_params.mc_paths is not None:
                 pv_pathwise = self._solve_mc()
@@ -515,6 +523,14 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             return float(values[0, 0, 0])
 
     def solve(self) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """Solve the Asian binomial problem.
+
+        Returns
+        -------
+        np.ndarray | tuple[np.ndarray, np.ndarray]
+            Pathwise discounted payoffs for MC mode, otherwise
+            ``(values, average_grid)`` for Hull representative-average mode.
+        """
         if self.binom_params.mc_paths is not None:
             return self._solve_mc()
         return self._solve_hull()

@@ -43,23 +43,24 @@ class _BSMValuationBase:
         """Calculate d1 and d2 for BSM model.
 
         Parameters
-        ==========
-        spot: float
-            current spot price
-        strike: float
-            strike price
-        time_to_maturity: float
-            time to maturity in years
-        volatility: float
-            volatility (annualized)
-        df_r: float
-            discount factor P(0,T)
-        df_q: float
-            dividend discount factor Dq(0,T)
+        ----------
+        spot
+            Current spot price.
+        strike
+            Strike price.
+        time_to_maturity
+            Time to maturity in years.
+        volatility
+            Volatility (annualized).
+        df_r
+            Risk-free discount factor $P(0,T)$.
+        df_q
+            Dividend discount factor $D_q(0,T)$.
 
         Returns
-        =======
-        tuple of (d1, d2)
+        -------
+        tuple[float, float]
+            Pair ``(d1, d2)``.
         """
         if time_to_maturity <= 0:
             raise ValidationError("time_to_maturity must be positive")
@@ -172,9 +173,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         Where N() is the cumulative standard normal distribution.
 
         Returns
-        =======
+        -------
         float
-            analytical delta of the option
+            Analytical option delta.
         """
         inp = self._bsm_inputs()
 
@@ -193,9 +194,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         Where N'() is the standard normal probability density function.
 
         Returns
-        =======
+        -------
         float
-            analytical gamma of the option
+            Analytical option gamma.
         """
         inp = self._bsm_inputs()
 
@@ -214,9 +215,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         Vega is expressed as a 1% point change in volatility (hence the division by 100).
 
         Returns
-        =======
+        -------
         float
-            analytical vega of the option (per 1% point change in volatility)
+            Analytical option vega (per 1% volatility-point change).
         """
         inp = self._bsm_inputs()
 
@@ -243,9 +244,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
                     - q * S * e^(-qT) * N(-d1)
 
         Returns
-        =======
+        -------
         float
-            analytical theta of the option (per day)
+            Analytical option theta (per day).
         """
         inp = self._bsm_inputs()
 
@@ -288,9 +289,9 @@ class _BSMEuropeanValuation(_BSMValuationBase):
         For put:  rho = -K * T * e^(-rT) * N(-d2) / 100
 
         Returns
-        =======
+        -------
         float
-            analytical rho of the option (per 1% change in interest rate)
+            Analytical option rho (per 1% interest-rate change).
         """
         inp = self._bsm_inputs()
 

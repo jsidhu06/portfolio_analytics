@@ -66,11 +66,15 @@ class _MCGreekTestBase:
         q_curve: DiscountCurve | None | object = _MISSING,
     ) -> GBMProcess:
         if q_curve is _MISSING:
-            q_curve = self.qcr
+            resolved_q_curve: DiscountCurve = self.qcr
+        elif q_curve is None or isinstance(q_curve, DiscountCurve):
+            resolved_q_curve = q_curve
+        else:
+            raise TypeError("q_curve must be DiscountCurve, None, or _MISSING")
         params = GBMParams(
             initial_value=spot or self.spot,
             volatility=vol or self.vol,
-            dividend_curve=q_curve,
+            dividend_curve=resolved_q_curve,
         )
         sim = SimulationConfig(
             paths=self.n_paths,

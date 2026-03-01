@@ -16,7 +16,7 @@ class MonteCarloParams:
     """Parameters for Monte Carlo option valuation.
 
     Attributes
-    ==========
+    ----------
     random_seed:
         Random seed for reproducibility. If None, uses random state.
     deg:
@@ -68,7 +68,7 @@ class BinomialParams:
     """Parameters for binomial tree option valuation.
 
     Attributes
-    ==========
+    ----------
     num_steps:
         Number of time steps in the binomial tree.
         More steps increase accuracy but also computation time.

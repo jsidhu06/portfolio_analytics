@@ -42,6 +42,7 @@ class SimulationConfig:
     day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
     observation_dates: set[dt.datetime] = field(default_factory=set)
+    grid_start: dt.datetime | None = None
     antithetic: bool = True
     moment_matching: bool = True
 
@@ -92,6 +93,12 @@ class SimulationConfig:
                 raise ConfigurationError("SimulationConfig.num_steps must be an integer") from exc
             if steps <= 0:
                 raise ValidationError("SimulationConfig.num_steps must be a positive integer")
+
+    def _can_rebuild_grid(self) -> bool:
+        """True when the config has end_date + a discretisation method."""
+        return self.end_date is not None and (
+            self.num_steps is not None or self.frequency is not None
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -220,27 +227,20 @@ class SRDParams:
 
 
 class PathSimulation(ABC):
-    """Providing base methods for simulation classes.
+    """Base class for one-factor stochastic process path simulations.
 
-    Attributes
-    ==========
-    market_data: MarketData
-        Market data required for simulation (pricing date, discount curve, currency).
-    process_params:
-        Model-specific parameters for the stochastic process
-        (e.g. GBMParams, JDParams, SRDParams).
-    sim: SimulationConfig
-        Simulation configuration (paths, frequency, time grid, special dates).
-    correlation_context: CorrelationContext or None
-        Shared correlation/scenario context used in multi-asset simulations.
-        If None, the process is simulated independently.
-    name: str or None
-        Optional identifier, required only when using CorrelationContext.
-
-    Methods
-    =======
-    simulate:
-        returns simulated instrument value paths (array)
+    Parameters
+    ----------
+    market_data
+        Market data used by the process (pricing date, discount curve, currency).
+    process_params
+        Model-specific process parameters (for example GBM, JD, or SRD parameters).
+    sim
+        Simulation configuration controlling path count and time grid rules.
+    corr
+        Optional multi-asset correlation context.
+    name
+        Optional process name; required when ``corr`` is provided.
     """
 
     def __init__(
@@ -281,42 +281,62 @@ class PathSimulation(ABC):
 
     @property
     def name(self) -> str | None:
+        """Optional process identifier."""
         return self._name
 
     @property
     def market_data(self) -> MarketData:
+        """Market data bound to the process."""
         return self._market_data
 
     @property
     def initial_value(self) -> float:
+        """Initial state value at pricing date."""
         return self._process_params.initial_value
 
     @property
     def volatility(self) -> float:
+        """Instantaneous volatility parameter."""
         return self._process_params.volatility
 
     @property
     def dividend_curve(self) -> DiscountCurve | None:
+        """Continuous dividend discount curve, if provided."""
         return getattr(self._process_params, "dividend_curve", None)
 
     @property
     def paths(self) -> int:
+        """Number of Monte Carlo paths."""
         return self._sim.paths
 
     @property
     def frequency(self) -> str | None:
+        """Pandas frequency string for generated calendar grids."""
         return self._sim.frequency
 
     @property
     def num_steps(self) -> int | None:
+        """Number of time steps for uniform-step grids."""
         return self._sim.num_steps
 
     @property
+    def grid_start(self) -> dt.datetime | None:
+        """Start of the dense time grid region.
+
+        When set, ``num_steps`` equally-spaced intervals are placed in
+        ``[grid_start, end_date]`` rather than ``[pricing_date, end_date]``.
+        Defaults to ``None`` (dense grid starts at ``pricing_date``).
+        """
+        return self._sim.grid_start
+
+    @property
     def day_count_convention(self) -> DayCountConvention:
+        """Day-count basis used to convert dates to year fractions."""
         return self._sim.day_count_convention
 
     @property
     def end_date(self) -> dt.datetime | None:
+        """Simulation horizon end date."""
         # Computed based on time_grid if present, else from sim config
         if self.time_grid is not None:
             return max(self.time_grid)
@@ -324,6 +344,7 @@ class PathSimulation(ABC):
 
     @property
     def correlation_context(self) -> CorrelationContext | None:
+        """Correlation context for multi-asset path generation, if used."""
         return self._correlation_context
 
     @property
@@ -336,26 +357,39 @@ class PathSimulation(ABC):
         return self._last_normals
 
     def _build_time_grid(self) -> np.ndarray:
-        """Build a sorted datetime time grid from the simulation configuration."""
-        start = self.pricing_date
+        """Build a sorted datetime grid from simulation settings.
+
+        When ``grid_start`` is set (e.g. for forward-starting Asians),
+        the dense equally-spaced grid covers ``[grid_start, end_date]``
+        with ``num_steps + 1`` points (or at the requested ``frequency``).
+        ``pricing_date`` is always included as a boundary so the diffusion
+        spans the full ``[pricing_date, end_date]`` interval.
+
+        ``num_steps`` guarantees *at least* N+1 equally-spaced points in
+        the dense region; ``observation_dates`` (e.g. ex-dividend dates)
+        may add more.
+        """
+        dense_start = self.grid_start or self.pricing_date
         end = self.end_date
 
         if self.num_steps is not None:
             dates = pd.date_range(
-                start=start, end=end, periods=int(self.num_steps) + 1
+                start=dense_start, end=end, periods=int(self.num_steps) + 1
             ).to_pydatetime()
         else:
-            dates = pd.date_range(start=start, end=end, freq=self.frequency).to_pydatetime()
+            dates = pd.date_range(start=dense_start, end=end, freq=self.frequency).to_pydatetime()
 
         # Merge generated dates with required boundary + special dates
-        all_dates = set(dates) | {start, end} | self.observation_dates
+        all_dates = set(dates) | {self.pricing_date, dense_start, end} | self.observation_dates
         return np.array(sorted(all_dates))
 
     def _ensure_time_grid(self) -> None:
+        """Populate ``time_grid`` lazily when not explicitly provided."""
         if self.time_grid is None:
             self.time_grid = self._build_time_grid()
 
     def _time_deltas(self) -> np.ndarray:
+        """Return year-fraction deltas between consecutive grid dates."""
         self._ensure_time_grid()
         deltas = []
         for t in range(1, len(self.time_grid)):
@@ -369,6 +403,7 @@ class PathSimulation(ABC):
         return np.array(deltas, dtype=float)
 
     def _standard_normals(self, random_seed: int | None, steps: int, paths: int) -> np.ndarray:
+        """Generate or extract standard-normal shocks for path simulation."""
         if self.correlation_context is None:
             rng = np.random.default_rng(random_seed)
 
@@ -403,23 +438,22 @@ class PathSimulation(ABC):
 
     @property
     def pricing_date(self) -> dt.datetime:
+        """Pricing date from market data."""
         return self._market_data.pricing_date
 
     @property
     def currency(self) -> str:
+        """Market-data currency."""
         return self._market_data.currency
 
     @property
     def discount_curve(self) -> DiscountCurve:
+        """Discount curve from market data."""
         return self._market_data.discount_curve
 
-    def replace(self, **kwargs) -> "PathSimulation":
-        """Return a shallow-cloned instance with selected attributes replaced.
-
-        This avoids in-place mutation and clears cached instrument values by default,
-        which is important for bump-and-revalue workflows and thread safety.
-        """
-        allowed_fields = {
+    @staticmethod
+    def _replace_allowed_fields() -> set[str]:
+        return {
             "name",
             "market_data",
             "initial_value",
@@ -432,11 +466,15 @@ class PathSimulation(ABC):
             "day_count_convention",
             "time_grid",
             "observation_dates",
+            "grid_start",
             "end_date",
             "pricing_date",
             "discount_curve",
             "currency",
         }
+
+    def _validate_replace_kwargs(self, kwargs: dict) -> None:
+        allowed_fields = self._replace_allowed_fields()
         unknown = set(kwargs).difference(allowed_fields)
         if unknown:
             raise ValidationError(
@@ -444,108 +482,175 @@ class PathSimulation(ABC):
                 f"unknown: {sorted(unknown)}"
             )
 
+    def _clone_for_replace(self) -> PathSimulation:
         cloned = copy.copy(self)
-
-        # Detach mutable containers to avoid shared state across clones.
         cloned.observation_dates = set(self.observation_dates)
         cloned.time_grid = None if self.time_grid is None else np.array(self.time_grid, copy=True)
         cloned._last_normals = None
+        return cloned
 
-        # Handle simple name override
+    @staticmethod
+    def _apply_name_override(cloned: PathSimulation, kwargs: dict) -> None:
         if "name" in kwargs:
             cloned._name = kwargs["name"]
 
-        # Build updated process_params if any of its fields changed
+    @staticmethod
+    def _apply_process_param_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         process_param_keys = {"initial_value", "volatility", "dividend_curve", "discrete_dividends"}
-        if process_param_keys.intersection(kwargs):
-            param_updates = {}
-            for key in ("initial_value", "volatility", "dividend_curve", "discrete_dividends"):
-                if key in kwargs:
-                    if not hasattr(cloned._process_params, key):
-                        raise ValidationError(
-                            f"{key} is not supported for {type(cloned._process_params).__name__}"
-                        )
-                    param_updates[key] = kwargs[key]
-            if param_updates:
-                cloned._process_params = dc_replace(cloned._process_params, **param_updates)
+        if not process_param_keys.intersection(kwargs):
+            return
 
-        # Build updated sim config if any of its fields changed
-        sim_keys = {"paths", "frequency", "num_steps", "day_count_convention", "end_date"}
-        if sim_keys.intersection(kwargs):
-            sim_updates = {}
-            if "paths" in kwargs:
-                sim_updates["paths"] = kwargs["paths"]
-            if "frequency" in kwargs:
-                sim_updates["frequency"] = kwargs["frequency"]
-            if "num_steps" in kwargs:
-                sim_updates["num_steps"] = kwargs["num_steps"]
-            if "day_count_convention" in kwargs:
-                sim_updates["day_count_convention"] = kwargs["day_count_convention"]
-            if "end_date" in kwargs:
-                sim_updates["end_date"] = kwargs["end_date"]
-            cloned._sim = dc_replace(cloned._sim, **sim_updates)
+        param_updates = {}
+        for key in ("initial_value", "volatility", "dividend_curve", "discrete_dividends"):
+            if key in kwargs:
+                if not hasattr(cloned._process_params, key):
+                    raise ValidationError(
+                        f"{key} is not supported for {type(cloned._process_params).__name__}"
+                    )
+                param_updates[key] = kwargs[key]
+        if param_updates:
+            cloned._process_params = dc_replace(cloned._process_params, **param_updates)
 
-        # Normalize list-like overrides
+    @staticmethod
+    def _apply_sim_overrides(cloned: PathSimulation, kwargs: dict) -> None:
+        sim_keys = {
+            "paths",
+            "frequency",
+            "num_steps",
+            "day_count_convention",
+            "end_date",
+            "grid_start",
+        }
+        if not sim_keys.intersection(kwargs):
+            return
+
+        sim_updates = {}
+        if "paths" in kwargs:
+            sim_updates["paths"] = kwargs["paths"]
+        if "frequency" in kwargs:
+            sim_updates["frequency"] = kwargs["frequency"]
+        if "num_steps" in kwargs:
+            sim_updates["num_steps"] = kwargs["num_steps"]
+        if "day_count_convention" in kwargs:
+            sim_updates["day_count_convention"] = kwargs["day_count_convention"]
+        if "end_date" in kwargs:
+            sim_updates["end_date"] = kwargs["end_date"]
+        if "grid_start" in kwargs:
+            sim_updates["grid_start"] = kwargs["grid_start"]
+        cloned._sim = dc_replace(cloned._sim, **sim_updates)
+
+    @staticmethod
+    def _apply_observation_dates_override(cloned: PathSimulation, kwargs: dict) -> None:
         if "observation_dates" in kwargs:
             cloned.observation_dates = set(kwargs["observation_dates"] or [])
 
+    @staticmethod
+    def _apply_discrete_dividends_override(cloned: PathSimulation, kwargs: dict) -> None:
         if "discrete_dividends" in kwargs:
             cloned.discrete_dividends = tuple(kwargs["discrete_dividends"] or [])
 
-        if "time_grid" in kwargs:
-            cloned.time_grid = (
-                None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
-            )
-        else:
-            grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps"}
-            if grid_rebuild_keys.intersection(kwargs):
-                # Grid-shaping parameters changed → must rebuild from scratch.
-                cloned.time_grid = None
-            elif "observation_dates" in kwargs and cloned.time_grid is not None:
-                # Explicit-grid mode: augment the existing grid with the new
-                # special dates (there is no end_date/frequency/num_steps to
-                # rebuild from, so nulling the grid would be unrecoverable).
-                augmented = sorted(set(cloned.time_grid) | cloned.observation_dates)
-                cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
-            elif "observation_dates" in kwargs:
-                # Lazy-build mode: null the grid so _build_time_grid picks up
-                # the updated observation_dates on next _ensure_time_grid() call.
-                cloned.time_grid = None
+    @staticmethod
+    def _apply_time_grid_override(cloned: PathSimulation, kwargs: dict) -> bool:
+        if "time_grid" not in kwargs:
+            return False
+        cloned.time_grid = (
+            None if kwargs["time_grid"] is None else np.array(kwargs["time_grid"], copy=True)
+        )
+        return True
 
-        # Update market_data if any related fields were overridden
+    @staticmethod
+    def _needs_grid_rebuild(kwargs: dict) -> bool:
+        grid_rebuild_keys = {"pricing_date", "end_date", "frequency", "num_steps", "grid_start"}
+        return bool(grid_rebuild_keys.intersection(kwargs))
+
+    @staticmethod
+    def _handle_grid_state_after_overrides(cloned: PathSimulation, kwargs: dict) -> None:
+        if PathSimulation._needs_grid_rebuild(kwargs):
+            cloned.time_grid = None
+            if cloned._sim.grid_start is not None and not cloned._sim._can_rebuild_grid():
+                raise ConfigurationError(
+                    "grid_start requires end_date + num_steps or frequency "
+                    "for grid generation. Cannot set grid_start on a "
+                    "SimulationConfig that lacks a discretisation method."
+                )
+            return
+
+        if "observation_dates" in kwargs and cloned.time_grid is not None:
+            augmented = sorted(set(cloned.time_grid) | cloned.observation_dates)
+            cloned.time_grid = np.array(augmented, dtype=cloned.time_grid.dtype)
+            return
+
+        if "observation_dates" in kwargs:
+            cloned.time_grid = None
+
+    @staticmethod
+    def _apply_market_data_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         if "market_data" in kwargs:
             cloned._market_data = kwargs["market_data"]
-        else:
-            market_data_keys = {"pricing_date", "discount_curve", "currency"}
-            if market_data_keys.intersection(kwargs):
-                updates = {}
-                if "pricing_date" in kwargs:
-                    updates["pricing_date"] = kwargs["pricing_date"]
-                if "discount_curve" in kwargs:
-                    updates["discount_curve"] = kwargs["discount_curve"]
-                if "currency" in kwargs:
-                    updates["currency"] = kwargs["currency"]
-                cloned._market_data = dc_replace(cloned._market_data, **updates)
+            return
 
-        # Ensure discrete dividend dates are included as special dates.
+        market_data_keys = {"pricing_date", "discount_curve", "currency"}
+        if not market_data_keys.intersection(kwargs):
+            return
+
+        updates = {}
+        if "pricing_date" in kwargs:
+            updates["pricing_date"] = kwargs["pricing_date"]
+        if "discount_curve" in kwargs:
+            updates["discount_curve"] = kwargs["discount_curve"]
+        if "currency" in kwargs:
+            updates["currency"] = kwargs["currency"]
+        cloned._market_data = dc_replace(cloned._market_data, **updates)
+
+    @staticmethod
+    def _sync_dividend_dates_into_observation_dates(cloned: PathSimulation) -> None:
         if cloned.discrete_dividends:
             for ex_date, _ in cloned.discrete_dividends:
                 cloned.observation_dates.add(ex_date)
 
+    def replace(self, **kwargs) -> PathSimulation:
+        """Return a cloned instance with selected attributes replaced.
+
+        Parameters
+        ----------
+        **kwargs
+            Supported overrides for process params, simulation config, and
+            market data fields.
+
+        Returns
+        -------
+        PathSimulation
+            Clone with requested updates and cleared simulation caches.
+        """
+        self._validate_replace_kwargs(kwargs)
+
+        cloned = self._clone_for_replace()
+        self._apply_name_override(cloned, kwargs)
+        self._apply_process_param_overrides(cloned, kwargs)
+        self._apply_sim_overrides(cloned, kwargs)
+        self._apply_observation_dates_override(cloned, kwargs)
+        self._apply_discrete_dividends_override(cloned, kwargs)
+
+        explicit_grid_override = self._apply_time_grid_override(cloned, kwargs)
+        if not explicit_grid_override:
+            self._handle_grid_state_after_overrides(cloned, kwargs)
+
+        self._apply_market_data_overrides(cloned, kwargs)
+        self._sync_dividend_dates_into_observation_dates(cloned)
         return cloned
 
     def simulate(self, random_seed: int | None = None) -> np.ndarray:
         """Generate and return simulated instrument value paths.
 
         Parameters
-        ==========
-        random_seed: int, optional
-            random seed for path generation
+        ----------
+        random_seed
+            Random seed for reproducible path generation.
 
         Returns
-        =======
+        -------
         np.ndarray
-            simulated instrument value paths, shape (time_steps, paths)
+            Simulated paths with shape ``(num_times, num_paths)``.
         """
         return self._generate_paths(random_seed=random_seed)
 
@@ -560,9 +665,9 @@ class PathSimulation(ABC):
         path generation logic.
 
         Parameters
-        ==========
-        random_seed: int, optional
-            random seed for reproducibility
+        ----------
+        random_seed
+            Random seed for reproducibility.
         """
         raise NotImplementedError
 
@@ -579,12 +684,12 @@ class GBMProcess(PathSimulation):
         dS_t = mu * S_t * dt + sigma * S_t * dW_t
 
         Parameters
-        ==========
-        random_seed: int, optional
-            random seed for reproducibility
+        ----------
+        random_seed
+            Random seed for reproducibility.
 
         Notes
-        =====
+        -----
         The drift term (mu) is derived from the risk-free rate
         to ensure the model is calibrated to the discount curve.
         """
@@ -695,17 +800,32 @@ class JDProcess(PathSimulation):
 
     @property
     def lambd(self) -> float:
+        """Jump intensity parameter λ (per year)."""
         return self._process_params.lambd
 
     @property
     def mu(self) -> float:
+        """Mean of log jump size distribution."""
         return self._process_params.mu
 
     @property
     def delta(self) -> float:
+        """Standard deviation of log jump size distribution."""
         return self._process_params.delta
 
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
+        """Generate jump-diffusion paths.
+
+        Parameters
+        ----------
+        random_seed
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated paths with shape ``(num_times, num_paths)``.
+        """
         self._ensure_time_grid()
 
         num_steps = len(self.time_grid) - 1
@@ -839,10 +959,12 @@ class SRDProcess(PathSimulation):
 
     @property
     def kappa(self) -> float:
+        """Mean reversion speed parameter."""
         return self._process_params.kappa
 
     @property
     def theta(self) -> float:
+        """Long-run mean level parameter."""
         return self._process_params.theta
 
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
@@ -852,6 +974,16 @@ class SRDProcess(PathSimulation):
         (2010) to guarantee non-negative paths: the drift and diffusion
         coefficients are evaluated at max(x, 0), and the raw Euler step
         is floored at zero after each increment.
+
+        Parameters
+        ----------
+        random_seed
+            Random seed for reproducibility.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated non-negative SRD paths with shape ``(num_times, num_paths)``.
         """
         self._ensure_time_grid()
 

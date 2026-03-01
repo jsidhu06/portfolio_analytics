@@ -113,6 +113,22 @@ class DiscountCurve:
         end_time: float,
         steps: int = 1,
     ) -> "DiscountCurve":
+        """Build a flat continuously-compounded discount curve.
+
+        Parameters
+        ----------
+        rate
+            Flat continuously-compounded annual rate.
+        end_time
+            Final maturity in years.
+        steps
+            Number of intervals used to discretize ``[0, end_time]``.
+
+        Returns
+        -------
+        DiscountCurve
+            Discount curve consistent with the supplied flat rate.
+        """
         if end_time <= 0.0:
             raise ValidationError("end_time must be positive")
         if steps < 1:
@@ -122,7 +138,18 @@ class DiscountCurve:
         return cls(times=times, dfs=dfs, flat_rate=float(rate))
 
     def df(self, t: float | np.ndarray) -> np.ndarray:
-        """Log-linear interpolation of discount factors."""
+        """Interpolate discount factors with log-linear interpolation.
+
+        Parameters
+        ----------
+        t
+            Scalar or array of year fractions.
+
+        Returns
+        -------
+        np.ndarray
+            Interpolated discount factors.
+        """
         t = np.asarray(t, dtype=float)
         t_min, t_max = float(self.times[0]), float(self.times[-1])
         outside = (t < t_min) | (t > t_max)
@@ -137,7 +164,7 @@ class DiscountCurve:
         return np.exp(out)
 
     def forward_rate(self, t0: float, t1: float) -> float:
-        """Continuously-compounded forward rate between t0 and t1."""
+        """Return continuously-compounded forward rate on ``[t0, t1]``."""
         if t1 <= t0:
             raise ValidationError("Need t1 > t0")
         df0 = float(self.df(t0))
@@ -145,7 +172,7 @@ class DiscountCurve:
         return (np.log(df0) - np.log(df1)) / (t1 - t0)
 
     def step_forward_rates(self, grid: np.ndarray) -> np.ndarray:
-        """Forward rates on each interval of a time grid."""
+        """Return forward rates on each interval of a time grid."""
         grid = np.asarray(grid, dtype=float)
         if np.any(np.diff(grid) <= 0.0):
             raise ValidationError("grid must be strictly increasing")
