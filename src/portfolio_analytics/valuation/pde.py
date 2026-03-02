@@ -472,7 +472,7 @@ def _check_explicit_spot_stability(
     dividend_curve: DiscountCurve | None,
     hull_discounting: bool,
 ) -> None:
-    """CFL-style stability checks for an explicit scheme on a uniform spot grid.
+    r"""CFL-style stability checks for an explicit scheme on a uniform spot grid.
 
     The dominant restriction comes from the diffusion term::
 

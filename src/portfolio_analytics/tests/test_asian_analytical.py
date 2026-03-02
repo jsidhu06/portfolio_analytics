@@ -1254,33 +1254,29 @@ class TestHullExample26_3:
     def test_hull_discrete_observations(self):
         """Hull's discrete prices: 12 obs → 6.00, 52 obs → 5.70, 250 obs → 5.63.
 
-        Hull uses observations at T/m, ..., T (no S₀).  We compute using
-        the raw moment formulas directly to match his convention.
+        Hull uses m observations at T/m, 2T/m, ..., T (no S₀).
+        Our pricer with ``averaging_start = T/m`` and ``num_steps = m - 1``
+        places M = m observations at exactly those times, matching Hull.
         """
         S0, K, r, q, sigma, T = 50.0, 50.0, 0.1, 0.0, 0.4, 1.0
 
         for m, hull_price in [(12, 6.00), (52, 5.70), (250, 5.63)]:
-            # Hull convention: m observations at T/m, 2T/m, ..., T
-            delta = T / m
-            t = np.arange(1, m + 1, dtype=float) * delta  # t[0]=T/m, t[-1]=T
-            F = S0 * np.exp((r - q) * t)
-            M1 = np.mean(F)
-            F_cumrev = np.cumsum(F[::-1])[::-1]
-            M2 = np.sum(F * np.exp(sigma**2 * t) * (2 * F_cumrev - F)) / m**2
-
-            sigma_a_sq = np.log(M2 / M1**2) / T
-            sigma_a = np.sqrt(sigma_a_sq)
-            d1 = (np.log(M1 / K) + 0.5 * sigma_a_sq * T) / (sigma_a * np.sqrt(T))
-            d2 = d1 - sigma_a * np.sqrt(T)
-            df = np.exp(-r * T)
-            price = df * (M1 * norm.cdf(d1) - K * norm.cdf(d2))
+            # averaging_start = T/m skips S₀, giving m obs at T/m, ..., T
+            price = _asian_arithmetic_analytical(
+                spot=S0,
+                strike=K,
+                time_to_maturity=T,
+                volatility=sigma,
+                risk_free_rate=r,
+                dividend_yield=q,
+                option_type=OptionType.CALL,
+                num_steps=m - 1,
+                averaging_start=T / m,
+            )
 
             logger.info(
-                "Hull 26.3: m=%d M1=%.2f M2=%.2f sigma_a=%.4f price=%.4f (expected %.2f)",
+                "Hull 26.3: m=%d price=%.4f (expected %.2f)",
                 m,
-                M1,
-                M2,
-                sigma_a,
                 price,
                 hull_price,
             )
