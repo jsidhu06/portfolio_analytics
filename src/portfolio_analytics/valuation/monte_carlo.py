@@ -629,33 +629,87 @@ def _running_averages(paths: np.ndarray, averaging: AsianAveraging) -> np.ndarra
     raise ValidationError(f"Unsupported averaging method: {averaging}")
 
 
-def _build_2d_design_matrix(s: np.ndarray, a: np.ndarray, deg: int) -> np.ndarray:
-    """Build a 2-D polynomial design matrix with cross-terms.
+def _asian_lsm_continuation(
+    S_t: np.ndarray,
+    A_t: np.ndarray,
+    Y: np.ndarray,
+    itm: np.ndarray,
+    strike: float,
+    deg: int,
+    ridge_lambda: float,
+    min_itm: int,
+) -> np.ndarray:
+    """Robust continuation-value estimate for Asian American LSM.
 
-    Includes all monomials :math:`s^i a^j` with :math:`i + j \\le deg`.
-    Both inputs are standardised (zero-mean, unit-variance) before
-    constructing the monomials for numerical stability.
+    Regresses discounted next-step values onto an additive Laguerre basis
+    in average-moneyness ``A/K`` (primary), spot-moneyness ``S/K``
+    (secondary), and a single interaction feature ``S/A`` using ridge
+    regularisation.
+
+    The design matrix has ``2*(deg+1) + 1`` columns::
+
+        [L_0(A/K), ..., L_d(A/K),  L_0(S/K), ..., L_d(S/K),  S/A]
+
+    This is more compact and better-conditioned than a cross-monomial
+    basis in raw (S, A) which had ``(d+1)(d+2)/2`` columns with
+    near-collinear terms.
 
     Parameters
     ----------
-    s, a : np.ndarray, shape (n,)
-        Spot prices and running averages for the ITM subset.
+    S_t : np.ndarray
+        Spot prices at this time step for all paths.
+    A_t : np.ndarray
+        Running average at this time step for all paths.
+    Y : np.ndarray
+        Discounted next-step values for all paths.
+    itm : np.ndarray
+        Boolean mask indicating in-the-money paths.
+    strike : float
+        Option strike price K (used to compute moneyness).
     deg : int
-        Maximum total polynomial degree.
+        Laguerre polynomial degree for each moneyness feature.
+    ridge_lambda : float
+        Ridge regularisation parameter (>= 0).
+    min_itm : int
+        Minimum ITM paths required for regression; fewer triggers fallback.
 
     Returns
     -------
-    np.ndarray, shape (n, k) where k = (deg+1)(deg+2)/2
+    np.ndarray
+        Estimated continuation value for every path (zero for OTM paths).
     """
-    s_n = (s - s.mean()) / max(float(s.std()), 1e-12)
-    a_n = (a - a.mean()) / max(float(a.std()), 1e-12)
+    cont = np.zeros_like(S_t, dtype=float)
+    if not np.any(itm):
+        return cont
 
-    cols: list[np.ndarray] = []
-    for total in range(deg + 1):
-        for j in range(total + 1):
-            i = total - j
-            cols.append(s_n**i * a_n**j)
-    return np.column_stack(cols)
+    S_itm = S_t[itm]
+    A_itm = A_t[itm]
+    Y_itm = Y[itm]
+    n = S_itm.size
+
+    # Too few ITM points — cross-sectional mean (degree-0 regression)
+    # to avoid path-wise foresight bias.
+    n_cols = 2 * (deg + 1) + 1
+    if n < max(min_itm, n_cols):
+        cont[itm] = np.mean(Y_itm)
+        return cont
+
+    # Build additive Laguerre design matrix
+    avg_moneyness = A_itm / strike  # A_t / K  (primary)
+    spot_moneyness = S_itm / strike  # S_t / K  (secondary)
+    # Interaction: spot relative to current average  (S_t / A_t)
+    interaction = S_itm / np.maximum(A_itm, 1e-12)
+
+    L_avg = _laguerre_basis(avg_moneyness, deg=deg)  # (n, deg+1)
+    L_spot = _laguerre_basis(spot_moneyness, deg=deg)  # (n, deg+1)
+    X = np.column_stack([L_avg, L_spot, interaction])  # (n, 2*(deg+1)+1)
+
+    p = X.shape[1]
+    XtX = X.T @ X
+    Xty = X.T @ Y_itm
+    beta = np.linalg.solve(XtX + ridge_lambda * np.eye(p), Xty)
+    cont[itm] = X @ beta
+    return cont
 
 
 class _MCAsianAmericanValuation:
@@ -665,9 +719,10 @@ class _MCAsianAmericanValuation:
     (call) or max(K − A_t, 0) (put), where A_t is the running average of
     the spot observations from the averaging start up to *t*.
 
-    The continuation value is estimated by OLS regression on a 2-D polynomial
-    basis in (S_t, A_t) — the joint Markov state that fully summarises the
-    path history relevant to the Asian payoff.
+    The continuation value is estimated by ridge regression on an additive
+    Laguerre polynomial basis in average-moneyness A_t/K (primary) and
+    spot-moneyness S_t/K (secondary), plus a single S_t/A_t interaction
+    feature.
 
     Both arithmetic and geometric averaging are supported.
     """
@@ -775,25 +830,16 @@ class _MCAsianAmericanValuation:
             df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic[t] > 0
 
-            continuation = np.zeros(n_paths)
-            if np.any(itm):
-                S_itm = averaging_paths[t][itm]
-                A_itm = running_avg[t][itm]
-                V_itm = df_step * values[t + 1][itm]
-                n_itm = S_itm.size
-
-                # Fallback: too few ITM points — degree-0 (mean) to
-                # avoid path-wise foresight bias.
-                if n_itm < max(self.mc_params.min_itm, deg + 1):
-                    continuation[itm] = np.mean(V_itm)
-                else:
-                    # 2-D polynomial regression on (S, A) with ridge
-                    X = _build_2d_design_matrix(S_itm, A_itm, deg)
-                    p = X.shape[1]
-                    XtX = X.T @ X
-                    Xty = X.T @ V_itm
-                    beta = np.linalg.solve(XtX + self.mc_params.ridge_lambda * np.eye(p), Xty)
-                    continuation[itm] = X @ beta
+            continuation = _asian_lsm_continuation(
+                S_t=averaging_paths[t],
+                A_t=running_avg[t],
+                Y=df_step * values[t + 1],
+                itm=itm,
+                strike=self.parent.strike,
+                deg=deg,
+                ridge_lambda=self.mc_params.ridge_lambda,
+                min_itm=self.mc_params.min_itm,
+            )
 
             values[t] = np.where(
                 intrinsic[t] > continuation,
