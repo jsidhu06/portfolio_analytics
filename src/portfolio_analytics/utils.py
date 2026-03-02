@@ -328,7 +328,7 @@ def expected_binomial(
     p: float,
     f: Callable[[np.ndarray], np.ndarray],
 ) -> float:
-    """Compute $\mathbb{E}[f(K)]$ where $K \sim \text{Binomial}(n, p)$.
+    r"""Compute $\mathbb{E}[f(K)]$ where $K \sim \text{Binomial}(n, p)$.
 
     This is a convenience wrapper around the explicit sum
     $\sum_{k=0}^n \binom{n}{k} p^k (1-p)^{n-k} f(k)$.
@@ -372,7 +372,7 @@ def expected_binomial_payoff(
     q: float,
     u: float,
 ) -> float:
-    """Expected vanilla payoff under a binomial terminal distribution.
+    r"""Expected vanilla payoff under a binomial terminal distribution.
 
     Parameters
     ----------
