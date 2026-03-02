@@ -7,7 +7,7 @@ import numpy as np
 
 from ..utils import calculate_year_fraction, log_timing
 from ..stochastic_processes import PathSimulation
-from ..enums import OptionType, AsianAveraging
+from ..enums import OptionType, AsianAveraging, LSMBasisType
 from ..exceptions import ConfigurationError, NumericalError, ValidationError
 from .params import MonteCarloParams
 
@@ -113,6 +113,25 @@ def _laguerre_basis(x: np.ndarray, deg: int) -> np.ndarray:
     return np.column_stack(cols)
 
 
+def _power_basis(x: np.ndarray, deg: int) -> np.ndarray:
+    """Build a simple power-of-moneyness design matrix of shape ``(n, deg+1)``.
+
+    Columns are ``[1, x, x^2, ..., x^deg]`` — the classic polynomial basis
+    used in the original Longstaff-Schwartz (2001) paper.  Less well-conditioned
+    than the Laguerre basis for large ``deg`` or wide moneyness ranges, but
+    included for pedagogical comparison.
+    """
+    x = np.asarray(x, dtype=float)
+    return np.column_stack([x**k for k in range(deg + 1)])
+
+
+def _build_design_matrix(x: np.ndarray, deg: int, basis: LSMBasisType) -> np.ndarray:
+    """Dispatch to the appropriate 1-D basis builder."""
+    if basis is LSMBasisType.LAGUERRE:
+        return _laguerre_basis(x, deg=deg)
+    return _power_basis(x, deg=deg)
+
+
 def _ridge_lsm_continuation(
     S_t: np.ndarray,
     Y: np.ndarray,
@@ -121,15 +140,19 @@ def _ridge_lsm_continuation(
     deg: int,
     ridge_lambda: float,
     min_itm: int,
+    basis: LSMBasisType = LSMBasisType.LAGUERRE,
 ) -> np.ndarray:
     """Robust continuation-value estimate for Longstaff-Schwartz.
 
-    Regresses discounted next-step values onto a Laguerre polynomial basis
-    in moneyness ``S/K`` using ridge (Tikhonov) regularisation.
+    Regresses discounted next-step values onto a polynomial basis in
+    moneyness ``S/K`` using ridge (Tikhonov) regularisation.  The basis
+    family is controlled by *basis*: ``LAGUERRE`` (default, orthogonal on
+    [0, inf)) or ``POWER`` (classic 1, x, x², ... as in the original LS
+    paper).
 
     When too few ITM paths are available for a stable regression the
-    continuation value falls back to the discounted next-step value
-    (path-wise), which is the conservative "do no harm" default.
+    continuation value falls back to the cross-sectional mean (degree-0
+    regression).
 
     Parameters
     ----------
@@ -142,13 +165,15 @@ def _ridge_lsm_continuation(
     strike : float | None
         Option strike price (used to compute moneyness ``S/K``).
         When ``None`` (custom payoff), the mean ITM spot is used as the
-        normaliser so the Laguerre basis inputs remain well-scaled.
+        normaliser so the basis inputs remain well-scaled.
     deg : int
-        Laguerre polynomial degree.
+        Polynomial degree for the chosen basis.
     ridge_lambda : float
         Ridge regularisation parameter (>= 0).
     min_itm : int
         Minimum ITM paths required for regression; fewer triggers fallback.
+    basis : LSMBasisType
+        Basis function family (``LAGUERRE`` or ``POWER``).
 
     Returns
     -------
@@ -171,7 +196,7 @@ def _ridge_lsm_continuation(
 
     normaliser = strike if strike is not None else max(float(np.mean(S_itm)), 1e-12)
     x = S_itm / normaliser  # moneyness, always positive
-    X = _laguerre_basis(x, deg=deg)
+    X = _build_design_matrix(x, deg=deg, basis=basis)
     p = X.shape[1]
 
     # Ridge solve:  beta = (X^T X + lambda I)^{-1} X^T y
@@ -494,6 +519,7 @@ class _MCAmericanValuation:
                 deg=self.mc_params.deg,
                 ridge_lambda=self.mc_params.ridge_lambda,
                 min_itm=self.mc_params.min_itm,
+                basis=self.mc_params.lsm_basis,
             )
 
             values[t] = np.where(
@@ -638,21 +664,23 @@ def _asian_lsm_continuation(
     deg: int,
     ridge_lambda: float,
     min_itm: int,
+    basis: LSMBasisType = LSMBasisType.LAGUERRE,
 ) -> np.ndarray:
     """Robust continuation-value estimate for Asian American LSM.
 
-    Regresses discounted next-step values onto an additive Laguerre basis
+    Regresses discounted next-step values onto an additive polynomial basis
     in average-moneyness ``A/K`` (primary), spot-moneyness ``S/K``
     (secondary), and a single interaction feature ``S/A`` using ridge
     regularisation.
 
+    The basis type is controlled by *basis*:
+
+    * **LAGUERRE** — weighted Laguerre polynomials (default)
+    * **POWER** — simple power-of-moneyness polynomials ``1, x, x², …``
+
     The design matrix has ``2*(deg+1) + 1`` columns::
 
-        [L_0(A/K), ..., L_d(A/K),  L_0(S/K), ..., L_d(S/K),  S/A]
-
-    This is more compact and better-conditioned than a cross-monomial
-    basis in raw (S, A) which had ``(d+1)(d+2)/2`` columns with
-    near-collinear terms.
+        [B_0(A/K), ..., B_d(A/K),  B_0(S/K), ..., B_d(S/K),  S/A]
 
     Parameters
     ----------
@@ -667,11 +695,13 @@ def _asian_lsm_continuation(
     strike : float
         Option strike price K (used to compute moneyness).
     deg : int
-        Laguerre polynomial degree for each moneyness feature.
+        Polynomial degree for each moneyness feature.
     ridge_lambda : float
         Ridge regularisation parameter (>= 0).
     min_itm : int
         Minimum ITM paths required for regression; fewer triggers fallback.
+    basis : LSMBasisType
+        Which polynomial family to use (default: Laguerre).
 
     Returns
     -------
@@ -700,9 +730,9 @@ def _asian_lsm_continuation(
     # Interaction: spot relative to current average  (S_t / A_t)
     interaction = S_itm / np.maximum(A_itm, 1e-12)
 
-    L_avg = _laguerre_basis(avg_moneyness, deg=deg)  # (n, deg+1)
-    L_spot = _laguerre_basis(spot_moneyness, deg=deg)  # (n, deg+1)
-    X = np.column_stack([L_avg, L_spot, interaction])  # (n, 2*(deg+1)+1)
+    B_avg = _build_design_matrix(avg_moneyness, deg=deg, basis=basis)  # (n, deg+1)
+    B_spot = _build_design_matrix(spot_moneyness, deg=deg, basis=basis)  # (n, deg+1)
+    X = np.column_stack([B_avg, B_spot, interaction])  # (n, 2*(deg+1)+1)
 
     p = X.shape[1]
     XtX = X.T @ X
@@ -720,9 +750,9 @@ class _MCAsianAmericanValuation:
     the spot observations from the averaging start up to *t*.
 
     The continuation value is estimated by ridge regression on an additive
-    Laguerre polynomial basis in average-moneyness A_t/K (primary) and
-    spot-moneyness S_t/K (secondary), plus a single S_t/A_t interaction
-    feature.
+    polynomial basis (Laguerre or power, controlled by ``MonteCarloParams.lsm_basis``)
+    in average-moneyness A_t/K (primary) and spot-moneyness S_t/K (secondary),
+    plus a single S_t/A_t interaction feature.
 
     Both arithmetic and geometric averaging are supported.
     """
@@ -839,6 +869,7 @@ class _MCAsianAmericanValuation:
                 deg=deg,
                 ridge_lambda=self.mc_params.ridge_lambda,
                 min_itm=self.mc_params.min_itm,
+                basis=self.mc_params.lsm_basis,
             )
 
             values[t] = np.where(

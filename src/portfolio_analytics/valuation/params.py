@@ -7,7 +7,7 @@ that explicitly documents the configuration options available for that method.
 from dataclasses import dataclass
 import warnings
 
-from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid
+from ..enums import LSMBasisType, PDEEarlyExercise, PDEMethod, PDESpaceGrid
 from ..exceptions import ValidationError
 
 
@@ -31,6 +31,12 @@ class MonteCarloParams:
         at each exercise date.  If fewer paths are ITM, the continuation
         value falls back to the discounted next-step value (path-wise).
         Default: 25.
+    lsm_basis:
+        Basis function family for LSM regression.  ``LAGUERRE`` (default)
+        uses Laguerre polynomials on moneyness S/K, which are orthogonal
+        on [0, inf) and well-conditioned.  ``POWER`` uses the classic
+        power-of-spot polynomial basis 1, S/K, (S/K)^2, ... as in the
+        original Longstaff-Schwartz (2001) paper.
     log_timings:
         If True, log debug timing for solver execution.
     std_error_warn_ratio:
@@ -46,11 +52,14 @@ class MonteCarloParams:
     deg: int = 3
     ridge_lambda: float = 1e-8
     min_itm: int = 25
+    lsm_basis: LSMBasisType = LSMBasisType.LAGUERRE
     log_timings: bool = False
     std_error_warn_ratio: float | None = 0.1
     control_variate_european: bool = False
 
     def __post_init__(self) -> None:
+        if not isinstance(self.lsm_basis, LSMBasisType):
+            raise ValidationError(f"lsm_basis must be an LSMBasisType, got {type(self.lsm_basis)}")
         if self.deg is not None and self.deg < 1:
             raise ValidationError(f"deg must be >= 1, got {self.deg}")
         if self.ridge_lambda < 0:

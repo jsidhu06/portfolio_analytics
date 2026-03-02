@@ -14,6 +14,7 @@ __all__ = [
     "PDESpaceGrid",
     "PDEEarlyExercise",
     "DayCountConvention",
+    "LSMBasisType",
 ]
 
 
@@ -80,3 +81,8 @@ class DayCountConvention(Enum):
     ACT_365F = "ACT/365F"
     ACT_365_25 = "ACT/365.25"
     THIRTY_360_US = "30/360 US"
+
+
+class LSMBasisType(Enum):
+    LAGUERRE = "laguerre"
+    POWER = "power"

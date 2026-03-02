@@ -38,6 +38,7 @@ from .enums import (
     PositionSide,
     GreekCalculationMethod,
     ImpliedVolMethod,
+    LSMBasisType,
 )
 from .strategies import CondorSpec
 from .valuation import (
@@ -78,6 +79,7 @@ __all__ = [
     "PositionSide",
     "GreekCalculationMethod",
     "ImpliedVolMethod",
+    "LSMBasisType",
     # Valuation
     "OptionSpec",
     "OptionValuation",

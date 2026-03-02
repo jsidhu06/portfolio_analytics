@@ -3,8 +3,9 @@
 import datetime as dt
 
 import numpy as np
+import pytest
 
-from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
+from portfolio_analytics.enums import ExerciseType, LSMBasisType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
@@ -259,3 +260,58 @@ class TestMCSValuation:
         assert pv_pathwise.shape[0] == sim_config.paths
         # Mean of pathwise should equal pv
         assert np.isclose(np.mean(pv_pathwise), pv)
+
+
+@pytest.mark.slow
+class TestLSMBasisComparison:
+    """Check that Laguerre and Power bases give consistent American prices."""
+
+    PRICING_DATE = dt.datetime(2025, 1, 1)
+    MATURITY = dt.datetime(2026, 1, 1)
+    SPOT = 100.0
+    VOL = 0.2
+    RATE = 0.05
+    PATHS = 50_000
+    SEED = 42
+
+    def _price(
+        self,
+        strike: float,
+        call_put: OptionType,
+        basis: LSMBasisType,
+    ) -> float:
+        curve = flat_curve(self.PRICING_DATE, self.MATURITY, self.RATE)
+        md = MarketData(self.PRICING_DATE, curve, currency="USD")
+        gbm = GBMProcess(
+            md,
+            GBMParams(initial_value=self.SPOT, volatility=self.VOL),
+            SimulationConfig(paths=self.PATHS, frequency="D", end_date=self.MATURITY),
+        )
+        spec = OptionSpec(
+            option_type=call_put,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=strike,
+            maturity=self.MATURITY,
+            currency="USD",
+        )
+        return OptionValuation(
+            gbm,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=self.SEED, lsm_basis=basis),
+        ).present_value()
+
+    @pytest.mark.parametrize(
+        "strike, call_put",
+        [
+            (100.0, OptionType.PUT),  # ATM put
+            (110.0, OptionType.PUT),  # ITM put
+            (90.0, OptionType.PUT),  # OTM put
+        ],
+    )
+    def test_laguerre_vs_power_american(self, strike, call_put):
+        """Laguerre and Power bases should produce similar American values."""
+        pv_lag = self._price(strike, call_put, LSMBasisType.LAGUERRE)
+        pv_pow = self._price(strike, call_put, LSMBasisType.POWER)
+        assert pv_lag > 0 and pv_pow > 0
+        assert np.isclose(pv_lag, pv_pow, rtol=0.01), f"Laguerre={pv_lag:.4f} vs Power={pv_pow:.4f}"

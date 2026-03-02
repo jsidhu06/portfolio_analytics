@@ -11,6 +11,7 @@ from portfolio_analytics.enums import (
     AsianAveraging,
     DayCountConvention,
     ExerciseType,
+    LSMBasisType,
     OptionType,
     PricingMethod,
 )
@@ -740,3 +741,60 @@ class TestAmericanAsianMC:
                 spec,
                 PricingMethod.BSM,
             )
+
+
+@pytest.mark.slow
+class TestAsianLSMBasisComparison:
+    """Check that Laguerre and Power bases give consistent Asian American prices."""
+
+    SPOT = 100.0
+    STRIKE = 100.0
+    VOL = 0.2
+    SHORT_RATE = 0.03
+    DAYS = 365
+    PATHS = 100_000
+    SEED = 42
+    NUM_STEPS = 60
+
+    @property
+    def maturity(self) -> dt.datetime:
+        return PRICING_DATE + dt.timedelta(days=self.DAYS)
+
+    def _price(
+        self,
+        call_put: OptionType,
+        averaging: AsianAveraging,
+        basis: LSMBasisType,
+    ) -> float:
+        spec = _asian_spec(
+            strike=self.STRIKE,
+            maturity=self.maturity,
+            call_put=call_put,
+            exercise_type=ExerciseType.AMERICAN,
+            averaging=averaging,
+        )
+        underlying = _gbm_underlying(
+            spot=self.SPOT,
+            vol=self.VOL,
+            short_rate=self.SHORT_RATE,
+            maturity=self.maturity,
+            paths=self.PATHS,
+            num_steps=self.NUM_STEPS,
+        )
+        return OptionValuation(
+            underlying,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=self.SEED, lsm_basis=basis),
+        ).present_value()
+
+    @pytest.mark.parametrize("call_put", [OptionType.PUT, OptionType.CALL])
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    def test_laguerre_vs_power_asian_american(self, call_put, averaging):
+        """Laguerre and Power bases should produce similar Asian American values."""
+        pv_lag = self._price(call_put, averaging, LSMBasisType.LAGUERRE)
+        pv_pow = self._price(call_put, averaging, LSMBasisType.POWER)
+        assert pv_lag > 0 and pv_pow > 0
+        assert np.isclose(pv_lag, pv_pow, rtol=0.01), (
+            f"Laguerre={pv_lag:.4f} vs Power={pv_pow:.4f} ({call_put.value} {averaging.value})"
+        )
