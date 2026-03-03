@@ -1,5 +1,7 @@
-"""Valuation of European and American options using the binomial option pricing model of
-Cox-Ross-Rubinstein
+"""Binomial-tree valuation engines (Cox-Ross-Rubinstein).
+
+Implements European and American vanilla option pricing, plus Asian-option
+extensions used by the core dispatcher.
 """
 
 from __future__ import annotations

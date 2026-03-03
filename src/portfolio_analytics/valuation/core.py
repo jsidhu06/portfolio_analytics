@@ -94,7 +94,23 @@ _ASIAN_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
 
 @dataclass(frozen=True, slots=True)
 class OptionSpec:
-    """Contract specification for a vanilla option."""
+    """Contract specification for a vanilla option.
+
+    Parameters
+    ----------
+    option_type
+        Vanilla option direction (CALL or PUT).
+    exercise_type
+        Exercise style (EUROPEAN or AMERICAN).
+    strike
+        Strike price.
+    maturity
+        Contract maturity datetime.
+    currency
+        Optional contract currency. If ``None``, the underlying currency is used for valuation.
+    contract_size
+        Contract multiplier applied to the unit option value.
+    """
 
     option_type: OptionType  # CALL / PUT
     exercise_type: ExerciseType  # EUROPEAN / AMERICAN
@@ -140,10 +156,24 @@ class PayoffSpec:
     contract for exercise decisions (American pricing compares intrinsic vs continuation
     on the full payoff).
 
+    Parameters
+    ----------
+    exercise_type
+        Exercise style (EUROPEAN or AMERICAN).
+    maturity
+        Contract maturity datetime.
+    payoff_fn
+        Vectorized payoff callable in spot, accepting ``float | np.ndarray`` and
+        returning ``np.ndarray``.
+    currency
+        Optional contract currency. If ``None``, the underlying currency is used.
+    contract_size
+        Contract multiplier applied to the unit payoff value.
+
     Notes
     -----
-    - payoff_fn must be vectorized over spot (accept float or np.ndarray and return np.ndarray)
-    - strike is kept as None for compatibility with the OptionValuation interface
+    ``strike`` is intentionally fixed to ``None`` for interface compatibility with
+    ``OptionValuation``.
     """
 
     exercise_type: ExerciseType
@@ -315,13 +345,23 @@ class AsianOptionSpec:
 
 @dataclass(frozen=True, slots=True)
 class UnderlyingPricingData:
-    """Minimal data container for option valuation underlying asset.
+    """Minimal underlying container for deterministic valuation methods.
 
-    Used when pricing with methods that don't require full stochastic process simulation
-    (e.g., BSM, binomial trees, FD approximation to PDE).
-    Contains only essential parameters: spot price, volatility, pricing date, discount curve,
-    continuous dividend yield via dividend_curve,
-    and optional discrete dividends as (ex_date, amount) pairs.
+    Used by methods that do not require explicit path simulation (for example
+    BSM, binomial trees, and PDE finite differences).
+
+    Parameters
+    ----------
+    initial_value
+        Spot value at pricing time.
+    volatility
+        Annualized volatility.
+    market_data
+        Market context containing pricing date, discount curve, and currency.
+    discrete_dividends
+        Optional sequence of ``(ex_date, amount)`` cash dividends.
+    dividend_curve
+        Optional dividend discount curve for modeling continuous yields.
     """
 
     initial_value: float
@@ -397,12 +437,9 @@ class UnderlyingPricingData:
 
 
 class OptionValuation:
-    """Single-factor option valuation dispatcher.
-
-    Routes to the appropriate pricing implementation based on pricing_method + exercise_type.
+    """Single-factor option valuation facade and dispatcher.
     Instances are effectively immutable once created — constructor arguments are exposed as
-    read-only properties.
-    """
+    read-only properties."""
 
     def __init__(
         self,

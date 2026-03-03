@@ -19,27 +19,31 @@ class MonteCarloParams:
     ----------
     random_seed:
         Random seed for reproducibility. If None, uses random state.
+        Default: ``None``.
     deg:
         Laguerre polynomial degree for Longstaff-Schwartz regression
-        (American only). Typical range: 2-3. Default: 3.
+        (American only). Typical range: 2-3. Default: ``3``.
     ridge_lambda:
         Ridge (Tikhonov) regularisation parameter for the LSM regression.
         A small positive value stabilises the solve when ITM points are
-        few or collinear.  Default: 1e-8.
+        few or collinear.  Default: ``1e-8``.
     min_itm:
         Minimum number of in-the-money paths required to run the regression
         at each exercise date.  If fewer paths are ITM, the continuation
         value falls back to the discounted next-step value (path-wise).
-        Default: 25.
+        Default: ``25``.
     log_timings:
-        If True, log debug timing for solver execution.
+        If ``True``, log debug timing for solver execution.
+        Default: ``False``.
     std_error_warn_ratio:
         If set, emit a warning log when MC standard error exceeds
         std_error_warn_ratio * |PV|. Use None to disable.
+        Default: ``0.1``.
     control_variate_european:
         Apply control variate adjustment for American options using the
         analytical European price and the MC European price from the same
         simulation.  Only applicable to American exercise pricing.
+        Default: ``False``.
     """
 
     random_seed: int | None = None
@@ -72,14 +76,16 @@ class BinomialParams:
     num_steps:
         Number of time steps in the binomial tree.
         More steps increase accuracy but also computation time.
-        Default: 500.
+        Default: ``500``.
     mc_paths:
         Number of Monte Carlo paths when sampling the binomial tree
         (used for path-dependent payoffs like Asian options). If None,
         Monte Carlo sampling is disabled and Hull-style averages are used.
+        Default: ``None``.
     random_seed:
         Random seed for binomial-tree Monte Carlo sampling. This param is ignored
         if mc_paths is None.
+        Default: ``None``.
     asian_tree_averages:
         Number of representative averages per node for Hull-style Asian
         binomial tree valuation. Used when mc_paths is None.
@@ -87,12 +93,15 @@ class BinomialParams:
         num_steps (roughly 0.5x to 1.0x) to reduce interpolation bias.
         Larger values improve stability but increase memory usage as
         O(asian_tree_averages * num_steps^2).
+        Default: ``None``.
     control_variate_european:
         Apply Hull-style control variate adjustment for American options using
         BSM European price and the numerical European price from the same method.
         Only applicable to vanilla call/put American pricing.
+        Default: ``False``.
     log_timings:
-        If True, log debug timing for solver execution.
+        If ``True``, log debug timing for solver execution.
+        Default: ``False``.
     """
 
     num_steps: int = 500
@@ -144,39 +153,43 @@ class BinomialParams:
 class PDEParams:
     """Parameters for PDE finite difference option valuation.
 
-    Attributes:
-        smax_mult: Multiplier for maximum spot price in grid.
-                   Grid extends from 0 to smax_mult * max(spot, strike).
-                   Default: 4.0
-           spot_steps: Number of spatial (spot price) steps in the grid.
-                    More steps improve accuracy. Typical: 200-500. Default: 200.
-           time_steps: Number of time steps. More steps improve stability and accuracy.
-                    Typical: 200-500. Default: 200.
-        omega: SOR relaxation parameter for American options (PSOR algorithm).
-               Range: (1.0, 2.0). Values > 1 accelerate convergence.
-                Default: 1.5
-        tol: Convergence tolerance for PSOR iterations (American only).
-               Default: 1e-6
-        max_iter: Maximum PSOR iterations per time step (American only).
-                   Default: 20000
-        method: Time-stepping scheme for the FD solver. Options are IMPLICIT, EXPLICIT,
-                EXPLICIT_HULL (Hull's explicit scheme with implicit discounting),
-                and CRANK_NICOLSON.
-        rannacher_steps:
-            Number of Crank-Nicolson intervals (starting from maturity) that
-            are replaced by two implicit (backward Euler) half-steps each
-            (Pooley-Vetzal-Forsyth 2003).  With the default of 2, the first
-            two CN intervals become four implicit half-step solves, which is
-            sufficient to damp oscillations from payoff non-smoothness while
-            preserving second-order convergence.  Set 0 to disable.
-        space_grid: Spatial discretization grid in spot or log-spot space.
-        american_solver: Early exercise handling for American options.
-        control_variate_european:
-            Apply Hull-style control variate adjustment for American options using
-            BSM European price and the numerical European price from the same method.
-            Only applicable to vanilla call/put American pricing.
-        log_timings:
-            If True, log debug timing for solver execution.
+    Parameters
+    ----------
+    smax_mult
+        Multiplier for the maximum spot in the grid domain, where
+        ``S_max = smax_mult * max(spot, strike)``. Default: ``4.0``.
+    spot_steps
+        Number of spatial grid steps. Higher values improve resolution.
+        Default: ``200``.
+    time_steps
+        Number of time steps. Higher values generally improve stability/accuracy.
+        Default: ``200``.
+    omega
+        SOR relaxation parameter for PSOR iterations (American options), in ``(1, 2)``.
+        Default: ``1.5``.
+    tol
+        Convergence tolerance for PSOR iterations. Default: ``1e-6``.
+    max_iter
+        Maximum PSOR iterations per time step. Default: ``20_000``.
+    method
+        Time-stepping scheme (IMPLICIT, EXPLICIT, EXPLICIT_HULL, CRANK_NICOLSON).
+        Default: ``PDEMethod.CRANK_NICOLSON``.
+    rannacher_steps
+        Number of initial Crank-Nicolson intervals replaced by two implicit
+        half-steps each (Rannacher smoothing). Set ``0`` to disable.
+        Default: ``2``.
+    space_grid
+        Spatial discretization in spot space or log-spot space.
+        Default: ``PDESpaceGrid.SPOT``.
+    american_solver
+        Early-exercise handling for American options.
+        Default: ``PDEEarlyExercise.GAUSS_SEIDEL``.
+    control_variate_european
+        Apply Hull-style control-variate adjustment for American vanilla call/put pricing.
+        Default: ``False``.
+    log_timings
+        If ``True``, emit debug timing logs for solver execution.
+        Default: ``False``.
     """
 
     smax_mult: float = 4.0
