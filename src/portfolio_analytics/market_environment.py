@@ -1,7 +1,7 @@
 """Market data containers for valuation and simulation."""
 
 from __future__ import annotations
-from typing import Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 import datetime as dt
 import numpy as np

@@ -1,3 +1,21 @@
+"""Core valuation contracts and dispatcher.
+
+This module is the central orchestration layer for pricing:
+
+- Spec dataclasses (`OptionSpec`, `PayoffSpec`, `AsianOptionSpec`)
+- Underlying data container (`UnderlyingPricingData`)
+- Registry-based dispatcher (`OptionValuation`) that maps
+    `(PricingMethod, ExerciseType)` to a private implementation engine
+
+Design notes
+------------
+- Deterministic methods (`BSM`, `BINOMIAL`, `PDE_FD`) operate on
+    `UnderlyingPricingData`.
+- Monte Carlo methods operate on `PathSimulation` instances.
+- Greeks default to engine-native methods when available, otherwise
+    fall back to bump-and-revalue via immutable `replace(...)` calls.
+"""
+
 from __future__ import annotations
 from dataclasses import dataclass, replace as dc_replace
 from collections.abc import Callable, Sequence
@@ -217,6 +235,11 @@ class AsianOptionSpec:
     observed_average: float | None = None
     observed_count: int | None = None
 
+    @property
+    def option_type(self) -> OptionType:
+        """Alias for ``call_put`` to align with vanilla ``OptionSpec`` naming."""
+        return self.call_put
+
     def __post_init__(self) -> None:
         """Validate Asian option specification."""
         if not isinstance(self.averaging, AsianAveraging):
@@ -400,12 +423,10 @@ class OptionValuation:
         self._pricing_method = pricing_method
 
         # Resolve option_type (best-effort across spec variants)
-        if hasattr(spec, "option_type") and isinstance(spec.option_type, OptionType):
-            self._option_type: OptionType | None = spec.option_type
-        elif hasattr(spec, "call_put") and isinstance(spec.call_put, OptionType):
-            self._option_type = spec.call_put
-        else:
-            self._option_type = None
+        option_type = getattr(spec, "option_type", None)
+        self._option_type: OptionType | None = (
+            option_type if isinstance(option_type, OptionType) else None
+        )
 
         # Resolve params
         self._params: ValuationParams | None = self._resolve_params(

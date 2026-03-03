@@ -1,8 +1,11 @@
 """Top-level exports for common portfolio_analytics types."""
 
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = version("portfolio_analytics")
+try:
+    __version__ = version("portfolio_analytics")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
 
 from .exceptions import (
     DerivativesAnalyticsError,
