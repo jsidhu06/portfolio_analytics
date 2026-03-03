@@ -506,11 +506,12 @@ class _MCAmericanValuation:
         return df0 * values[1]
 
 
-class _MCAsianValuation:
-    """Implementation of Asian option valuation using Monte Carlo.
+class _MCAsianBase:
+    """Shared infrastructure for European and American MC Asian valuations.
 
-    Asian options are path-dependent options where the payoff depends on the average
-    price of the underlying over the averaging period.
+    Provides common ``__init__`` validation, fixing-date index resolution,
+    payoff computation, and averaging-path extraction so that the two
+    concrete subclasses only contain exercise-specific logic.
     """
 
     def __init__(self, parent: OptionValuation) -> None:
@@ -524,8 +525,57 @@ class _MCAsianValuation:
             raise ConfigurationError(
                 "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
             )
-        self.underlying = parent.underlying
+        self.underlying: PathSimulation = parent.underlying
         self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    def _fixing_indices(self, time_grid: np.ndarray) -> np.ndarray | None:
+        """Return grid indices for explicit fixing dates, or None."""
+        if self.spec.fixing_dates is None:
+            return None
+        return np.array(
+            [_resolve_time_index(time_grid, d, "fixing_date") for d in self.spec.fixing_dates],
+            dtype=int,
+        )
+
+    def _asian_payoff(self, avg: np.ndarray) -> np.ndarray:
+        """Asian payoff given average prices."""
+        K = self.parent.strike
+        if self.spec.call_put is OptionType.CALL:
+            return np.maximum(avg - K, 0.0)
+        return np.maximum(K - avg, 0.0)
+
+    def _extract_averaging_paths(
+        self, paths: np.ndarray, time_grid: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Select the path rows that belong to the averaging window.
+
+        Returns
+        -------
+        (averaging_paths, time_list)
+            averaging_paths : (N_obs, n_paths) spot prices at observation dates
+            time_list       : (N_obs,) datetime sub-grid for those dates
+        """
+        fixing_idx = self._fixing_indices(time_grid)
+        if fixing_idx is not None:
+            return paths[fixing_idx], time_grid[fixing_idx]
+
+        spec = self.spec
+        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
+        idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+        idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        return paths[idx_start : idx_end + 1], time_grid[idx_start : idx_end + 1]
+
+
+class _MCAsianValuation(_MCAsianBase):
+    """Implementation of Asian option valuation using Monte Carlo.
+
+    Asian options are path-dependent options where the payoff depends on the average
+    price of the underlying over the averaging period.
+    """
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
@@ -536,43 +586,22 @@ class _MCAsianValuation:
             Payoff for each path based on the average spot price
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
-        time_grid = self.underlying.time_grid
-
-        # Determine averaging period
-        spec = self.spec
-        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
-
-        # Find indices for averaging period
-        time_index_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
-        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
-
-        # Extract paths over averaging period (inclusive)
-        averaging_paths = paths[time_index_start : time_index_end + 1, :]
+        averaging_paths, _ = self._extract_averaging_paths(paths, self.underlying.time_grid)
 
         # Calculate average for each path
+        spec = self.spec
         if spec.averaging is AsianAveraging.ARITHMETIC:
-            # Arithmetic average: (1/N) * Σ S_i
             avg_prices = np.mean(averaging_paths, axis=0)
         elif spec.averaging is AsianAveraging.GEOMETRIC:
-            # Geometric average: (Π S_i)^(1/N)
-            # Use log space for numerical stability: exp(mean(log(S_i)))
             if np.any(averaging_paths <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
-            log_prices = np.log(averaging_paths)
-            avg_prices = np.exp(np.mean(log_prices, axis=0))
+            avg_prices = np.exp(np.mean(np.log(averaging_paths), axis=0))
         else:
             raise ValidationError(
                 f"Unsupported averaging method for Asian valuation: {spec.averaging}"
             )
 
-        # Calculate payoff based on average
-        K = self.parent.strike
-
-        # Asian call: max(S_avg - K, 0)
-        # Asian put: max(K - S_avg, 0)
-        if self.spec.call_put is OptionType.CALL:
-            return np.maximum(avg_prices - K, 0.0)
-        return np.maximum(K - avg_prices, 0.0)
+        return self._asian_payoff(avg_prices)
 
     def present_value(self) -> float:
         """Return the scalar present value."""
@@ -712,7 +741,7 @@ def _asian_lsm_continuation(
     return cont
 
 
-class _MCAsianAmericanValuation:
+class _MCAsianAmericanValuation(_MCAsianBase):
     """American Asian option via Longstaff-Schwartz on the joint (S_t, A_t) state.
 
     At each exercise opportunity *t* the holder can receive max(A_t − K, 0)
@@ -727,26 +756,9 @@ class _MCAsianAmericanValuation:
     Both arithmetic and geometric averaging are supported.
     """
 
-    def __init__(self, parent: OptionValuation) -> None:
-        self.parent = parent
-        if not isinstance(parent.params, MonteCarloParams):
-            raise ConfigurationError(
-                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
-            )
-        self.mc_params: MonteCarloParams = parent.params
-        self.underlying: PathSimulation = parent.underlying  # type: ignore[assignment]
-        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
-
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
-
-    def _asian_payoff(self, avg: np.ndarray) -> np.ndarray:
-        """Asian payoff given average prices."""
-        K = self.parent.strike
-        if self.spec.call_put is OptionType.CALL:
-            return np.maximum(avg - K, 0.0)
-        return np.maximum(K - avg, 0.0)
 
     def _get_averaging_data(
         self,
@@ -762,17 +774,9 @@ class _MCAsianAmericanValuation:
             time_list       : (N_obs,) datetime time grid for the averaging window
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
-        time_grid = self.underlying.time_grid
-        spec = self.spec
-        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
-
-        idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
-        idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
-
-        averaging_paths = paths[idx_start : idx_end + 1]
-        running_avg = _running_averages(averaging_paths, spec.averaging)
+        averaging_paths, time_list = self._extract_averaging_paths(paths, self.underlying.time_grid)
+        running_avg = _running_averages(averaging_paths, self.spec.averaging)
         intrinsic = self._asian_payoff(running_avg)
-        time_list = time_grid[idx_start : idx_end + 1]
 
         return averaging_paths, running_avg, intrinsic, time_list
 

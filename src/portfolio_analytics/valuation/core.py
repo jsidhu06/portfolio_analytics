@@ -180,6 +180,14 @@ class AsianOptionSpec:
         Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
         Contract multiplier (default 100)
+    fixing_dates : Sequence[dt.datetime], optional
+        Explicit fixing (observation) dates for discrete averaging.
+        When provided, only the spot
+        prices on these dates contribute to the average — any other grid dates
+        (pricing date, ex-dividend dates, maturity) are simulated but excluded
+        from the average.  Dates must be in ascending order and fall within
+        ``[averaging_start (or pricing_date), maturity]``.  Mutually exclusive
+        with ``num_steps`` for Monte Carlo pricing (ignored for BSM analytical).
     observed_average : float, optional
         For seasoned Asians: the realised average price over the already-observed
         period.  Must be provided together with ``observed_count``.
@@ -205,6 +213,7 @@ class AsianOptionSpec:
     num_steps: int | None = None
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
+    fixing_dates: tuple[dt.datetime, ...] | None = None
     observed_average: float | None = None
     observed_count: int | None = None
 
@@ -243,6 +252,23 @@ class AsianOptionSpec:
         if self.num_steps is not None:
             if not isinstance(self.num_steps, int) or self.num_steps < 1:
                 raise ValidationError("num_steps must be a positive integer")
+
+        # fixing_dates: coerce to tuple, validate ordering and bounds
+        if self.fixing_dates is not None:
+            dates = tuple(self.fixing_dates)
+            if not dates:
+                raise ValidationError("fixing_dates must be non-empty when provided.")
+            if not all(isinstance(d, dt.datetime) for d in dates):
+                raise ConfigurationError("fixing_dates entries must be datetime instances.")
+            if any(dates[i] >= dates[i + 1] for i in range(len(dates) - 1)):
+                raise ValidationError("fixing_dates must be in strictly ascending order.")
+            # Bounds are checked later against the pricing date (not known here);
+            # maturity is available so we can at least ensure dates don't exceed it.
+            if dates[-1] > self.maturity:
+                raise ValidationError("fixing_dates must not extend beyond maturity.")
+            if self.averaging_start is not None and dates[0] < self.averaging_start:
+                raise ValidationError("fixing_dates must not precede averaging_start.")
+            object.__setattr__(self, "fixing_dates", dates)
 
         # Seasoned Asian: observed_average and observed_count must be both set or both None
         if (self.observed_average is None) != (self.observed_count is None):
@@ -414,6 +440,10 @@ class OptionValuation:
         # is never mutated.
         if isinstance(underlying, PathSimulation):
             key_dates = {self.pricing_date, self.maturity}
+            # When explicit fixing dates are given, inject them so the
+            # time grid contains exact nodes at each observation date.
+            if isinstance(spec, AsianOptionSpec) and spec.fixing_dates is not None:
+                key_dates |= set(spec.fixing_dates)
             merged = underlying.observation_dates | key_dates
             replace_kw: dict = {}
             if merged != underlying.observation_dates:
@@ -1014,6 +1044,9 @@ class OptionValuation:
             return self._params.num_steps + 1
 
         if self._pricing_method is PricingMethod.MONTE_CARLO:
+            assert isinstance(spec, AsianOptionSpec)
+            if spec.fixing_dates is not None:
+                return len(spec.fixing_dates)
             assert isinstance(self._underlying, PathSimulation)
             self._underlying._ensure_time_grid()
             return len(self._underlying.time_grid)
