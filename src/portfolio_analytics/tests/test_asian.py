@@ -33,7 +33,7 @@ from portfolio_analytics.stochastic_processes import (
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.utils import pv_discrete_dividends
+from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
 from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
@@ -60,18 +60,22 @@ def _market_data(short_rate: float, maturity: dt.datetime) -> MarketData:
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
+def _flat_dividend_curve(dividend_yield: float, maturity: dt.datetime) -> DiscountCurve | None:
+    if dividend_yield == 0.0:
+        return None
+    ttm = calculate_year_fraction(PRICING_DATE, maturity)
+    return DiscountCurve.flat(dividend_yield, end_time=ttm)
+
+
 def _underlying(
     *,
     spot: float,
     vol: float,
     short_rate: float,
     maturity: dt.datetime,
-    dividend_yield: float = 0.0,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingPricingData:
-    if dividend_curve is None and dividend_yield != 0.0:
-        dividend_curve = flat_curve(PRICING_DATE, maturity, dividend_yield)
     return UnderlyingPricingData(
         initial_value=spot,
         volatility=vol,
@@ -89,12 +93,9 @@ def _gbm_underlying(
     maturity: dt.datetime,
     paths: int,
     num_steps: int,
-    dividend_yield: float = 0.0,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> GBMProcess:
-    if dividend_curve is None and dividend_yield != 0.0:
-        dividend_curve = flat_curve(PRICING_DATE, maturity, dividend_yield)
     sim_config = SimulationConfig(
         paths=paths,
         day_count_convention=DayCountConvention.ACT_365F,
@@ -154,7 +155,7 @@ def test_asian_binomial_hull_close_to_mc(
 ):
     maturity = PRICING_DATE + dt.timedelta(days=days)
     spec = _asian_spec(strike=strike, maturity=maturity, call_put=call_put)
-    q_curve = None if dividend_yield == 0.0 else flat_curve(PRICING_DATE, maturity, dividend_yield)
+    q_curve = _flat_dividend_curve(dividend_yield, maturity)
 
     mc_underlying = _gbm_underlying(
         spot=spot,
@@ -981,7 +982,13 @@ class TestSmallObservationCounts:
     )
     def test_n1_less_than_bsm(self, spot, strike, vol, r, q, days, call_put):
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+        und = _underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=r,
+            maturity=maturity,
+            dividend_curve=_flat_dividend_curve(q, maturity),
+        )
 
         asian_pv = OptionValuation(
             und,
@@ -1031,7 +1038,13 @@ class TestGeometricAsianPutCallParity:
     )
     def test_put_call_parity(self, spot, strike, vol, r, q, days, num_obs):
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+        und = _underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=r,
+            maturity=maturity,
+            dividend_curve=_flat_dividend_curve(q, maturity),
+        )
 
         call_pv = OptionValuation(
             und,
@@ -1097,7 +1110,13 @@ class TestAnalyticalVsMC:
         num_steps = 60
 
         # Analytical
-        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+        und = _underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=r,
+            maturity=maturity,
+            dividend_curve=_flat_dividend_curve(q, maturity),
+        )
         analytical_pv = OptionValuation(
             und,
             _asian_spec(
@@ -1118,7 +1137,7 @@ class TestAnalyticalVsMC:
             maturity=maturity,
             paths=300_000,
             num_steps=num_steps,
-            dividend_yield=q,
+            dividend_curve=_flat_dividend_curve(q, maturity),
         )
         mc_pv = OptionValuation(
             mc_und,
@@ -1355,7 +1374,7 @@ class TestDividendYield:
     def test_dividend_reduces_call(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
+            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -1367,7 +1386,13 @@ class TestDividendYield:
         ).present_value()
 
         pv_with_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
+            _underlying(
+                spot=100,
+                vol=0.2,
+                short_rate=0.05,
+                maturity=maturity,
+                dividend_curve=_flat_dividend_curve(0.03, maturity),
+            ),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -1778,7 +1803,7 @@ class TestSeasonedAsian:
     def test_dividend_increases_put(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
+            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -1790,7 +1815,13 @@ class TestSeasonedAsian:
         ).present_value()
 
         pv_with_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
+            _underlying(
+                spot=100,
+                vol=0.2,
+                short_rate=0.05,
+                maturity=maturity,
+                dividend_curve=_flat_dividend_curve(0.03, maturity),
+            ),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -2029,7 +2060,7 @@ def test_geometric_asian_four_method_comparison(
         vol=vol,
         short_rate=r,
         maturity=maturity,
-        dividend_yield=q,
+        dividend_curve=_flat_dividend_curve(q, maturity),
     )
     analytical_pv = OptionValuation(
         und_determ,
@@ -2084,7 +2115,7 @@ def test_geometric_asian_four_method_comparison(
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
-        dividend_yield=q,
+        dividend_curve=_flat_dividend_curve(q, maturity),
     )
     mc_pv = OptionValuation(
         mc_und,
@@ -2245,7 +2276,13 @@ class TestArithmeticPutCallParity:
     )
     def test_put_call_parity(self, spot, strike, vol, r, q, days, num_steps):
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+        und = _underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=r,
+            maturity=maturity,
+            dividend_curve=_flat_dividend_curve(q, maturity),
+        )
 
         call_pv = OptionValuation(
             und,
@@ -2310,7 +2347,13 @@ class TestArithmeticVsMC:
         num_steps = 60
 
         # Turnbull-Wakeman analytical
-        und = _underlying(spot=spot, vol=vol, short_rate=r, maturity=maturity, dividend_yield=q)
+        und = _underlying(
+            spot=spot,
+            vol=vol,
+            short_rate=r,
+            maturity=maturity,
+            dividend_curve=_flat_dividend_curve(q, maturity),
+        )
         analytical_pv = OptionValuation(
             und,
             _asian_spec(
@@ -2331,7 +2374,7 @@ class TestArithmeticVsMC:
             maturity=maturity,
             paths=300_000,
             num_steps=num_steps,
-            dividend_yield=q,
+            dividend_curve=_flat_dividend_curve(q, maturity),
         )
         mc_pv = OptionValuation(
             mc_und,
@@ -2480,7 +2523,7 @@ class TestArithmeticProperties:
     def test_dividend_reduces_call(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.0),
+            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -2492,7 +2535,13 @@ class TestArithmeticProperties:
         ).present_value()
 
         pv_with_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity, dividend_yield=0.03),
+            _underlying(
+                spot=100,
+                vol=0.2,
+                short_rate=0.05,
+                maturity=maturity,
+                dividend_curve=_flat_dividend_curve(0.03, maturity),
+            ),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
