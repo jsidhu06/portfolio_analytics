@@ -25,7 +25,7 @@ from portfolio_analytics.valuation import (
 )
 from portfolio_analytics.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
-from portfolio_analytics.utils import calculate_year_fraction
+from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
 
 if TYPE_CHECKING:
     import QuantLib as ql_typing
@@ -924,3 +924,602 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         pa_mc,
     )
     assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_tw:.6f}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Method equivalence — all pricing methods + QuantLib benchmark
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Section-local constants (vol=0.2, rate=0.05 — different from the
+# American FD section which uses VOL=0.4, RISK_FREE=0.1).
+_ME_VOL = 0.2
+_ME_RATE = 0.05
+_ME_PDE = PDEParams(spot_steps=140, time_steps=140, max_iter=20_000)
+_ME_MC_EU = MonteCarloParams(random_seed=42)
+_ME_MC_AM = MonteCarloParams(random_seed=42, deg=3)
+
+
+def _me_nonflat_r_curve() -> DiscountCurve:
+    times = np.array([0.0, 0.25, 0.5, 1.0])
+    forwards = np.array([0.03, 0.05, 0.04])
+    return DiscountCurve.from_forwards(times=times, forwards=forwards)
+
+
+def _me_market_data(r_curve: DiscountCurve | None = None) -> MarketData:
+    curve = r_curve if r_curve is not None else flat_curve(PRICING_DATE, MATURITY, _ME_RATE)
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+
+
+def _me_underlying(
+    *,
+    spot: float,
+    r_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+) -> UnderlyingPricingData:
+    return UnderlyingPricingData(
+        initial_value=spot,
+        volatility=_ME_VOL,
+        market_data=_me_market_data(r_curve),
+        dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
+    )
+
+
+def _me_gbm(
+    *,
+    spot: float,
+    r_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+    paths: int = 200_000,
+) -> GBMProcess:
+    sim = SimulationConfig(
+        paths=paths,
+        frequency="W",
+        end_date=MATURITY,
+    )
+    params = GBMParams(
+        initial_value=spot,
+        volatility=_ME_VOL,
+        dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
+    )
+    return GBMProcess(_me_market_data(r_curve), params, sim)
+
+
+def _me_spec(
+    *,
+    strike: float,
+    option_type: OptionType,
+    exercise_type: ExerciseType,
+) -> OptionSpec:
+    return OptionSpec(
+        option_type=option_type,
+        exercise_type=exercise_type,
+        strike=strike,
+        maturity=MATURITY,
+        currency=CURRENCY,
+    )
+
+
+def _me_ql_price(
+    *,
+    spot: float,
+    strike: float,
+    option_type: OptionType,
+    exercise_type: ExerciseType,
+    rf_handle: "ql_typing.YieldTermStructureHandle",
+    div_handle: "ql_typing.YieldTermStructureHandle",
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+) -> float:
+    """QuantLib vanilla pricing with vol=_ME_VOL and configurable curves."""
+    eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
+    ql.Settings.instance().evaluationDate = eval_date
+    ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
+
+    spot_h = ql.QuoteHandle(ql.SimpleQuote(float(spot)))
+    vol_h = ql.BlackVolTermStructureHandle(
+        ql.BlackConstantVol(eval_date, ql.TARGET(), float(_ME_VOL), ql.Actual365Fixed())
+    )
+    ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
+    payoff = ql.PlainVanillaPayoff(ql_type, float(strike))
+    process = ql.BlackScholesMertonProcess(spot_h, div_handle, rf_handle, vol_h)
+    dividend_schedule = _quantlib_dividend_schedule(discrete_dividends)
+
+    if exercise_type is ExerciseType.EUROPEAN:
+        exercise = ql.EuropeanExercise(ql_maturity)
+    else:
+        exercise = ql.AmericanExercise(eval_date, ql_maturity)
+
+    option = ql.VanillaOption(payoff, exercise)
+
+    if not discrete_dividends and exercise_type is ExerciseType.EUROPEAN:
+        option.setPricingEngine(ql.AnalyticEuropeanEngine(process))
+    else:
+        option.setPricingEngine(
+            ql.FdBlackScholesVanillaEngine(process, dividend_schedule, 200, 400)
+        )
+    return float(option.NPV())
+
+
+def _me_ql_flat_handles(
+    rf_rate: float = _ME_RATE,
+    div_yield: float = 0.0,
+) -> tuple:
+    eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
+    rf_h = ql.YieldTermStructureHandle(
+        ql.FlatForward(eval_date, float(rf_rate), ql.Actual365Fixed())
+    )
+    div_h = ql.YieldTermStructureHandle(
+        ql.FlatForward(eval_date, float(div_yield), ql.Actual365Fixed())
+    )
+    return rf_h, div_h
+
+
+# ── European vanilla — BSM / PDE / Binomial / MC / QuantLib ────────────
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type",
+    [
+        (90.0, 100.0, OptionType.CALL),
+        (110.0, 100.0, OptionType.PUT),
+    ],
+)
+@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
+def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield):
+    """European vanilla: BSM, PDE, Binomial, MC all match QuantLib analytical."""
+    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
+    ud = _me_underlying(spot=spot, dividend_curve=q_curve)
+    gbm = _me_gbm(spot=spot, dividend_curve=q_curve)
+    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
+
+    bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
+    binom_pv = OptionValuation(
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+    mc_pv = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=_ME_MC_EU,
+    ).present_value()
+
+    rf_h, div_h = _me_ql_flat_handles(div_yield=dividend_yield)
+    ql_pv = _me_ql_price(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        exercise_type=ExerciseType.EUROPEAN,
+        rf_handle=rf_h,
+        div_handle=div_h,
+    )
+
+    logger.info(
+        "European %s S=%.0f K=%.0f q=%.2f | BSM=%.6f PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        dividend_yield,
+        bsm_pv,
+        pde_pv,
+        binom_pv,
+        mc_pv,
+        ql_pv,
+    )
+
+    assert np.isclose(bsm_pv, ql_pv, rtol=1e-4), f"BSM {bsm_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(pde_pv, ql_pv, rtol=0.02), f"PDE {pde_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(binom_pv, ql_pv, rtol=0.01), f"Binom {binom_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(mc_pv, ql_pv, rtol=0.02), f"MC {mc_pv:.6f} vs QL {ql_pv:.6f}"
+
+
+# ── American vanilla — PDE / Binomial / MC / QuantLib ──────────────────
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type",
+    [
+        (90.0, 100.0, OptionType.CALL),
+        (110.0, 100.0, OptionType.PUT),
+    ],
+)
+@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
+def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield):
+    """American vanilla: PDE, Binomial, MC all match QuantLib FD."""
+    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
+    ud = _me_underlying(spot=spot, dividend_curve=q_curve)
+    gbm = _me_gbm(spot=spot, dividend_curve=q_curve)
+    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
+    binom_pv = OptionValuation(
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+    mc_pv = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=_ME_MC_AM,
+    ).present_value()
+
+    rf_h, div_h = _me_ql_flat_handles(div_yield=dividend_yield)
+    ql_pv = _me_ql_price(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        exercise_type=ExerciseType.AMERICAN,
+        rf_handle=rf_h,
+        div_handle=div_h,
+    )
+
+    logger.info(
+        "American %s S=%.0f K=%.0f q=%.2f | PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        dividend_yield,
+        pde_pv,
+        binom_pv,
+        mc_pv,
+        ql_pv,
+    )
+
+    assert np.isclose(pde_pv, ql_pv, rtol=0.02), f"PDE {pde_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(binom_pv, ql_pv, rtol=0.02), f"Binom {binom_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(mc_pv, ql_pv, rtol=0.02), f"MC {mc_pv:.6f} vs QL {ql_pv:.6f}"
+
+
+# ── Discrete-dividend European — all methods + QuantLib ────────────────
+
+
+@pytest.mark.parametrize(
+    "r_curve",
+    [
+        flat_curve(PRICING_DATE, MATURITY, _ME_RATE),
+        _me_nonflat_r_curve(),
+    ],
+    ids=["flat", "nonflat"],
+)
+def test_discrete_div_european_vs_quantlib(r_curve):
+    """Discrete divs European: PDE/MC align, BSM/Binomial align, all close to QuantLib."""
+    spot = 52.0
+    strike = 50.0
+    divs = [
+        (PRICING_DATE + dt.timedelta(days=90), 0.5),
+        (PRICING_DATE + dt.timedelta(days=270), 0.5),
+    ]
+
+    ud = _me_underlying(spot=spot, r_curve=r_curve, discrete_dividends=divs)
+    gbm = _me_gbm(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=200_000)
+    spec = _me_spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.EUROPEAN)
+
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
+    mc_pv = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=_ME_MC_EU,
+    ).present_value()
+    bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+    binom_pv = OptionValuation(
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+
+    # Vol-adjusted BSM/Binomial cross-check
+    pv_divs = pv_discrete_dividends(
+        dividends=divs,
+        curve_date=ud.pricing_date,
+        end_date=spec.maturity,
+        discount_curve=r_curve,
+    )
+    vol_multiplier = ud.initial_value / (ud.initial_value - pv_divs)
+    adjusted_ud = ud.replace(volatility=ud.volatility * vol_multiplier)
+    bsm_adj = OptionValuation(adjusted_ud, spec, PricingMethod.BSM).present_value()
+    binom_adj = OptionValuation(
+        adjusted_ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+
+    # QuantLib FD European with discrete dividends
+    rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
+    eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
+    div_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
+    ql_pv = _me_ql_price(
+        spot=spot,
+        strike=strike,
+        option_type=OptionType.PUT,
+        exercise_type=ExerciseType.EUROPEAN,
+        rf_handle=rf_h,
+        div_handle=div_h,
+        discrete_dividends=divs,
+    )
+
+    logger.info(
+        "Disc-div EU PUT | PDE=%.6f MC=%.6f BSM=%.6f Binom=%.6f QL=%.6f",
+        pde_pv,
+        mc_pv,
+        bsm_pv,
+        binom_pv,
+        ql_pv,
+    )
+
+    # PDE/MC agree with each other and QuantLib
+    assert np.isclose(pde_pv, mc_pv, rtol=0.02)
+    assert np.isclose(pde_pv, ql_pv, rtol=0.02), f"PDE {pde_pv:.6f} vs QL {ql_pv:.6f}"
+
+    # BSM/Binomial agree with each other
+    assert np.isclose(bsm_pv, binom_pv, rtol=0.02)
+    assert np.isclose(bsm_adj, binom_adj, rtol=0.02)
+
+    # Vol-adjusted prices close to PDE/MC
+    assert np.isclose(pde_pv, bsm_adj, rtol=0.02)
+    assert np.isclose(mc_pv, binom_adj, rtol=0.02)
+
+
+# ── Discrete-dividend American — PDE / MC / QuantLib ───────────────────
+
+
+@pytest.mark.parametrize(
+    "spot,strike",
+    [
+        (90.0, 100.0),
+        (110.0, 100.0),
+    ],
+)
+@pytest.mark.parametrize(
+    "r_curve",
+    [
+        flat_curve(PRICING_DATE, MATURITY, _ME_RATE),
+        _me_nonflat_r_curve(),
+    ],
+    ids=["flat", "nonflat"],
+)
+def test_discrete_div_american_vs_quantlib(spot, strike, r_curve):
+    """American discrete dividend: PDE, MC, and QuantLib all align."""
+    divs = [
+        (PRICING_DATE + dt.timedelta(days=120), 0.6),
+        (PRICING_DATE + dt.timedelta(days=240), 0.6),
+    ]
+    ud = _me_underlying(spot=spot, r_curve=r_curve, discrete_dividends=divs)
+    gbm = _me_gbm(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=60_000)
+    spec = _me_spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
+
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
+    mc_pv = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=_ME_MC_AM,
+    ).present_value()
+
+    # QuantLib FD with discrete dividends
+    rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
+    eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
+    div_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
+    ql_pv = _me_ql_price(
+        spot=spot,
+        strike=strike,
+        option_type=OptionType.PUT,
+        exercise_type=ExerciseType.AMERICAN,
+        rf_handle=rf_h,
+        div_handle=div_h,
+        discrete_dividends=divs,
+    )
+
+    logger.info(
+        "Disc-div AM PUT S=%.0f K=%.0f | PDE=%.6f MC=%.6f QL=%.6f",
+        spot,
+        strike,
+        pde_pv,
+        mc_pv,
+        ql_pv,
+    )
+
+    assert np.isclose(pde_pv, mc_pv, rtol=0.02)
+    assert np.isclose(pde_pv, ql_pv, rtol=0.02), f"PDE {pde_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(mc_pv, ql_pv, rtol=0.02), f"MC {mc_pv:.6f} vs QL {ql_pv:.6f}"
+
+
+# ── European with forward curves — BSM / PDE / Binomial / MC / QL ─────
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type,r_times,r_forwards,q_times,q_forwards",
+    [
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 1.0]),
+            np.array([0.0]),
+        ),
+        (
+            60.0,
+            55.0,
+            OptionType.CALL,
+            np.array([0.0, 1.0]),
+            np.array([0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.00, 0.02, 0.04]),
+        ),
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.01, 0.02, 0.00]),
+        ),
+    ],
+)
+def test_european_forward_curves_vs_quantlib(
+    spot,
+    strike,
+    option_type,
+    r_times,
+    r_forwards,
+    q_times,
+    q_forwards,
+):
+    """European BSM, PDE, Binomial, MC, and QuantLib agree under forward curves."""
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
+    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
+
+    ud = _me_underlying(spot=spot, r_curve=r_curve, dividend_curve=q_curve)
+    gbm = _me_gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
+    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
+
+    bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
+    binom_pv = OptionValuation(
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+    mc_pv = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=_ME_MC_EU,
+    ).present_value()
+
+    # QuantLib analytical European with forward curves
+    rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
+    div_h = _ql_curve_from_times(times=q_curve.times, dfs=q_curve.dfs)
+    ql_pv = _me_ql_price(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        exercise_type=ExerciseType.EUROPEAN,
+        rf_handle=rf_h,
+        div_handle=div_h,
+    )
+
+    logger.info(
+        "Forward-curve EU %s S=%.0f K=%.0f | BSM=%.6f PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        bsm_pv,
+        pde_pv,
+        binom_pv,
+        mc_pv,
+        ql_pv,
+    )
+
+    assert np.isclose(bsm_pv, ql_pv, rtol=1e-4), f"BSM {bsm_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(pde_pv, ql_pv, rtol=0.01), f"PDE {pde_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(binom_pv, ql_pv, rtol=0.01), f"Binom {binom_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(mc_pv, ql_pv, rtol=0.01), f"MC {mc_pv:.6f} vs QL {ql_pv:.6f}"
+
+
+# ── American with forward curves — PDE / Binomial / MC / QL ───────────
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type,r_times,r_forwards,q_times,q_forwards",
+    [
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 1.0]),
+            np.array([0.0]),
+        ),
+        (
+            60.0,
+            55.0,
+            OptionType.CALL,
+            np.array([0.0, 1.0]),
+            np.array([0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.00, 0.02, 0.04]),
+        ),
+        (
+            52.0,
+            50.0,
+            OptionType.PUT,
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.03, 0.05, 0.04]),
+            np.array([0.0, 0.25, 0.5, 1.0]),
+            np.array([0.01, 0.02, 0.00]),
+        ),
+    ],
+)
+def test_american_forward_curves_vs_quantlib(
+    spot,
+    strike,
+    option_type,
+    r_times,
+    r_forwards,
+    q_times,
+    q_forwards,
+):
+    """American PDE, Binomial, MC, and QuantLib agree under forward curves."""
+    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
+    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
+
+    ud = _me_underlying(spot=spot, r_curve=r_curve, dividend_curve=q_curve)
+    gbm = _me_gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
+    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+
+    pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
+    binom_pv = OptionValuation(
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=1500),
+    ).present_value()
+    mc_pv = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=_ME_MC_AM,
+    ).present_value()
+
+    # QuantLib FD American with forward curves
+    rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
+    div_h = _ql_curve_from_times(times=q_curve.times, dfs=q_curve.dfs)
+    ql_pv = _me_ql_price(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        exercise_type=ExerciseType.AMERICAN,
+        rf_handle=rf_h,
+        div_handle=div_h,
+    )
+
+    logger.info(
+        "Forward-curve AM %s S=%.0f K=%.0f | PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
+        option_type.value,
+        spot,
+        strike,
+        pde_pv,
+        binom_pv,
+        mc_pv,
+        ql_pv,
+    )
+
+    assert np.isclose(pde_pv, ql_pv, rtol=0.01), f"PDE {pde_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(binom_pv, ql_pv, rtol=0.01), f"Binom {binom_pv:.6f} vs QL {ql_pv:.6f}"
+    assert np.isclose(mc_pv, ql_pv, rtol=0.01), f"MC {mc_pv:.6f} vs QL {ql_pv:.6f}"
