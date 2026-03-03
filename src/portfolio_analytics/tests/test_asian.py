@@ -740,3 +740,194 @@ class TestAmericanAsianMC:
                 spec,
                 PricingMethod.BSM,
             )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Fixing-dates & economic-property tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+_FD_SPOT = 100.0
+_FD_STRIKE = 100.0
+_FD_VOL = 0.20
+_FD_RATE = 0.05
+_FD_MATURITY = PRICING_DATE + dt.timedelta(days=365)
+_FD_PATHS = 200_000
+_FD_SEED = 42
+_FD_STEPS = 60
+
+
+def _fd_market_data(
+    r_curve: DiscountCurve | None = None,
+) -> MarketData:
+    curve = r_curve if r_curve is not None else flat_curve(PRICING_DATE, _FD_MATURITY, _FD_RATE)
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+
+
+def _fd_gbm(
+    *,
+    dividend_curve: DiscountCurve | None = None,
+) -> GBMProcess:
+    md = _fd_market_data()
+    params = GBMParams(
+        initial_value=_FD_SPOT,
+        volatility=_FD_VOL,
+        dividend_curve=dividend_curve,
+    )
+    sim_cfg = SimulationConfig(
+        paths=_FD_PATHS,
+        end_date=_FD_MATURITY,
+        num_steps=_FD_STEPS,
+    )
+    return GBMProcess(md, params, sim_cfg)
+
+
+# Monthly fixing dates used as baseline
+_MONTHLY_FIXINGS = tuple(
+    dt.datetime(2025, m, 1) if m <= 12 else dt.datetime(2026, m - 12, 1) for m in range(2, 14)
+)
+
+
+def _fd_asian_pv(
+    call_put: OptionType,
+    averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
+    exercise_type: ExerciseType = ExerciseType.EUROPEAN,
+    fixing_dates: tuple[dt.datetime, ...] = _MONTHLY_FIXINGS,
+    dividend_curve: DiscountCurve | None = None,
+    seed: int = _FD_SEED,
+) -> float:
+    """Helper: MC Asian PV using explicit fixing dates."""
+    spec = AsianOptionSpec(
+        averaging=averaging,
+        call_put=call_put,
+        strike=_FD_STRIKE,
+        maturity=_FD_MATURITY,
+        currency=CURRENCY,
+        exercise_type=exercise_type,
+        fixing_dates=fixing_dates,
+    )
+    gbm = _fd_gbm(dividend_curve=dividend_curve)
+    return OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=seed),
+    ).present_value()
+
+
+class TestDividendEffectOnAsians:
+    """Dividends should reduce call value and increase put value."""
+
+    DIV_YIELD = 0.04
+
+    @property
+    def div_curve(self) -> DiscountCurve:
+        return flat_curve(PRICING_DATE, _FD_MATURITY, self.DIV_YIELD)
+
+    def test_dividends_reduce_asian_call(self):
+        base = _fd_asian_pv(OptionType.CALL)
+        with_div = _fd_asian_pv(OptionType.CALL, dividend_curve=self.div_curve)
+        assert with_div < base, (
+            f"Dividend call ({with_div:.4f}) should be < no-div call ({base:.4f})"
+        )
+
+    def test_dividends_increase_asian_put(self):
+        base = _fd_asian_pv(OptionType.PUT)
+        with_div = _fd_asian_pv(OptionType.PUT, dividend_curve=self.div_curve)
+        assert with_div > base, f"Dividend put ({with_div:.4f}) should be > no-div put ({base:.4f})"
+
+    def test_dividends_reduce_geometric_call(self):
+        base = _fd_asian_pv(OptionType.CALL, averaging=AsianAveraging.GEOMETRIC)
+        with_div = _fd_asian_pv(
+            OptionType.CALL,
+            averaging=AsianAveraging.GEOMETRIC,
+            dividend_curve=self.div_curve,
+        )
+        assert with_div < base
+
+    def test_dividends_increase_geometric_put(self):
+        base = _fd_asian_pv(OptionType.PUT, averaging=AsianAveraging.GEOMETRIC)
+        with_div = _fd_asian_pv(
+            OptionType.PUT,
+            averaging=AsianAveraging.GEOMETRIC,
+            dividend_curve=self.div_curve,
+        )
+        assert with_div > base
+
+
+class TestAmericanAsianPremium:
+    """American Asians should have non-negative early-exercise premium."""
+
+    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    def test_american_geq_european_with_fixing_dates(self, call_put, averaging):
+        """American Asian PV >= European Asian PV (using fixing dates)."""
+        euro = _fd_asian_pv(call_put, averaging, ExerciseType.EUROPEAN)
+        amer = _fd_asian_pv(call_put, averaging, ExerciseType.AMERICAN)
+        assert amer >= euro - 1e-6, (
+            f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {call_put.value}"
+        )
+
+
+class TestFixingDatesValidation:
+    """Validation rules for fixing_dates on AsianOptionSpec."""
+
+    def test_empty_fixing_dates_raises(self):
+        with pytest.raises(ValidationError, match="non-empty"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=100.0,
+                maturity=_FD_MATURITY,
+                fixing_dates=(),
+            )
+
+    def test_unsorted_fixing_dates_raises(self):
+        with pytest.raises(ValidationError, match="ascending"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=100.0,
+                maturity=_FD_MATURITY,
+                fixing_dates=(
+                    dt.datetime(2025, 6, 1),
+                    dt.datetime(2025, 3, 1),
+                ),
+            )
+
+    def test_fixing_dates_beyond_maturity_raises(self):
+        with pytest.raises(ValidationError, match="maturity"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=100.0,
+                maturity=_FD_MATURITY,
+                fixing_dates=(
+                    dt.datetime(2025, 6, 1),
+                    dt.datetime(2026, 6, 1),  # past maturity
+                ),
+            )
+
+    def test_fixing_dates_before_averaging_start_raises(self):
+        with pytest.raises(ValidationError, match="averaging_start"):
+            AsianOptionSpec(
+                averaging=AsianAveraging.ARITHMETIC,
+                call_put=OptionType.CALL,
+                strike=100.0,
+                maturity=_FD_MATURITY,
+                averaging_start=dt.datetime(2025, 4, 1),
+                fixing_dates=(
+                    dt.datetime(2025, 3, 1),  # before averaging_start
+                    dt.datetime(2025, 6, 1),
+                ),
+            )
+
+    def test_valid_fixing_dates_accepted(self):
+        """No error raised for well-formed fixing dates."""
+        spec = AsianOptionSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            call_put=OptionType.CALL,
+            strike=100.0,
+            maturity=_FD_MATURITY,
+            fixing_dates=_MONTHLY_FIXINGS,
+        )
+        assert spec.fixing_dates == _MONTHLY_FIXINGS

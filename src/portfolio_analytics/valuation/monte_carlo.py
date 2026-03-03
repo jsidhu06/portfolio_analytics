@@ -527,6 +527,15 @@ class _MCAsianValuation:
         self.underlying = parent.underlying
         self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
 
+    def _fixing_indices(self, time_grid: np.ndarray) -> np.ndarray | None:
+        """Return grid indices for explicit fixing dates, or None."""
+        if self.spec.fixing_dates is None:
+            return None
+        return np.array(
+            [_resolve_time_index(time_grid, d, "fixing_date") for d in self.spec.fixing_dates],
+            dtype=int,
+        )
+
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
 
@@ -537,17 +546,26 @@ class _MCAsianValuation:
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
-
-        # Determine averaging period
         spec = self.spec
-        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
 
-        # Find indices for averaging period
-        time_index_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
-        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        # When explicit fixing dates are given, average only at those
+        # grid nodes — any intervening dates (pricing date, ex-dividend
+        # dates, maturity) are excluded from the average.
+        fixing_idx = self._fixing_indices(time_grid)
+        if fixing_idx is not None:
+            averaging_paths = paths[fixing_idx, :]
+        else:
+            # Determine averaging period
+            averaging_start = (
+                spec.averaging_start if spec.averaging_start else self.parent.pricing_date
+            )
 
-        # Extract paths over averaging period (inclusive)
-        averaging_paths = paths[time_index_start : time_index_end + 1, :]
+            # Find indices for averaging period
+            time_index_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+            time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+
+            # Extract paths over averaging period (inclusive)
+            averaging_paths = paths[time_index_start : time_index_end + 1, :]
 
         # Calculate average for each path
         if spec.averaging is AsianAveraging.ARITHMETIC:
@@ -748,6 +766,15 @@ class _MCAsianAmericanValuation:
             return np.maximum(avg - K, 0.0)
         return np.maximum(K - avg, 0.0)
 
+    def _fixing_indices(self, time_grid: np.ndarray) -> np.ndarray | None:
+        """Return grid indices for explicit fixing dates, or None."""
+        if self.spec.fixing_dates is None:
+            return None
+        return np.array(
+            [_resolve_time_index(time_grid, d, "fixing_date") for d in self.spec.fixing_dates],
+            dtype=int,
+        )
+
     def _get_averaging_data(
         self,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -764,15 +791,22 @@ class _MCAsianAmericanValuation:
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
         spec = self.spec
-        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
 
-        idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
-        idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        fixing_idx = self._fixing_indices(time_grid)
+        if fixing_idx is not None:
+            averaging_paths = paths[fixing_idx]
+            time_list = time_grid[fixing_idx]
+        else:
+            averaging_start = (
+                spec.averaging_start if spec.averaging_start else self.parent.pricing_date
+            )
+            idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
+            idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+            averaging_paths = paths[idx_start : idx_end + 1]
+            time_list = time_grid[idx_start : idx_end + 1]
 
-        averaging_paths = paths[idx_start : idx_end + 1]
         running_avg = _running_averages(averaging_paths, spec.averaging)
         intrinsic = self._asian_payoff(running_avg)
-        time_list = time_grid[idx_start : idx_end + 1]
 
         return averaging_paths, running_avg, intrinsic, time_list
 
