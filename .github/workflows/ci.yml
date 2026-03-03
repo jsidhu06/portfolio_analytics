@@ -55,7 +55,6 @@ jobs:
   compatibility:
     name: Compatibility (resolver-based)
     runs-on: ubuntu-latest
-    needs: test-lint
     strategy:
       fail-fast: false
       matrix:
