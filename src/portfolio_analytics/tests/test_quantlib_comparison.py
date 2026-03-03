@@ -939,7 +939,7 @@ _ME_MC_EU = MonteCarloParams(random_seed=42)
 _ME_MC_AM = MonteCarloParams(random_seed=42, deg=3)
 
 
-def _me_nonflat_r_curve() -> DiscountCurve:
+def _nonflat_r_curve() -> DiscountCurve:
     times = np.array([0.0, 0.25, 0.5, 1.0])
     forwards = np.array([0.03, 0.05, 0.04])
     return DiscountCurve.from_forwards(times=times, forwards=forwards)
@@ -950,7 +950,7 @@ def _me_market_data(r_curve: DiscountCurve | None = None) -> MarketData:
     return MarketData(PRICING_DATE, curve, currency=CURRENCY)
 
 
-def _me_underlying(
+def _underlying(
     *,
     spot: float,
     r_curve: DiscountCurve | None = None,
@@ -966,7 +966,7 @@ def _me_underlying(
     )
 
 
-def _me_gbm(
+def _gbm(
     *,
     spot: float,
     r_curve: DiscountCurve | None = None,
@@ -988,22 +988,7 @@ def _me_gbm(
     return GBMProcess(_me_market_data(r_curve), params, sim)
 
 
-def _me_spec(
-    *,
-    strike: float,
-    option_type: OptionType,
-    exercise_type: ExerciseType,
-) -> OptionSpec:
-    return OptionSpec(
-        option_type=option_type,
-        exercise_type=exercise_type,
-        strike=strike,
-        maturity=MATURITY,
-        currency=CURRENCY,
-    )
-
-
-def _me_ql_price(
+def _ql_price(
     *,
     spot: float,
     strike: float,
@@ -1043,7 +1028,7 @@ def _me_ql_price(
     return float(option.NPV())
 
 
-def _me_ql_flat_handles(
+def _ql_flat_handles(
     rf_rate: float = _ME_RATE,
     div_yield: float = 0.0,
 ) -> tuple:
@@ -1071,9 +1056,9 @@ def _me_ql_flat_handles(
 def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield):
     """European vanilla: BSM, PDE, Binomial, MC all match QuantLib analytical."""
     q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
-    ud = _me_underlying(spot=spot, dividend_curve=q_curve)
-    gbm = _me_gbm(spot=spot, dividend_curve=q_curve)
-    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
+    ud = _underlying(spot=spot, dividend_curve=q_curve)
+    gbm = _gbm(spot=spot, dividend_curve=q_curve)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
     bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
@@ -1090,8 +1075,8 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
         params=_ME_MC_EU,
     ).present_value()
 
-    rf_h, div_h = _me_ql_flat_handles(div_yield=dividend_yield)
-    ql_pv = _me_ql_price(
+    rf_h, div_h = _ql_flat_handles(div_yield=dividend_yield)
+    ql_pv = _ql_price(
         spot=spot,
         strike=strike,
         option_type=option_type,
@@ -1133,9 +1118,9 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
 def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield):
     """American vanilla: PDE, Binomial, MC all match QuantLib FD."""
     q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
-    ud = _me_underlying(spot=spot, dividend_curve=q_curve)
-    gbm = _me_gbm(spot=spot, dividend_curve=q_curve)
-    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+    ud = _underlying(spot=spot, dividend_curve=q_curve)
+    gbm = _gbm(spot=spot, dividend_curve=q_curve)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
     binom_pv = OptionValuation(
@@ -1151,8 +1136,8 @@ def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
         params=_ME_MC_AM,
     ).present_value()
 
-    rf_h, div_h = _me_ql_flat_handles(div_yield=dividend_yield)
-    ql_pv = _me_ql_price(
+    rf_h, div_h = _ql_flat_handles(div_yield=dividend_yield)
+    ql_pv = _ql_price(
         spot=spot,
         strike=strike,
         option_type=option_type,
@@ -1185,7 +1170,7 @@ def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
     "r_curve",
     [
         flat_curve(PRICING_DATE, MATURITY, _ME_RATE),
-        _me_nonflat_r_curve(),
+        _nonflat_r_curve(),
     ],
     ids=["flat", "nonflat"],
 )
@@ -1198,9 +1183,9 @@ def test_discrete_div_european_vs_quantlib(r_curve):
         (PRICING_DATE + dt.timedelta(days=270), 0.5),
     ]
 
-    ud = _me_underlying(spot=spot, r_curve=r_curve, discrete_dividends=divs)
-    gbm = _me_gbm(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=200_000)
-    spec = _me_spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.EUROPEAN)
+    ud = _underlying(spot=spot, r_curve=r_curve, discrete_dividends=divs)
+    gbm = _gbm(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=200_000)
+    spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.EUROPEAN)
 
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
     mc_pv = OptionValuation(
@@ -1238,7 +1223,7 @@ def test_discrete_div_european_vs_quantlib(r_curve):
     rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
     div_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
-    ql_pv = _me_ql_price(
+    ql_pv = _ql_price(
         spot=spot,
         strike=strike,
         option_type=OptionType.PUT,
@@ -1284,7 +1269,7 @@ def test_discrete_div_european_vs_quantlib(r_curve):
     "r_curve",
     [
         flat_curve(PRICING_DATE, MATURITY, _ME_RATE),
-        _me_nonflat_r_curve(),
+        _nonflat_r_curve(),
     ],
     ids=["flat", "nonflat"],
 )
@@ -1294,9 +1279,9 @@ def test_discrete_div_american_vs_quantlib(spot, strike, r_curve):
         (PRICING_DATE + dt.timedelta(days=120), 0.6),
         (PRICING_DATE + dt.timedelta(days=240), 0.6),
     ]
-    ud = _me_underlying(spot=spot, r_curve=r_curve, discrete_dividends=divs)
-    gbm = _me_gbm(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=60_000)
-    spec = _me_spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
+    ud = _underlying(spot=spot, r_curve=r_curve, discrete_dividends=divs)
+    gbm = _gbm(spot=spot, r_curve=r_curve, discrete_dividends=divs, paths=60_000)
+    spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
 
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
     mc_pv = OptionValuation(
@@ -1310,7 +1295,7 @@ def test_discrete_div_american_vs_quantlib(spot, strike, r_curve):
     rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
     div_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
-    ql_pv = _me_ql_price(
+    ql_pv = _ql_price(
         spot=spot,
         strike=strike,
         option_type=OptionType.PUT,
@@ -1382,9 +1367,9 @@ def test_european_forward_curves_vs_quantlib(
     r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
     q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
 
-    ud = _me_underlying(spot=spot, r_curve=r_curve, dividend_curve=q_curve)
-    gbm = _me_gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
-    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
+    ud = _underlying(spot=spot, r_curve=r_curve, dividend_curve=q_curve)
+    gbm = _gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
     bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
@@ -1404,7 +1389,7 @@ def test_european_forward_curves_vs_quantlib(
     # QuantLib analytical European with forward curves
     rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
     div_h = _ql_curve_from_times(times=q_curve.times, dfs=q_curve.dfs)
-    ql_pv = _me_ql_price(
+    ql_pv = _ql_price(
         spot=spot,
         strike=strike,
         option_type=option_type,
@@ -1479,9 +1464,9 @@ def test_american_forward_curves_vs_quantlib(
     r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
     q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
 
-    ud = _me_underlying(spot=spot, r_curve=r_curve, dividend_curve=q_curve)
-    gbm = _me_gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
-    spec = _me_spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
+    ud = _underlying(spot=spot, r_curve=r_curve, dividend_curve=q_curve)
+    gbm = _gbm(spot=spot, r_curve=r_curve, dividend_curve=q_curve, paths=150_000)
+    spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
     binom_pv = OptionValuation(
@@ -1500,7 +1485,7 @@ def test_american_forward_curves_vs_quantlib(
     # QuantLib FD American with forward curves
     rf_h = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
     div_h = _ql_curve_from_times(times=q_curve.times, dfs=q_curve.dfs)
-    ql_pv = _me_ql_price(
+    ql_pv = _ql_price(
         spot=spot,
         strike=strike,
         option_type=option_type,
