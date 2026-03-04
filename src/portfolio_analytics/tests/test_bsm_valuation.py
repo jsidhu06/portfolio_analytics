@@ -10,7 +10,7 @@ from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 
@@ -35,9 +35,9 @@ class TestBSMValuation:
             "market_data": self.market_data,
         }
 
-        self.ud = UnderlyingPricingData(**underlying_params)
+        self.ud = UnderlyingData(**underlying_params)
 
-        self.ud_div = UnderlyingPricingData(
+        self.ud_div = UnderlyingData(
             **{
                 **underlying_params,
                 "dividend_curve": flat_curve(self.pricing_date, self.maturity, 0.03),
@@ -77,7 +77,7 @@ class TestBSMValuation:
             currency="USD",
         )
 
-        ud_no_div = UnderlyingPricingData(
+        ud_no_div = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -85,7 +85,7 @@ class TestBSMValuation:
             discrete_dividends=[],
         )
 
-        ud_div = UnderlyingPricingData(
+        ud_div = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -126,7 +126,7 @@ class TestBSMValuation:
 
     def test_bsm_call_itm(self):
         """Test BSM call option in-the-money."""
-        ud_itm = UnderlyingPricingData(
+        ud_itm = UnderlyingData(
             initial_value=110.0,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -154,7 +154,7 @@ class TestBSMValuation:
 
     def test_bsm_put_otm(self):
         """Test BSM put option out-of-the-money."""
-        ud_otm = UnderlyingPricingData(
+        ud_otm = UnderlyingData(
             initial_value=110.0,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -235,7 +235,7 @@ class TestBSMValuation:
         )
 
         # Create new underlying for put to avoid state pollution
-        ud_put = UnderlyingPricingData(
+        ud_put = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,

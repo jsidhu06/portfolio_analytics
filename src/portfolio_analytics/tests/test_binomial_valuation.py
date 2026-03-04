@@ -12,7 +12,7 @@ from portfolio_analytics.valuation import (
     BinomialParams,
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 
@@ -31,7 +31,7 @@ class TestBinomialValuation:
         self.curve = flat_curve(self.pricing_date, self.maturity, self.rate)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
-        self.ud = UnderlyingPricingData(
+        self.ud = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -77,13 +77,13 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud_eu = UnderlyingPricingData(
+        ud_eu = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
         )
 
-        ud_am = UnderlyingPricingData(
+        ud_am = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -119,7 +119,7 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud_no_div = UnderlyingPricingData(
+        ud_no_div = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -127,7 +127,7 @@ class TestBinomialValuation:
             discrete_dividends=[],
         )
 
-        ud_div = UnderlyingPricingData(
+        ud_div = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -168,13 +168,13 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud_eu = UnderlyingPricingData(
+        ud_eu = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
         )
 
-        ud_am = UnderlyingPricingData(
+        ud_am = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -210,13 +210,13 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud1 = UnderlyingPricingData(
+        ud1 = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
         )
 
-        ud2 = UnderlyingPricingData(
+        ud2 = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,

@@ -24,7 +24,7 @@ from ..exceptions import (
     UnsupportedFeatureError,
     ValidationError,
 )
-from .core import OptionValuation, UnderlyingPricingData
+from .core import OptionValuation, UnderlyingData
 from .params import BinomialParams
 
 
@@ -131,10 +131,8 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
 
 def _valuation_with_vol(valuation: OptionValuation, vol: float) -> OptionValuation:
     """Clone valuation with bumped volatility."""
-    if not isinstance(valuation.underlying, UnderlyingPricingData):
-        raise ConfigurationError(
-            "Implied volatility requires UnderlyingPricingData (not PathSimulation)."
-        )
+    if not isinstance(valuation.underlying, UnderlyingData):
+        raise ConfigurationError("Implied volatility requires UnderlyingData (not PathSimulation).")
 
     bumped_underlying = valuation.underlying.replace(volatility=float(vol))
     return OptionValuation(

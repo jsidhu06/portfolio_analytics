@@ -14,7 +14,7 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from portfolio_analytics.valuation.core import AsianSpec
 from portfolio_analytics.valuation.params import BinomialParams, PDEParams
 
@@ -32,7 +32,7 @@ def _build_underlying(spot: float, vol: float, rate: float, dividend_rate: float
         None if dividend_rate == 0.0 else flat_curve(PRICING_DATE, MATURITY, dividend_rate)
     )
     market_data = MarketData(PRICING_DATE, curve, currency=CURRENCY)
-    return UnderlyingPricingData(
+    return UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,

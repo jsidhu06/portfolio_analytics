@@ -17,7 +17,7 @@ from portfolio_analytics.valuation import (
     MonteCarloParams,
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 
@@ -204,7 +204,7 @@ class TestMCSValuation:
         assert np.isclose(pv2, pv1, rtol=0.02)  # 2% tolerance
 
         # binomial should also be close
-        ud_bin = UnderlyingPricingData(
+        ud_bin = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,

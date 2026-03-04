@@ -21,7 +21,7 @@ from portfolio_analytics.valuation import (
     AsianSpec,
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 from portfolio_analytics.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
@@ -221,7 +221,7 @@ def _pde_fd_american(
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> float:
-    ud = UnderlyingPricingData(
+    ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(r_curve),
@@ -509,7 +509,7 @@ def _bsm_european(
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
 ) -> float:
-    ud = UnderlyingPricingData(
+    ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),
@@ -526,7 +526,7 @@ def _binomial_european(
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
 ) -> float:
-    ud = UnderlyingPricingData(
+    ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),
@@ -956,8 +956,8 @@ def _underlying(
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
-) -> UnderlyingPricingData:
-    return UnderlyingPricingData(
+) -> UnderlyingData:
+    return UnderlyingData(
         initial_value=spot,
         volatility=_ME_VOL,
         market_data=_me_market_data(r_curve),

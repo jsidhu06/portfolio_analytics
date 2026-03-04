@@ -10,7 +10,7 @@ Core classes:
     OptionValuation: Main dispatcher for option pricing
     VanillaSpec: Contract specification for vanilla options
     PayoffSpec: Contract specification for custom payoffs
-    UnderlyingPricingData: Minimal underlying data container
+    UnderlyingData: Minimal underlying data container
 
 Parameter classes:
     MonteCarloParams: Configuration for Monte Carlo pricing
@@ -24,7 +24,7 @@ from .core import (
     VanillaSpec,
     PayoffSpec,
     AsianSpec,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 from .params import (
     MonteCarloParams,
@@ -40,7 +40,7 @@ __all__ = [
     "VanillaSpec",
     "PayoffSpec",
     "AsianSpec",
-    "UnderlyingPricingData",
+    "UnderlyingData",
     # Parameter classes
     "MonteCarloParams",
     "BinomialParams",

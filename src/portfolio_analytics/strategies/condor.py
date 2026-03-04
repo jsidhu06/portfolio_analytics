@@ -20,7 +20,7 @@ from ..valuation.params import ValuationParams
 
 if TYPE_CHECKING:
     from ..stochastic_processes import PathSimulation
-    from ..valuation.core import UnderlyingPricingData
+    from ..valuation.core import UnderlyingData
     from ..enums import PricingMethod
 
 
@@ -108,7 +108,7 @@ class CondorSpec:
     def present_value(
         self,
         *,
-        underlying: PathSimulation | UnderlyingPricingData,
+        underlying: PathSimulation | UnderlyingData,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ) -> float:

@@ -12,7 +12,7 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation import (
     VanillaSpec,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 from portfolio_analytics.tests.helpers import flat_curve
@@ -87,9 +87,9 @@ def market_data(
 
 
 @pytest.fixture()
-def underlying_data(market_data: MarketData) -> UnderlyingPricingData:
+def underlying_data(market_data: MarketData) -> UnderlyingData:
     """ATM underlying with no dividends."""
-    return UnderlyingPricingData(
+    return UnderlyingData(
         initial_value=SPOT,
         volatility=VOL,
         market_data=market_data,

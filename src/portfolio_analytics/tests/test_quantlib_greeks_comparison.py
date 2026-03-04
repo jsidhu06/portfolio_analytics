@@ -28,7 +28,7 @@ from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
@@ -90,8 +90,8 @@ def _underlying(
     *,
     spot: float,
     dividend_curve: DiscountCurve | None = None,
-) -> UnderlyingPricingData:
-    return UnderlyingPricingData(
+) -> UnderlyingData:
+    return UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),

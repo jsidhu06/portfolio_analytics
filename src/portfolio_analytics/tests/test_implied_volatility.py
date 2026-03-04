@@ -24,7 +24,7 @@ from portfolio_analytics.valuation import (
     ImpliedVolResult,
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
     implied_volatility,
 )
 from portfolio_analytics.valuation.params import BinomialParams
@@ -46,7 +46,7 @@ def _build_valuation(
         None if dividend_rate == 0.0 else flat_curve(pricing_date, maturity, dividend_rate)
     )
     market_data = MarketData(pricing_date, curve, currency="USD")
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
@@ -82,7 +82,7 @@ def _build_discrete_dividend_valuation(
         (pricing_date + dt.timedelta(days=90), 0.5),
         (pricing_date + dt.timedelta(days=270), 0.5),
     ]
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
@@ -120,7 +120,7 @@ def _build_binomial_valuation(
         None if dividend_rate == 0.0 else flat_curve(pricing_date, maturity, dividend_rate)
     )
     market_data = MarketData(pricing_date, curve, currency="USD")
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,

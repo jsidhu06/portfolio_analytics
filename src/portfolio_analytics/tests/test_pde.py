@@ -23,7 +23,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from portfolio_analytics.valuation.params import PDEParams
 
 
@@ -43,8 +43,8 @@ def _underlying(
     *,
     spot: float,
     dividend_curve: DiscountCurve | None = None,
-) -> UnderlyingPricingData:
-    return UnderlyingPricingData(
+) -> UnderlyingData:
+    return UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),

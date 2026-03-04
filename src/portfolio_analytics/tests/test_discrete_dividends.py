@@ -15,7 +15,7 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.utils import pv_discrete_dividends
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
 
@@ -43,7 +43,7 @@ def _build_case():
         currency="USD",
     )
 
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
@@ -129,7 +129,7 @@ def test_binomial_accepts_discrete_dividends_with_nonflat_curve():
         (pricing_date + dt.timedelta(days=90), 0.5),
         (pricing_date + dt.timedelta(days=270), 0.5),
     ]
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=52.0,
         volatility=0.4,
         market_data=market_data,

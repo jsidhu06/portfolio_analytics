@@ -11,7 +11,7 @@ from portfolio_analytics.exceptions import (
 from portfolio_analytics.valuation import (
     VanillaSpec,
     PayoffSpec,
-    UnderlyingPricingData,
+    UnderlyingData,
     OptionValuation,
     BinomialParams,
     MonteCarloParams,
@@ -155,8 +155,8 @@ class TestCondorSpec:
             )
 
 
-class TestUnderlyingPricingData:
-    """Tests for UnderlyingPricingData class."""
+class TestUnderlyingData:
+    """Tests for UnderlyingData class."""
 
     def setup_method(self):
         """Set up market environment for tests."""
@@ -166,8 +166,8 @@ class TestUnderlyingPricingData:
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
     def test_underlying_data_creation(self):
-        """Test successful creation of UnderlyingPricingData."""
-        ud = UnderlyingPricingData(
+        """Test successful creation of UnderlyingData."""
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -177,8 +177,8 @@ class TestUnderlyingPricingData:
         assert ud.pricing_date == self.pricing_date
 
     def test_underlying_data_is_frozen(self):
-        """Test that UnderlyingPricingData is frozen (immutable)."""
-        ud = UnderlyingPricingData(
+        """Test that UnderlyingData is frozen (immutable)."""
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -216,8 +216,8 @@ class TestOptionValuation:
         )
 
     def test_option_valuation_with_underlying_data_bsm(self):
-        """Test OptionValuation creation with UnderlyingPricingData and BSM pricing."""
-        ud = UnderlyingPricingData(
+        """Test OptionValuation creation with UnderlyingData and BSM pricing."""
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -232,8 +232,8 @@ class TestOptionValuation:
         assert isinstance(valuation._impl, _BSMEuropeanValuation)
 
     def test_option_valuation_with_underlying_data_binomial(self):
-        """Test OptionValuation creation with UnderlyingPricingData and Binomial pricing."""
-        ud = UnderlyingPricingData(
+        """Test OptionValuation creation with UnderlyingData and Binomial pricing."""
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -253,7 +253,7 @@ class TestOptionValuation:
             dfs=np.array([1.0, np.exp(-0.03 * 0.5), np.exp(-0.06 * 1.0)]),
         )
         market_data = MarketData(self.pricing_date, nonflat_curve, currency="USD")
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=market_data,
@@ -336,7 +336,7 @@ class TestOptionValuation:
 
     def test_option_valuation_invalid_maturity(self):
         """Test that OptionValuation raises error if maturity <= pricing_date."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -359,7 +359,7 @@ class TestOptionValuation:
 
     def test_option_valuation_currency_mismatch(self):
         """Test that OptionValuation raises for cross-currency inputs."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -384,7 +384,7 @@ class TestOptionValuation:
 
     def test_binomial_condor_equals_sum_of_legs(self):
         """A European condor payoff priced directly equals sum of vanilla legs (binomial)."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=90.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -489,7 +489,7 @@ class TestOptionValuation:
         """Condor PV via binomial should approx equal PV via MCS under same params."""
         initial_value, volatility = 90, 0.2
 
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=initial_value,
             volatility=volatility,
             market_data=self.market_data,
@@ -577,8 +577,8 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        # Binomial (UnderlyingPricingData)
-        ud = UnderlyingPricingData(
+        # Binomial (UnderlyingData)
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -622,7 +622,7 @@ class TestOptionValuation:
 
     def test_american_condor_is_sum_of_american_legs_binomial(self):
         """American CondorSpec is valued as an independently exercisable strategy (sum of legs)."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=90.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -723,7 +723,7 @@ class TestOptionValuation:
 
     def test_option_valuation_invalid_pricing_method_type(self):
         """Test that OptionValuation validates pricing_method is PricingMethod enum."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -737,8 +737,8 @@ class TestOptionValuation:
             )
 
     def test_option_valuation_mc_requires_path_simulation(self):
-        """Test that Monte Carlo pricing requires PathSimulation, not UnderlyingPricingData."""
-        ud = UnderlyingPricingData(
+        """Test that Monte Carlo pricing requires PathSimulation, not UnderlyingData."""
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -757,7 +757,7 @@ class TestOptionValuation:
     def test_underlying_pricing_data_warns_mixed_dividends(self):
         """Both dividend_curve and discrete_dividends should emit a warning."""
         with pytest.warns(UserWarning, match="both dividend_curve and discrete_dividends"):
-            UnderlyingPricingData(
+            UnderlyingData(
                 initial_value=100.0,
                 volatility=0.2,
                 market_data=self.market_data,
@@ -766,7 +766,7 @@ class TestOptionValuation:
             )
 
     def test_option_valuation_binomial_rejects_path_simulation(self):
-        """Test that Binomial pricing rejects PathSimulation (should use UnderlyingPricingData)."""
+        """Test that Binomial pricing rejects PathSimulation (should use UnderlyingData)."""
         process = GBMProcess(
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
@@ -787,7 +787,7 @@ class TestOptionValuation:
             )
 
     def test_option_valuation_bsm_rejects_path_simulation(self):
-        """Test that BSM pricing rejects PathSimulation (should use UnderlyingPricingData)."""
+        """Test that BSM pricing rejects PathSimulation (should use UnderlyingData)."""
         process = GBMProcess(
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
@@ -808,7 +808,7 @@ class TestOptionValuation:
             )
 
     def test_option_valuation_pde_rejects_path_simulation(self):
-        """Test that PDE_FD pricing rejects PathSimulation (should use UnderlyingPricingData)."""
+        """Test that PDE_FD pricing rejects PathSimulation (should use UnderlyingData)."""
         process = GBMProcess(
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
@@ -830,7 +830,7 @@ class TestOptionValuation:
 
     def test_option_valuation_american_bsm_not_implemented(self):
         """Test that American option BSM pricing raises NotImplementedError."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -853,7 +853,7 @@ class TestOptionValuation:
             )
 
     def test_dispatcher_creates_fd_impl_for_american(self):
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -871,7 +871,7 @@ class TestOptionValuation:
         assert isinstance(valuation._impl, _FDAmericanValuation)
 
     def test_american_put_fd_close_to_binomial(self):
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -902,7 +902,7 @@ class TestOptionValuation:
         assert np.isclose(fd_pv, tree_pv, rtol=0.01)
 
     def test_american_call_fd_close_to_binomial(self):
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -938,7 +938,7 @@ class TestOptionValuation:
         Regression test for the PDE fast-path that prices this case using the
         European CN solver (skipping PSOR).
         """
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -970,7 +970,7 @@ class TestOptionValuation:
         assert np.isclose(am_pv, eu_pv, rtol=1e-12, atol=1e-12)
 
     def test_american_call_no_dividend_close_to_bsm_european(self):
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,
@@ -1020,7 +1020,7 @@ class TestOptionValuation:
             (self.pricing_date + dt.timedelta(days=180), 0.6),
         ]
 
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=100.0,
             volatility=0.2,
             market_data=self.market_data,

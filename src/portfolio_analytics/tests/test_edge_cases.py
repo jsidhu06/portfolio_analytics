@@ -26,7 +26,7 @@ from portfolio_analytics.valuation import (
     VanillaSpec,
     OptionValuation,
     PDEParams,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 PRICING_DATE = dt.datetime(2025, 1, 1)
@@ -40,11 +40,11 @@ def _underlying(
     rate: float = RATE,
     q: float = 0.0,
     maturity: dt.datetime = MATURITY,
-) -> UnderlyingPricingData:
+) -> UnderlyingData:
     r_curve = flat_curve(PRICING_DATE, maturity, rate)
     q_curve = flat_curve(PRICING_DATE, maturity, q) if q != 0.0 else None
     md = MarketData(pricing_date=PRICING_DATE, discount_curve=r_curve, currency="USD")
-    return UnderlyingPricingData(
+    return UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=md,
@@ -68,7 +68,7 @@ def _spec(
 
 
 def _pv(
-    ud: UnderlyingPricingData,
+    ud: UnderlyingData,
     spec: VanillaSpec,
     method: PricingMethod,
     **kw,

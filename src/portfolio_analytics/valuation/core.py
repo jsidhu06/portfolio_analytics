@@ -3,14 +3,14 @@
 This module is the central orchestration layer for pricing:
 
 - Spec dataclasses (`VanillaSpec`, `PayoffSpec`, `AsianSpec`)
-- Underlying data container (`UnderlyingPricingData`)
+- Underlying data container (`UnderlyingData`)
 - Registry-based dispatcher (`OptionValuation`) that maps
     `(PricingMethod, ExerciseType)` to a private implementation engine
 
 Design notes
 ------------
 - Deterministic methods (`BSM`, `BINOMIAL`, `PDE_FD`) operate on
-    `UnderlyingPricingData`.
+    `UnderlyingData`.
 - Monte Carlo methods operate on `PathSimulation` instances.
 - Greeks default to engine-native methods when available, otherwise
     fall back to bump-and-revalue via immutable `replace(...)` calls.
@@ -357,8 +357,13 @@ class AsianSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class UnderlyingPricingData:
+class UnderlyingData:
     """Minimal underlying container for deterministic valuation methods.
+
+    Parameterises the Black-Scholes-Merton (GBM) dynamics used by analytical,
+    tree, and PDE engines.  When Monte Carlo simulation is required, use
+    ``GBMProcess`` (or another ``PathSimulation`` subclass) instead — it
+    carries the additional simulation configuration (paths, time grid, seed).
 
     Used by methods that do not require explicit path simulation (for example
     BSM, binomial trees, and PDE finite differences).
@@ -408,7 +413,7 @@ class UnderlyingPricingData:
             import warnings
 
             warnings.warn(
-                "UnderlyingPricingData: both dividend_curve and discrete_dividends "
+                "UnderlyingData: both dividend_curve and discrete_dividends "
                 "provided. The continuous yield will enter the drift and discrete "
                 "dividends will be subtracted at each ex-date.",
                 stacklevel=2,
@@ -429,8 +434,8 @@ class UnderlyingPricingData:
         """Currency from ``market_data``."""
         return self.market_data.currency
 
-    def replace(self, **kwargs: object) -> "UnderlyingPricingData":
-        """Create a new UnderlyingPricingData instance with modified fields.
+    def replace(self, **kwargs: object) -> "UnderlyingData":
+        """Create a new UnderlyingData instance with modified fields.
 
         This is used for bump-and-revalue calculations (e.g., Greeks) without
         mutating the original object, making it thread-safe and explicit.
@@ -443,7 +448,7 @@ class UnderlyingPricingData:
 
         Returns
         -------
-        UnderlyingPricingData
+        UnderlyingData
             New instance with specified fields replaced
         """
         return dc_replace(self, **kwargs)  # type: ignore[arg-type]
@@ -456,7 +461,7 @@ class OptionValuation:
 
     def __init__(
         self,
-        underlying: PathSimulation | UnderlyingPricingData,
+        underlying: PathSimulation | UnderlyingData,
         spec: VanillaSpec | PayoffSpec | AsianSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
@@ -549,7 +554,7 @@ class OptionValuation:
         ) and isinstance(self._underlying, PathSimulation):
             raise ConfigurationError(
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
-                "Pass an UnderlyingPricingData instance instead of PathSimulation."
+                "Pass an UnderlyingData instance instead of PathSimulation."
             )
 
         # Dispatch to appropriate pricing method implementation
@@ -834,7 +839,7 @@ class OptionValuation:
     # ──────────────────────────────
 
     @property
-    def underlying(self) -> PathSimulation | UnderlyingPricingData:
+    def underlying(self) -> PathSimulation | UnderlyingData:
         """Underlying data/process used by this valuation instance."""
         return self._underlying
 
@@ -1019,10 +1024,10 @@ class OptionValuation:
 
         return base_pv + (euro_bsm - euro_num)
 
-    def _as_underlying_data(self) -> UnderlyingPricingData:
-        """Return an UnderlyingPricingData instance, extracting from PathSimulation if needed."""
+    def _as_underlying_data(self) -> UnderlyingData:
+        """Return an UnderlyingData instance, extracting from PathSimulation if needed."""
         if isinstance(self._underlying, PathSimulation):
-            return UnderlyingPricingData(
+            return UnderlyingData(
                 initial_value=self._underlying.initial_value,
                 volatility=self._underlying.volatility,
                 market_data=self._underlying.market_data,

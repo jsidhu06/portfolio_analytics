@@ -34,7 +34,7 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from portfolio_analytics.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
     _asian_geometric_analytical,
@@ -75,8 +75,8 @@ def _underlying(
     maturity: dt.datetime,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
-) -> UnderlyingPricingData:
-    return UnderlyingPricingData(
+) -> UnderlyingData:
+    return UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=_market_data(short_rate, maturity),
@@ -1439,7 +1439,7 @@ class TestSeasonedAsian:
     RATE = 0.10
     MATURITY = PRICING_DATE + dt.timedelta(days=365)
 
-    def _ud(self) -> UnderlyingPricingData:
+    def _ud(self) -> UnderlyingData:
         return _underlying(
             spot=self.SPOT,
             vol=self.VOL,

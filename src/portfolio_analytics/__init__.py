@@ -46,7 +46,7 @@ from .strategies import CondorSpec
 from .valuation import (
     VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
     PayoffSpec,
     AsianSpec,
     MonteCarloParams,
@@ -84,7 +84,7 @@ __all__ = [
     # Valuation
     "VanillaSpec",
     "OptionValuation",
-    "UnderlyingPricingData",
+    "UnderlyingData",
     "PayoffSpec",
     "AsianSpec",
     "MonteCarloParams",
