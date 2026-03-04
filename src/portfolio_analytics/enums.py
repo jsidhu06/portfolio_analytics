@@ -47,6 +47,7 @@ class PricingMethod(Enum):
 class GreekCalculationMethod(Enum):
     ANALYTICAL = "analytical"
     TREE = "tree"
+    GRID = "grid"
     NUMERICAL = "numerical"
     PATHWISE = "pathwise"
     LIKELIHOOD_RATIO = "likelihood_ratio"

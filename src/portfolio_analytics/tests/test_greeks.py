@@ -581,14 +581,16 @@ class TestGreekErrorHandling(TestGreeksSetup):
 
         valuation = self._make_val(self._make_ud(), spec, PricingMethod.BINOMIAL)
 
-        with pytest.raises(ValidationError, match="Analytical greeks are only available for BSM"):
+        with pytest.raises(
+            ValidationError, match=r"Analytical greeks are only available for BSM.*"
+        ):
             valuation.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
 
     def test_tree_greek_with_non_binomial_raises_error(self):
         spec = self._make_spec(option_type=OptionType.CALL)
         valuation = self._make_val(self._make_ud(), spec, PricingMethod.BSM)
 
-        with pytest.raises(ValidationError, match="Tree greeks are only available for BINOMIAL"):
+        with pytest.raises(ValidationError, match=r"Tree greeks are only available for BINOMIAL.*"):
             valuation.delta(greek_calc_method=GreekCalculationMethod.TREE)
 
     def test_tree_greek_for_vega_raises_error(self):

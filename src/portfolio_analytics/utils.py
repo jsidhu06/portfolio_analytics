@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import warnings
 from contextlib import contextmanager
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime
 from math import comb
-from typing import TYPE_CHECKING, Callable, Sequence
-from collections.abc import Iterator
+from typing import TYPE_CHECKING
 import time
 import numpy as np
 

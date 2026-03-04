@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Sequence
+from collections.abc import Sequence
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace as dc_replace
 import copy
@@ -15,6 +15,13 @@ from .enums import DayCountConvention
 from .utils import calculate_year_fraction
 from .rates import DiscountCurve
 from .exceptions import ConfigurationError, ValidationError
+
+
+_MIXED_DIVIDEND_WARNING_TEMPLATE = (
+    "{cls}: both dividend_curve and discrete_dividends provided. "
+    "The continuous yield will enter the drift and discrete dividends "
+    "will be subtracted at each ex-date."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,9 +133,7 @@ class GBMParams:
         )
         if self.dividend_curve is not None and self.discrete_dividends:
             warnings.warn(
-                "GBMParams: both dividend_curve and discrete_dividends provided. "
-                "The continuous yield will enter the drift and discrete dividends "
-                "will be subtracted at each ex-date.",
+                _MIXED_DIVIDEND_WARNING_TEMPLATE.format(cls="GBMParams"),
                 stacklevel=2,
             )
 
@@ -175,9 +180,7 @@ class JDParams:
         )
         if self.dividend_curve is not None and self.discrete_dividends:
             warnings.warn(
-                "JDParams: both dividend_curve and discrete_dividends provided. "
-                "The continuous yield will enter the drift and discrete dividends "
-                "will be subtracted at each ex-date.",
+                _MIXED_DIVIDEND_WARNING_TEMPLATE.format(cls="JDParams"),
                 stacklevel=2,
             )
 

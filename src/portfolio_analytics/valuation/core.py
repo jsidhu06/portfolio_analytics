@@ -1,3 +1,21 @@
+"""Core valuation contracts and dispatcher.
+
+This module is the central orchestration layer for pricing:
+
+- Spec dataclasses (`OptionSpec`, `PayoffSpec`, `AsianOptionSpec`)
+- Underlying data container (`UnderlyingPricingData`)
+- Registry-based dispatcher (`OptionValuation`) that maps
+    `(PricingMethod, ExerciseType)` to a private implementation engine
+
+Design notes
+------------
+- Deterministic methods (`BSM`, `BINOMIAL`, `PDE_FD`) operate on
+    `UnderlyingPricingData`.
+- Monte Carlo methods operate on `PathSimulation` instances.
+- Greeks default to engine-native methods when available, otherwise
+    fall back to bump-and-revalue via immutable `replace(...)` calls.
+"""
+
 from __future__ import annotations
 from dataclasses import dataclass, replace as dc_replace
 from collections.abc import Callable, Sequence
@@ -73,10 +91,46 @@ _ASIAN_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
     (PricingMethod.BSM, ExerciseType.EUROPEAN): _AnalyticalAsianValuation,
 }
 
+# Maps GreekCalculationMethod → (required PricingMethod, capability_flag_name,
+# human-readable str of supported greeks for that capability).
+_GREEK_METHOD_RULES: dict[GreekCalculationMethod, tuple[PricingMethod, str, str]] = {
+    GreekCalculationMethod.ANALYTICAL: (
+        PricingMethod.BSM,
+        "bsm_capable",  # always True for BSM — not a caller flag
+        "all BSM greeks",
+    ),
+    GreekCalculationMethod.TREE: (
+        PricingMethod.BINOMIAL,
+        "tree_capable",
+        "delta, gamma, and theta",
+    ),
+    GreekCalculationMethod.GRID: (
+        PricingMethod.PDE_FD,
+        "grid_capable",
+        "delta, gamma, and theta",
+    ),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class OptionSpec:
-    """Contract specification for a vanilla option."""
+    """Contract specification for a vanilla option.
+
+    Parameters
+    ----------
+    option_type
+        Vanilla option direction (CALL or PUT).
+    exercise_type
+        Exercise style (EUROPEAN or AMERICAN).
+    strike
+        Strike price.
+    maturity
+        Contract maturity datetime.
+    currency
+        Optional contract currency. If ``None``, the underlying currency is used for valuation.
+    contract_size
+        Contract multiplier applied to the unit option value.
+    """
 
     option_type: OptionType  # CALL / PUT
     exercise_type: ExerciseType  # EUROPEAN / AMERICAN
@@ -122,10 +176,24 @@ class PayoffSpec:
     contract for exercise decisions (American pricing compares intrinsic vs continuation
     on the full payoff).
 
+    Parameters
+    ----------
+    exercise_type
+        Exercise style (EUROPEAN or AMERICAN).
+    maturity
+        Contract maturity datetime.
+    payoff_fn
+        Vectorized payoff callable in spot, accepting ``float | np.ndarray`` and
+        returning ``np.ndarray``.
+    currency
+        Optional contract currency. If ``None``, the underlying currency is used.
+    contract_size
+        Contract multiplier applied to the unit payoff value.
+
     Notes
     -----
-    - payoff_fn must be vectorized over spot (accept float or np.ndarray and return np.ndarray)
-    - strike is kept as None for compatibility with the OptionValuation interface
+    ``strike`` is intentionally fixed to ``None`` for interface compatibility with
+    ``OptionValuation``.
     """
 
     exercise_type: ExerciseType
@@ -217,6 +285,11 @@ class AsianOptionSpec:
     observed_average: float | None = None
     observed_count: int | None = None
 
+    @property
+    def option_type(self) -> OptionType:
+        """Alias for ``call_put`` to align with vanilla ``OptionSpec`` naming."""
+        return self.call_put
+
     def __post_init__(self) -> None:
         """Validate Asian option specification."""
         if not isinstance(self.averaging, AsianAveraging):
@@ -292,13 +365,23 @@ class AsianOptionSpec:
 
 @dataclass(frozen=True, slots=True)
 class UnderlyingPricingData:
-    """Minimal data container for option valuation underlying asset.
+    """Minimal underlying container for deterministic valuation methods.
 
-    Used when pricing with methods that don't require full stochastic process simulation
-    (e.g., BSM, binomial trees, FD approximation to PDE).
-    Contains only essential parameters: spot price, volatility, pricing date, discount curve,
-    continuous dividend yield via dividend_curve,
-    and optional discrete dividends as (ex_date, amount) pairs.
+    Used by methods that do not require explicit path simulation (for example
+    BSM, binomial trees, and PDE finite differences).
+
+    Parameters
+    ----------
+    initial_value
+        Spot value at pricing time.
+    volatility
+        Annualized volatility.
+    market_data
+        Market context containing pricing date, discount curve, and currency.
+    discrete_dividends
+        Optional sequence of ``(ex_date, amount)`` cash dividends.
+    dividend_curve
+        Optional dividend discount curve for modeling continuous yields.
     """
 
     initial_value: float
@@ -374,12 +457,9 @@ class UnderlyingPricingData:
 
 
 class OptionValuation:
-    """Single-factor option valuation dispatcher.
-
-    Routes to the appropriate pricing implementation based on pricing_method + exercise_type.
+    """Single-factor option valuation facade and dispatcher.
     Instances are effectively immutable once created — constructor arguments are exposed as
-    read-only properties.
-    """
+    read-only properties."""
 
     def __init__(
         self,
@@ -400,12 +480,10 @@ class OptionValuation:
         self._pricing_method = pricing_method
 
         # Resolve option_type (best-effort across spec variants)
-        if hasattr(spec, "option_type") and isinstance(spec.option_type, OptionType):
-            self._option_type: OptionType | None = spec.option_type
-        elif hasattr(spec, "call_put") and isinstance(spec.call_put, OptionType):
-            self._option_type = spec.call_put
-        else:
-            self._option_type = None
+        option_type = getattr(spec, "option_type", None)
+        self._option_type: OptionType | None = (
+            option_type if isinstance(option_type, OptionType) else None
+        )
 
         # Resolve params
         self._params: ValuationParams | None = self._resolve_params(
@@ -495,12 +573,6 @@ class OptionValuation:
     # Public API (methods)
     # ──────────────────────────────
 
-    def solve(
-        self,
-    ) -> float | np.ndarray | tuple[np.ndarray, np.ndarray] | tuple[float, np.ndarray, np.ndarray]:
-        """Run the pricing method's core solver and return its raw output."""
-        return self._impl.solve()
-
     def present_value(self) -> float:
         """Calculate present value of the derivative."""
         if self._pv_interceptor is not None:
@@ -547,11 +619,14 @@ class OptionValuation:
             greek_calc_method,
             tree_capable=True,
             mc_analytic_capable=True,
+            grid_capable=True,
         )
         if method == GreekCalculationMethod.PATHWISE:
             return float(self._impl.delta_pathwise())
         if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
             return float(self._impl.delta_lr())
+        if method == GreekCalculationMethod.GRID:
+            return float(self._impl.delta())
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.delta())
 
@@ -595,6 +670,7 @@ class OptionValuation:
             greek_calc_method,
             tree_capable=True,
             mc_analytic_capable=True,
+            grid_capable=True,
         )
         if method == GreekCalculationMethod.PATHWISE:
             return float(self._impl.gamma_pathwise_fd(epsilon))
@@ -603,6 +679,8 @@ class OptionValuation:
                 "likelihood_ratio is not available for gamma. "
                 "Use PATHWISE (central-difference of pathwise delta) or NUMERICAL."
             )
+        if method == GreekCalculationMethod.GRID:
+            return float(self._impl.gamma())
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.gamma())
 
@@ -683,7 +761,11 @@ class OptionValuation:
         float
             Value change per day.
         """
-        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
+        method = self._resolve_greek_method(
+            greek_calc_method,
+            tree_capable=True,
+            grid_capable=True,
+        )
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.theta())
 
@@ -1044,7 +1126,6 @@ class OptionValuation:
             return self._params.num_steps + 1
 
         if self._pricing_method is PricingMethod.MONTE_CARLO:
-            assert isinstance(spec, AsianOptionSpec)
             if spec.fixing_dates is not None:
                 return len(spec.fixing_dates)
             assert isinstance(self._underlying, PathSimulation)
@@ -1134,13 +1215,32 @@ class OptionValuation:
         # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
         return 0.0
 
+    @property
+    def _is_mc_analytic_eligible(self) -> bool:
+        """True when pathwise / likelihood-ratio MC Greeks are available."""
+        return (
+            self._pricing_method == PricingMethod.MONTE_CARLO
+            and isinstance(self.underlying, GBMProcess)
+            and isinstance(self._spec, OptionSpec)
+            and self._spec.exercise_type is ExerciseType.EUROPEAN
+            and not self._underlying.discrete_dividends
+        )
+
     def _resolve_greek_method(
         self,
         greek_calc_method: GreekCalculationMethod | None,
         *,
         tree_capable: bool = False,
         mc_analytic_capable: bool = False,
+        grid_capable: bool = False,
     ) -> GreekCalculationMethod:
+        """Resolve and validate the Greek computation method.
+
+        When *greek_calc_method* is ``None`` the best available method is
+        chosen automatically (ANALYTICAL → TREE → GRID → PATHWISE → NUMERICAL).
+        When an explicit method is supplied it is validated against the
+        current pricing engine and capability flags.
+        """
         if greek_calc_method is not None and not isinstance(
             greek_calc_method, GreekCalculationMethod
         ):
@@ -1149,62 +1249,95 @@ class OptionValuation:
                 f"got {type(greek_calc_method).__name__}"
             )
 
+        # --- auto-select when caller passes None ---
         if greek_calc_method is None:
-            if self._pricing_method == PricingMethod.BSM:
-                return GreekCalculationMethod.ANALYTICAL
-            if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
-                return GreekCalculationMethod.TREE
-            return GreekCalculationMethod.NUMERICAL
-
-        if (
-            greek_calc_method == GreekCalculationMethod.ANALYTICAL
-            and self._pricing_method != PricingMethod.BSM
-        ):
-            raise ValidationError(
-                "Analytical greeks are only available for BSM pricing method. "
-                "Use GreekCalculationMethod.NUMERICAL (or .TREE for binomial delta/gamma/theta)."
+            return self._auto_select_greek_method(
+                tree_capable=tree_capable,
+                mc_analytic_capable=mc_analytic_capable,
+                grid_capable=grid_capable,
             )
 
-        if greek_calc_method == GreekCalculationMethod.TREE:
-            if self._pricing_method != PricingMethod.BINOMIAL:
-                raise ValidationError("Tree greeks are only available for BINOMIAL pricing method.")
-            if not tree_capable:
-                raise ValidationError(
-                    "Tree extraction is not available for this greek. "
-                    "Only delta, gamma, and theta support GreekCalculationMethod.TREE."
-                )
+        # --- validate explicit choice ---
+        capability_flags = {
+            "tree_capable": tree_capable,
+            "grid_capable": grid_capable,
+            "bsm_capable": True,  # ANALYTICAL has no per-greek gate
+        }
 
-        if greek_calc_method in (
+        rule = _GREEK_METHOD_RULES.get(greek_calc_method)
+        if rule is not None:
+            required_method, cap_flag, supported_greeks = rule
+            if self._pricing_method != required_method:
+                raise ValidationError(
+                    f"{greek_calc_method.value.capitalize()} greeks are only available for "
+                    f"{required_method.name} pricing method."
+                )
+            if not capability_flags[cap_flag]:
+                raise ValidationError(
+                    f"{greek_calc_method.value.capitalize()} extraction is not available "
+                    f"for this greek. Only {supported_greeks} support "
+                    f"GreekCalculationMethod.{greek_calc_method.name}."
+                )
+        elif greek_calc_method in (
             GreekCalculationMethod.PATHWISE,
             GreekCalculationMethod.LIKELIHOOD_RATIO,
         ):
-            if self._pricing_method != PricingMethod.MONTE_CARLO:
-                raise ValidationError(
-                    f"{greek_calc_method.value} greeks are only available for "
-                    "MONTE_CARLO pricing method."
-                )
-
-            if not isinstance(self.underlying, GBMProcess):
-                raise ValidationError("MC greeks are only available for GBMProcess underlying.")
-
-            if not mc_analytic_capable:
-                raise ValidationError(
-                    f"{greek_calc_method.value} is not available for this greek. "
-                    "Only delta, gamma, and vega support PATHWISE; "
-                    "only delta and vega support LIKELIHOOD_RATIO."
-                )
-            if not isinstance(self._spec, OptionSpec):
-                raise ValidationError(
-                    f"{greek_calc_method.value} greeks are only implemented for "
-                    "vanilla European options (OptionSpec)."
-                )
-            if self._underlying.discrete_dividends:
-                raise UnsupportedFeatureError(
-                    "Pathwise and likelihood-ratio MC Greeks are not supported "
-                    "with discrete dividends."
-                )
+            self._validate_mc_greek_method(greek_calc_method, mc_analytic_capable)
 
         return greek_calc_method
+
+    def _auto_select_greek_method(
+        self,
+        *,
+        tree_capable: bool,
+        mc_analytic_capable: bool,
+        grid_capable: bool,
+    ) -> GreekCalculationMethod:
+        """Choose the best Greek method for the current pricing engine."""
+        if self._pricing_method == PricingMethod.BSM:
+            return GreekCalculationMethod.ANALYTICAL
+        if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
+            return GreekCalculationMethod.TREE
+        if grid_capable and self._pricing_method == PricingMethod.PDE_FD:
+            return GreekCalculationMethod.GRID
+        if mc_analytic_capable and self._is_mc_analytic_eligible:
+            return GreekCalculationMethod.PATHWISE
+        return GreekCalculationMethod.NUMERICAL
+
+    def _validate_mc_greek_method(
+        self,
+        method: GreekCalculationMethod,
+        mc_analytic_capable: bool,
+    ) -> None:
+        """Validate PATHWISE / LIKELIHOOD_RATIO against MC prerequisites.
+
+        Provides specific error messages for each failing condition.
+        The fast-path check ``_is_mc_analytic_eligible`` covers the same
+        conditions but returns a bool; this method gives actionable errors.
+        """
+        if self._pricing_method != PricingMethod.MONTE_CARLO:
+            raise ValidationError(
+                f"{method.value} greeks are only available for MONTE_CARLO pricing method."
+            )
+        if not mc_analytic_capable:
+            raise ValidationError(
+                f"{method.value} is not available for this greek. "
+                "Only delta, gamma, and vega support PATHWISE; "
+                "only delta and vega support LIKELIHOOD_RATIO."
+            )
+        if not isinstance(self.underlying, GBMProcess):
+            raise ValidationError("MC greeks are only available for GBMProcess underlying.")
+        if not (
+            isinstance(self._spec, OptionSpec) and self._spec.exercise_type is ExerciseType.EUROPEAN
+        ):
+            raise ValidationError(
+                f"{method.value} greeks are only implemented for "
+                "vanilla European options (OptionSpec)."
+            )
+        if self._underlying.discrete_dividends:
+            raise UnsupportedFeatureError(
+                "Pathwise and likelihood-ratio MC Greeks are not supported with discrete dividends."
+            )
 
     def _build_valuation(self, *, underlying) -> "OptionValuation":
         return OptionValuation(

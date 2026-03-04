@@ -1,3 +1,10 @@
+"""Condor strategy specification and valuation helper.
+
+This module provides a lightweight multi-leg strategy container intended for
+teaching and examples. It values the condor as a sum of vanilla legs using the
+core `OptionValuation` dispatcher.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,14 +13,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..valuation import OptionSpec, OptionValuation
 from ..enums import ExerciseType, OptionType, PositionSide
 from ..exceptions import ConfigurationError, ValidationError
-from ..valuation import ValuationParams
+from ..valuation.core import OptionSpec, OptionValuation
+from ..valuation.params import ValuationParams
 
 if TYPE_CHECKING:
     from ..stochastic_processes import PathSimulation
-    from ..valuation import UnderlyingPricingData
+    from ..valuation.core import UnderlyingPricingData
     from ..enums import PricingMethod
 
 
