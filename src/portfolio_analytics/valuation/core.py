@@ -1102,7 +1102,6 @@ class OptionValuation:
             return self._params.num_steps + 1
 
         if self._pricing_method is PricingMethod.MONTE_CARLO:
-            assert isinstance(spec, AsianOptionSpec)
             if spec.fixing_dates is not None:
                 return len(spec.fixing_dates)
             assert isinstance(self._underlying, PathSimulation)
@@ -1212,6 +1211,15 @@ class OptionValuation:
                 return GreekCalculationMethod.ANALYTICAL
             if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
                 return GreekCalculationMethod.TREE
+            if (
+                mc_analytic_capable
+                and self._pricing_method == PricingMethod.MONTE_CARLO
+                and isinstance(self.underlying, GBMProcess)
+                and isinstance(self._spec, OptionSpec)
+                and self._spec.exercise_type is ExerciseType.EUROPEAN
+                and not self._underlying.discrete_dividends
+            ):
+                return GreekCalculationMethod.PATHWISE
             return GreekCalculationMethod.NUMERICAL
 
         if (
@@ -1251,11 +1259,15 @@ class OptionValuation:
                     "Only delta, gamma, and vega support PATHWISE; "
                     "only delta and vega support LIKELIHOOD_RATIO."
                 )
-            if not isinstance(self._spec, OptionSpec):
+            if not (
+                isinstance(self._spec, OptionSpec)
+                and isinstance(self._spec.exercise_type, ExerciseType.EUROPEAN)
+            ):
                 raise ValidationError(
                     f"{greek_calc_method.value} greeks are only implemented for "
                     "vanilla European options (OptionSpec)."
                 )
+
             if self._underlying.discrete_dividends:
                 raise UnsupportedFeatureError(
                     "Pathwise and likelihood-ratio MC Greeks are not supported "
