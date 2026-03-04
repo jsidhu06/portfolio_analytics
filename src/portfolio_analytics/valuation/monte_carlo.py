@@ -13,7 +13,7 @@ from .params import MonteCarloParams
 
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianOptionSpec
+    from .core import OptionValuation, AsianSpec
 
 
 logger = logging.getLogger(__name__)
@@ -526,7 +526,7 @@ class _MCAsianBase:
                 "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
             )
         self.underlying: PathSimulation = parent.underlying
-        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
     # helpers
@@ -544,7 +544,7 @@ class _MCAsianBase:
     def _asian_payoff(self, avg: np.ndarray) -> np.ndarray:
         """Asian payoff given average prices."""
         K = self.parent.strike
-        if self.spec.call_put is OptionType.CALL:
+        if self.spec.option_type is OptionType.CALL:
             return np.maximum(avg - K, 0.0)
         return np.maximum(K - avg, 0.0)
 

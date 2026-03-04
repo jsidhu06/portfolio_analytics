@@ -10,9 +10,9 @@ from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.utils import calculate_year_fraction, expected_binomial_payoff
 from portfolio_analytics.valuation import (
     BinomialParams,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 
@@ -31,7 +31,7 @@ class TestBinomialValuation:
         self.curve = flat_curve(self.pricing_date, self.maturity, self.rate)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
-        self.ud = UnderlyingPricingData(
+        self.ud = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -39,7 +39,7 @@ class TestBinomialValuation:
 
     def test_binomial_european_call_atm(self):
         """Test binomial European call option."""
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -61,7 +61,7 @@ class TestBinomialValuation:
 
     def test_binomial_american_call_no_div_equal_to_european(self):
         """Test that American call >= European call (same parameters)."""
-        eu_spec = OptionSpec(
+        eu_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -69,7 +69,7 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        am_spec = OptionSpec(
+        am_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -77,13 +77,13 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud_eu = UnderlyingPricingData(
+        ud_eu = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
         )
 
-        ud_am = UnderlyingPricingData(
+        ud_am = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -111,7 +111,7 @@ class TestBinomialValuation:
 
     def test_binomial_european_call_discrete_dividends_reduce_price(self):
         """Discrete dividends should reduce European call price in binomial tree."""
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -119,7 +119,7 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud_no_div = UnderlyingPricingData(
+        ud_no_div = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -127,7 +127,7 @@ class TestBinomialValuation:
             discrete_dividends=[],
         )
 
-        ud_div = UnderlyingPricingData(
+        ud_div = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -152,7 +152,7 @@ class TestBinomialValuation:
 
     def test_binomial_american_put_early_exercise(self):
         """Test American put has early exercise premium."""
-        eu_spec = OptionSpec(
+        eu_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -160,7 +160,7 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        am_spec = OptionSpec(
+        am_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -168,13 +168,13 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud_eu = UnderlyingPricingData(
+        ud_eu = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
         )
 
-        ud_am = UnderlyingPricingData(
+        ud_am = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -202,7 +202,7 @@ class TestBinomialValuation:
 
     def test_binomial_convergence(self):
         """Test that binomial prices converge with more steps."""
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -210,13 +210,13 @@ class TestBinomialValuation:
             currency="USD",
         )
 
-        ud1 = UnderlyingPricingData(
+        ud1 = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
         )
 
-        ud2 = UnderlyingPricingData(
+        ud2 = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -246,7 +246,7 @@ class TestBinomialValuation:
     def test_binomial_pv_matches_expected_binomial_payoff(self):
         n_steps = 250
 
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,

@@ -11,8 +11,8 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation import (
-    OptionSpec,
-    UnderlyingPricingData,
+    VanillaSpec,
+    UnderlyingData,
 )
 
 from portfolio_analytics.tests.helpers import flat_curve
@@ -87,9 +87,9 @@ def market_data(
 
 
 @pytest.fixture()
-def underlying_data(market_data: MarketData) -> UnderlyingPricingData:
+def underlying_data(market_data: MarketData) -> UnderlyingData:
     """ATM underlying with no dividends."""
-    return UnderlyingPricingData(
+    return UnderlyingData(
         initial_value=SPOT,
         volatility=VOL,
         market_data=market_data,
@@ -102,8 +102,8 @@ def underlying_data(market_data: MarketData) -> UnderlyingPricingData:
 
 
 @pytest.fixture()
-def euro_call_spec(strike: float, maturity: dt.datetime, currency: str) -> OptionSpec:
-    return OptionSpec(
+def euro_call_spec(strike: float, maturity: dt.datetime, currency: str) -> VanillaSpec:
+    return VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -113,8 +113,8 @@ def euro_call_spec(strike: float, maturity: dt.datetime, currency: str) -> Optio
 
 
 @pytest.fixture()
-def euro_put_spec(strike: float, maturity: dt.datetime, currency: str) -> OptionSpec:
-    return OptionSpec(
+def euro_put_spec(strike: float, maturity: dt.datetime, currency: str) -> VanillaSpec:
+    return VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,

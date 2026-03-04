@@ -15,12 +15,12 @@ import numpy as np
 
 from ..enums import ExerciseType, OptionType, PositionSide
 from ..exceptions import ConfigurationError, ValidationError
-from ..valuation.core import OptionSpec, OptionValuation
+from ..valuation.core import VanillaSpec, OptionValuation
 from ..valuation.params import ValuationParams
 
 if TYPE_CHECKING:
     from ..stochastic_processes import PathSimulation
-    from ..valuation.core import UnderlyingPricingData
+    from ..valuation.core import UnderlyingData
     from ..enums import PricingMethod
 
 
@@ -108,7 +108,7 @@ class CondorSpec:
     def present_value(
         self,
         *,
-        underlying: PathSimulation | UnderlyingPricingData,
+        underlying: PathSimulation | UnderlyingData,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ) -> float:
@@ -134,7 +134,7 @@ class CondorSpec:
         """
         total = 0.0
         for opt_type, strike, weight in self.leg_definitions():
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=self.exercise_type,
                 strike=strike,

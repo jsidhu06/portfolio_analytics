@@ -22,9 +22,9 @@ from portfolio_analytics.stochastic_processes import (
 )
 from portfolio_analytics.valuation import (
     ImpliedVolResult,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
     implied_volatility,
 )
 from portfolio_analytics.valuation.params import BinomialParams
@@ -46,13 +46,13 @@ def _build_valuation(
         None if dividend_rate == 0.0 else flat_curve(pricing_date, maturity, dividend_rate)
     )
     market_data = MarketData(pricing_date, curve, currency="USD")
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
         dividend_curve=dividend_curve,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=option_type,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -82,13 +82,13 @@ def _build_discrete_dividend_valuation(
         (pricing_date + dt.timedelta(days=90), 0.5),
         (pricing_date + dt.timedelta(days=270), 0.5),
     ]
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
         discrete_dividends=divs,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=option_type,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -120,13 +120,13 @@ def _build_binomial_valuation(
         None if dividend_rate == 0.0 else flat_curve(pricing_date, maturity, dividend_rate)
     )
     market_data = MarketData(pricing_date, curve, currency="USD")
-    underlying = UnderlyingPricingData(
+    underlying = UnderlyingData(
         initial_value=spot,
         volatility=vol,
         market_data=market_data,
         dividend_curve=dividend_curve,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
@@ -193,7 +193,7 @@ def test_implied_volatility_rejects_monte_carlo():
         volatility=0.2,
     )
     underlying = GBMProcess(market_data, gbm_params, sim_config)
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=100.0,

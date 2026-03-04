@@ -21,7 +21,7 @@ from ..exceptions import (
 from .params import BinomialParams
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianOptionSpec
+    from .core import OptionValuation, AsianSpec
 
 
 logger = logging.getLogger(__name__)
@@ -314,7 +314,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
     def __init__(self, parent: OptionValuation) -> None:
         super().__init__(parent)
-        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
 
     def _solve_mc(self) -> np.ndarray:
         """Price Asian option via Monte Carlo sampling on the binomial tree.
@@ -361,7 +361,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         else:
             avg_s = prices.mean(axis=1)  # (I,)
 
-        if self.spec.call_put is OptionType.CALL:
+        if self.spec.option_type is OptionType.CALL:
             payoffs = np.maximum(avg_s - K, 0.0)
         else:
             payoffs = np.maximum(K - avg_s, 0.0)
@@ -371,7 +371,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
         """Compute Asian option intrinsic payoff given average price(s)."""
         K = self.parent.strike
-        if self.spec.call_put is OptionType.CALL:
+        if self.spec.option_type is OptionType.CALL:
             return np.maximum(avg_price - K, 0.0)
         return np.maximum(K - avg_price, 0.0)
 

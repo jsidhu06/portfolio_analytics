@@ -44,11 +44,11 @@ from .enums import (
 )
 from .strategies import CondorSpec
 from .valuation import (
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
     PayoffSpec,
-    AsianOptionSpec,
+    AsianSpec,
     MonteCarloParams,
     BinomialParams,
     PDEParams,
@@ -82,11 +82,11 @@ __all__ = [
     "GreekCalculationMethod",
     "ImpliedVolMethod",
     # Valuation
-    "OptionSpec",
+    "VanillaSpec",
     "OptionValuation",
-    "UnderlyingPricingData",
+    "UnderlyingData",
     "PayoffSpec",
-    "AsianOptionSpec",
+    "AsianSpec",
     "MonteCarloParams",
     "BinomialParams",
     "PDEParams",

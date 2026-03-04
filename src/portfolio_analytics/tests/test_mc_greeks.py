@@ -24,9 +24,9 @@ from portfolio_analytics.tests.helpers import flat_curve
 
 from portfolio_analytics.valuation import (
     MonteCarloParams,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 _MISSING: object = object()  # sentinel to distinguish "not passed" from None
@@ -91,7 +91,7 @@ class _MCGreekTestBase:
         strike: float | None = None,
         process: GBMProcess | None = None,
     ) -> OptionValuation:
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike or self.strike,
@@ -112,13 +112,13 @@ class _MCGreekTestBase:
         strike: float | None = None,
     ) -> OptionValuation:
         """Build a BSM valuation to compare against."""
-        ud = UnderlyingPricingData(
+        ud = UnderlyingData(
             initial_value=self.spot,
             volatility=self.vol,
             market_data=self.market_data,
             dividend_curve=self.qcr,
         )
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike or self.strike,
@@ -379,7 +379,7 @@ class TestMCGreekNoDividend(_MCGreekTestBase):
 
     def test_pathwise_delta_no_div(self):
         process = self._make_process(q_curve=None)
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -391,7 +391,7 @@ class TestMCGreekNoDividend(_MCGreekTestBase):
             PricingMethod.MONTE_CARLO,
             MonteCarloParams(random_seed=self.seed),
         )
-        bsm_ud = UnderlyingPricingData(
+        bsm_ud = UnderlyingData(
             initial_value=self.spot,
             volatility=self.vol,
             market_data=self.market_data,
@@ -469,7 +469,7 @@ class TestMCGreekMethodAgreement:
             end_date=self.MATURITY,
         )
         process = GBMProcess(md, params, sim)
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike,

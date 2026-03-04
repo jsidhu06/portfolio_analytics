@@ -18,10 +18,10 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
-    AsianOptionSpec,
-    OptionSpec,
+    AsianSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 from portfolio_analytics.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
@@ -73,8 +73,8 @@ def _spec(
     strike: float,
     option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.AMERICAN,
-) -> OptionSpec:
-    return OptionSpec(
+) -> VanillaSpec:
+    return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
@@ -221,7 +221,7 @@ def _pde_fd_american(
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> float:
-    ud = UnderlyingPricingData(
+    ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(r_curve),
@@ -509,7 +509,7 @@ def _bsm_european(
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
 ) -> float:
-    ud = UnderlyingPricingData(
+    ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),
@@ -526,7 +526,7 @@ def _binomial_european(
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
 ) -> float:
-    ud = UnderlyingPricingData(
+    ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),
@@ -793,9 +793,9 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         engine_factory=lambda p: ql.TurnbullWakemanAsianEngine(p),
     )
 
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=AsianAveraging.ARITHMETIC,
-        call_put=OptionType.CALL,
+        option_type=OptionType.CALL,
         strike=_ASIAN_STRIKE,
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
@@ -838,9 +838,9 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         engine_factory=lambda p: ql.AnalyticDiscreteGeometricAveragePriceAsianEngine(p),
     )
 
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=AsianAveraging.GEOMETRIC,
-        call_put=OptionType.PUT,
+        option_type=OptionType.PUT,
         strike=_ASIAN_STRIKE,
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
@@ -898,9 +898,9 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         div_handle=div_handle,
     )
 
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=AsianAveraging.ARITHMETIC,
-        call_put=OptionType.PUT,
+        option_type=OptionType.PUT,
         strike=_ASIAN_STRIKE,
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
@@ -956,8 +956,8 @@ def _underlying(
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
-) -> UnderlyingPricingData:
-    return UnderlyingPricingData(
+) -> UnderlyingData:
+    return UnderlyingData(
         initial_value=spot,
         volatility=_ME_VOL,
         market_data=_me_market_data(r_curve),

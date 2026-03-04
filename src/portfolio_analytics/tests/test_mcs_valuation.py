@@ -15,9 +15,9 @@ from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
     BinomialParams,
     MonteCarloParams,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 
 
@@ -51,7 +51,7 @@ class TestMCSValuation:
             sim_config,
         )
 
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -87,7 +87,7 @@ class TestMCSValuation:
             sim_config,
         )
 
-        put_spec = OptionSpec(
+        put_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -116,7 +116,7 @@ class TestMCSValuation:
             end_date=self.maturity,
         )
 
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -174,7 +174,7 @@ class TestMCSValuation:
             sim_config,
         )
 
-        am_spec = OptionSpec(
+        am_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -204,7 +204,7 @@ class TestMCSValuation:
         assert np.isclose(pv2, pv1, rtol=0.02)  # 2% tolerance
 
         # binomial should also be close
-        ud_bin = UnderlyingPricingData(
+        ud_bin = UnderlyingData(
             initial_value=self.spot,
             volatility=self.volatility,
             market_data=self.market_data,
@@ -236,7 +236,7 @@ class TestMCSValuation:
             sim_config,
         )
 
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,

@@ -6,7 +6,7 @@ import numpy as np
 from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import OptionSpec, UnderlyingPricingData, OptionValuation
+from portfolio_analytics.valuation import VanillaSpec, UnderlyingData, OptionValuation
 from portfolio_analytics.utils import (
     calculate_year_fraction,
     forward_price,
@@ -102,25 +102,25 @@ def test_put_call_parity_bsm_no_dividend():
     curve = flat_curve(pricing_date, maturity, r)
     market_data = MarketData(pricing_date, curve, currency="USD")
 
-    underlying_call = UnderlyingPricingData(
+    underlying_call = UnderlyingData(
         initial_value=spot,
         volatility=0.2,
         market_data=market_data,
     )
-    underlying_put = UnderlyingPricingData(
+    underlying_put = UnderlyingData(
         initial_value=spot,
         volatility=0.2,
         market_data=market_data,
     )
 
-    call_spec = OptionSpec(
+    call_spec = VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
         maturity=maturity,
         currency="USD",
     )
-    put_spec = OptionSpec(
+    put_spec = VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -162,27 +162,27 @@ def test_put_call_parity_bsm_with_dividend_curve():
     curve = flat_curve(pricing_date, maturity, r)
     q_curve = flat_curve(pricing_date, maturity, q)
     market_data = MarketData(pricing_date, curve, currency="USD")
-    underlying_call = UnderlyingPricingData(
+    underlying_call = UnderlyingData(
         initial_value=spot,
         volatility=0.25,
         market_data=market_data,
         dividend_curve=q_curve,
     )
-    underlying_put = UnderlyingPricingData(
+    underlying_put = UnderlyingData(
         initial_value=spot,
         volatility=0.25,
         market_data=market_data,
         dividend_curve=q_curve,
     )
 
-    call_spec = OptionSpec(
+    call_spec = VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
         maturity=maturity,
         currency="USD",
     )
-    put_spec = OptionSpec(
+    put_spec = VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,

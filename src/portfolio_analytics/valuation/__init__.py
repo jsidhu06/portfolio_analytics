@@ -8,9 +8,9 @@ Public API
 ----------
 Core classes:
     OptionValuation: Main dispatcher for option pricing
-    OptionSpec: Contract specification for vanilla options
+    VanillaSpec: Contract specification for vanilla options
     PayoffSpec: Contract specification for custom payoffs
-    UnderlyingPricingData: Minimal underlying data container
+    UnderlyingData: Minimal underlying data container
 
 Parameter classes:
     MonteCarloParams: Configuration for Monte Carlo pricing
@@ -21,10 +21,10 @@ Parameter classes:
 
 from .core import (
     OptionValuation,
-    OptionSpec,
+    VanillaSpec,
     PayoffSpec,
-    AsianOptionSpec,
-    UnderlyingPricingData,
+    AsianSpec,
+    UnderlyingData,
 )
 from .params import (
     MonteCarloParams,
@@ -37,10 +37,10 @@ from .implied_volatility import ImpliedVolResult, implied_volatility
 __all__ = [
     # Core valuation classes
     "OptionValuation",
-    "OptionSpec",
+    "VanillaSpec",
     "PayoffSpec",
-    "AsianOptionSpec",
-    "UnderlyingPricingData",
+    "AsianSpec",
+    "UnderlyingData",
     # Parameter classes
     "MonteCarloParams",
     "BinomialParams",

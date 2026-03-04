@@ -2,15 +2,15 @@
 
 This module is the central orchestration layer for pricing:
 
-- Spec dataclasses (`OptionSpec`, `PayoffSpec`, `AsianOptionSpec`)
-- Underlying data container (`UnderlyingPricingData`)
+- Spec dataclasses (`VanillaSpec`, `PayoffSpec`, `AsianSpec`)
+- Underlying data container (`UnderlyingData`)
 - Registry-based dispatcher (`OptionValuation`) that maps
     `(PricingMethod, ExerciseType)` to a private implementation engine
 
 Design notes
 ------------
 - Deterministic methods (`BSM`, `BINOMIAL`, `PDE_FD`) operate on
-    `UnderlyingPricingData`.
+    `UnderlyingData`.
 - Monte Carlo methods operate on `PathSimulation` instances.
 - Greeks default to engine-native methods when available, otherwise
     fall back to bump-and-revalue via immutable `replace(...)` calls.
@@ -62,10 +62,10 @@ _PV_INTERCEPTORS: dict[str, str] = {
 
 
 def _resolve_interceptor(
-    spec: OptionSpec | PayoffSpec | AsianOptionSpec,
+    spec: VanillaSpec | PayoffSpec | AsianSpec,
 ) -> str | None:
     """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation."""
-    if isinstance(spec, AsianOptionSpec) and spec.observed_average is not None:
+    if isinstance(spec, AsianSpec) and spec.observed_average is not None:
         return "SEASONED_ASIAN"
     return None
 
@@ -113,7 +113,7 @@ _GREEK_METHOD_RULES: dict[GreekCalculationMethod, tuple[PricingMethod, str, str]
 
 
 @dataclass(frozen=True, slots=True)
-class OptionSpec:
+class VanillaSpec:
     """Contract specification for a vanilla option.
 
     Parameters
@@ -147,7 +147,7 @@ class OptionSpec:
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
             raise ValidationError(
-                "OptionSpec.option_type must be OptionType.CALL or OptionType.PUT"
+                "VanillaSpec.option_type must be OptionType.CALL or OptionType.PUT"
             )
         if not isinstance(self.exercise_type, ExerciseType):
             raise ConfigurationError(
@@ -155,15 +155,15 @@ class OptionSpec:
             )
 
         if self.strike is None:
-            raise ValidationError("OptionSpec.strike must be provided")
+            raise ValidationError("VanillaSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise ConfigurationError("OptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("VanillaSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValidationError("OptionSpec.strike must be finite")
+            raise ValidationError("VanillaSpec.strike must be finite")
         if strike < 0.0:
-            raise ValidationError("OptionSpec.strike must be >= 0")
+            raise ValidationError("VanillaSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
 
@@ -220,7 +220,7 @@ class PayoffSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class AsianOptionSpec:
+class AsianSpec:
     """Contract specification for an Asian option.
 
     Asian options are path-dependent options where the payoff depends on the average
@@ -230,7 +230,7 @@ class AsianOptionSpec:
     ----------
     averaging : AsianAveraging
         AsianAveraging.ARITHMETIC or AsianAveraging.GEOMETRIC
-    call_put : OptionType
+    option_type : OptionType
         OptionType.CALL or OptionType.PUT to specify payoff direction
     strike : float
         Strike price
@@ -273,7 +273,7 @@ class AsianOptionSpec:
     """
 
     averaging: AsianAveraging
-    call_put: OptionType  # CALL or PUT
+    option_type: OptionType  # CALL or PUT
     strike: float
     maturity: dt.datetime
     currency: str | None = None
@@ -281,14 +281,9 @@ class AsianOptionSpec:
     num_steps: int | None = None
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
-    fixing_dates: tuple[dt.datetime, ...] | None = None
+    fixing_dates: Sequence[dt.datetime] | None = None
     observed_average: float | None = None
     observed_count: int | None = None
-
-    @property
-    def option_type(self) -> OptionType:
-        """Alias for ``call_put`` to align with vanilla ``OptionSpec`` naming."""
-        return self.call_put
 
     def __post_init__(self) -> None:
         """Validate Asian option specification."""
@@ -301,25 +296,23 @@ class AsianOptionSpec:
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
 
-        if not isinstance(self.call_put, OptionType):
+        if not isinstance(self.option_type, OptionType):
             raise ConfigurationError(
-                f"call_put must be OptionType enum, got {type(self.call_put).__name__}"
+                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
-        if self.call_put not in (OptionType.CALL, OptionType.PUT):
-            raise ValidationError(
-                "AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT"
-            )
+        if self.option_type not in (OptionType.CALL, OptionType.PUT):
+            raise ValidationError("AsianSpec.option_type must be OptionType.CALL or OptionType.PUT")
 
         if self.strike is None:
-            raise ValidationError("AsianOptionSpec.strike must be provided")
+            raise ValidationError("AsianSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise ConfigurationError("AsianOptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("AsianSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValidationError("AsianOptionSpec.strike must be finite")
+            raise ValidationError("AsianSpec.strike must be finite")
         if strike < 0.0:
-            raise ValidationError("AsianOptionSpec.strike must be >= 0")
+            raise ValidationError("AsianSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
         if self.num_steps is not None:
@@ -364,8 +357,13 @@ class AsianOptionSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class UnderlyingPricingData:
+class UnderlyingData:
     """Minimal underlying container for deterministic valuation methods.
+
+    Parameterises the Black-Scholes-Merton (GBM) dynamics used by analytical,
+    tree, and PDE engines.  When Monte Carlo simulation is required, use
+    ``GBMProcess`` (or another ``PathSimulation`` subclass) instead — it
+    carries the additional simulation configuration (paths, time grid, seed).
 
     Used by methods that do not require explicit path simulation (for example
     BSM, binomial trees, and PDE finite differences).
@@ -415,7 +413,7 @@ class UnderlyingPricingData:
             import warnings
 
             warnings.warn(
-                "UnderlyingPricingData: both dividend_curve and discrete_dividends "
+                "UnderlyingData: both dividend_curve and discrete_dividends "
                 "provided. The continuous yield will enter the drift and discrete "
                 "dividends will be subtracted at each ex-date.",
                 stacklevel=2,
@@ -436,8 +434,8 @@ class UnderlyingPricingData:
         """Currency from ``market_data``."""
         return self.market_data.currency
 
-    def replace(self, **kwargs: object) -> "UnderlyingPricingData":
-        """Create a new UnderlyingPricingData instance with modified fields.
+    def replace(self, **kwargs: object) -> "UnderlyingData":
+        """Create a new UnderlyingData instance with modified fields.
 
         This is used for bump-and-revalue calculations (e.g., Greeks) without
         mutating the original object, making it thread-safe and explicit.
@@ -450,7 +448,7 @@ class UnderlyingPricingData:
 
         Returns
         -------
-        UnderlyingPricingData
+        UnderlyingData
             New instance with specified fields replaced
         """
         return dc_replace(self, **kwargs)  # type: ignore[arg-type]
@@ -463,8 +461,8 @@ class OptionValuation:
 
     def __init__(
         self,
-        underlying: PathSimulation | UnderlyingPricingData,
-        spec: OptionSpec | PayoffSpec | AsianOptionSpec,
+        underlying: PathSimulation | UnderlyingData,
+        spec: VanillaSpec | PayoffSpec | AsianSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ) -> None:
@@ -520,7 +518,7 @@ class OptionValuation:
             key_dates = {self.pricing_date, self.maturity}
             # When explicit fixing dates are given, inject them so the
             # time grid contains exact nodes at each observation date.
-            if isinstance(spec, AsianOptionSpec) and spec.fixing_dates is not None:
+            if isinstance(spec, AsianSpec) and spec.fixing_dates is not None:
                 key_dates |= set(spec.fixing_dates)
             merged = underlying.observation_dates | key_dates
             replace_kw: dict = {}
@@ -531,7 +529,7 @@ class OptionValuation:
             # averaging_start itself will land on the grid because
             # _build_time_grid includes grid_start in all_dates.
             if (
-                isinstance(spec, AsianOptionSpec)
+                isinstance(spec, AsianSpec)
                 and spec.averaging_start is not None
                 and underlying.grid_start != spec.averaging_start
             ):
@@ -556,7 +554,7 @@ class OptionValuation:
         ) and isinstance(self._underlying, PathSimulation):
             raise ConfigurationError(
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
-                "Pass an UnderlyingPricingData instance instead of PathSimulation."
+                "Pass an UnderlyingData instance instead of PathSimulation."
             )
 
         # Dispatch to appropriate pricing method implementation
@@ -841,12 +839,12 @@ class OptionValuation:
     # ──────────────────────────────
 
     @property
-    def underlying(self) -> PathSimulation | UnderlyingPricingData:
+    def underlying(self) -> PathSimulation | UnderlyingData:
         """Underlying data/process used by this valuation instance."""
         return self._underlying
 
     @property
-    def spec(self) -> OptionSpec | PayoffSpec | AsianOptionSpec:
+    def spec(self) -> VanillaSpec | PayoffSpec | AsianSpec:
         """Contract specification object for the valued instrument."""
         return self._spec
 
@@ -908,7 +906,7 @@ class OptionValuation:
     def _build_impl(self):
         spec = self._spec
 
-        if isinstance(spec, AsianOptionSpec):
+        if isinstance(spec, AsianSpec):
             impl_cls = _ASIAN_REGISTRY.get((self._pricing_method, spec.exercise_type))
             if impl_cls is None:
                 raise ValidationError(
@@ -984,7 +982,7 @@ class OptionValuation:
                 "control_variate_european is only valid for options with American exercise."
             )
 
-        if isinstance(self._spec, AsianOptionSpec):
+        if isinstance(self._spec, AsianSpec):
             return self._apply_asian_control_variate(base_pv)
 
         if self._pricing_method not in (
@@ -996,9 +994,9 @@ class OptionValuation:
                 "control_variate_european is only supported for BINOMIAL, PDE_FD, "
                 "and MONTE_CARLO pricing."
             )
-        if not isinstance(self._spec, OptionSpec):
+        if not isinstance(self._spec, VanillaSpec):
             raise UnsupportedFeatureError(
-                "Vanilla control_variate_european requires spec to be of type OptionSpec. "
+                "Vanilla control_variate_european requires spec to be of type VanillaSpec. "
                 "PayoffSpec is not supported."
             )
         if self._option_type not in (OptionType.CALL, OptionType.PUT):
@@ -1026,10 +1024,10 @@ class OptionValuation:
 
         return base_pv + (euro_bsm - euro_num)
 
-    def _as_underlying_data(self) -> UnderlyingPricingData:
-        """Return an UnderlyingPricingData instance, extracting from PathSimulation if needed."""
+    def _as_underlying_data(self) -> UnderlyingData:
+        """Return an UnderlyingData instance, extracting from PathSimulation if needed."""
         if isinstance(self._underlying, PathSimulation):
-            return UnderlyingPricingData(
+            return UnderlyingData(
                 initial_value=self._underlying.initial_value,
                 volatility=self._underlying.volatility,
                 market_data=self._underlying.market_data,
@@ -1057,7 +1055,7 @@ class OptionValuation:
                 "BINOMIAL and MONTE_CARLO pricing."
             )
         spec = self._spec
-        assert isinstance(spec, AsianOptionSpec)
+        assert isinstance(spec, AsianSpec)
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
                 "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
@@ -1112,12 +1110,12 @@ class OptionValuation:
     def _seasoned_asian_future_obs(self) -> int:
         """Return the number of *future* averaging observations (n₂)."""
         spec = self._spec
-        assert isinstance(spec, AsianOptionSpec)
+        assert isinstance(spec, AsianSpec)
 
         if self._pricing_method is PricingMethod.BSM:
             if spec.num_steps is None:
                 raise ValidationError(
-                    "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
+                    "num_steps is required on AsianSpec for analytical (BSM) pricing."
                 )
             return spec.num_steps + 1
 
@@ -1153,7 +1151,7 @@ class OptionValuation:
 
         See Hull, *Options, Futures, and Other Derivatives*, Section 26.13."""
         spec = self._spec
-        assert isinstance(spec, AsianOptionSpec)
+        assert isinstance(spec, AsianSpec)
         assert spec.observed_average is not None and spec.observed_count is not None
 
         n1 = spec.observed_count
@@ -1205,12 +1203,12 @@ class OptionValuation:
         # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
         disc_M1 = OptionValuation(
             underlying=self._underlying,
-            spec=dc_replace(fresh_spec_zero, call_put=OptionType.CALL),
+            spec=dc_replace(fresh_spec_zero, option_type=OptionType.CALL),
             pricing_method=self._pricing_method,
             params=self._params,
         ).present_value()
 
-        if spec.call_put is OptionType.CALL:
+        if spec.option_type is OptionType.CALL:
             return scale * (disc_M1 - K_star * df)
         # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
         return 0.0
@@ -1221,7 +1219,7 @@ class OptionValuation:
         return (
             self._pricing_method == PricingMethod.MONTE_CARLO
             and isinstance(self.underlying, GBMProcess)
-            and isinstance(self._spec, OptionSpec)
+            and isinstance(self._spec, VanillaSpec)
             and self._spec.exercise_type is ExerciseType.EUROPEAN
             and not self._underlying.discrete_dividends
         )
@@ -1328,11 +1326,12 @@ class OptionValuation:
         if not isinstance(self.underlying, GBMProcess):
             raise ValidationError("MC greeks are only available for GBMProcess underlying.")
         if not (
-            isinstance(self._spec, OptionSpec) and self._spec.exercise_type is ExerciseType.EUROPEAN
+            isinstance(self._spec, VanillaSpec)
+            and self._spec.exercise_type is ExerciseType.EUROPEAN
         ):
             raise ValidationError(
                 f"{method.value} greeks are only implemented for "
-                "vanilla European options (OptionSpec)."
+                "vanilla European options (VanillaSpec)."
             )
         if self._underlying.discrete_dividends:
             raise UnsupportedFeatureError(

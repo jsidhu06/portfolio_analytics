@@ -26,9 +26,9 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
@@ -76,8 +76,8 @@ def _spec(
     strike: float,
     option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
-) -> OptionSpec:
-    return OptionSpec(
+) -> VanillaSpec:
+    return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
@@ -90,8 +90,8 @@ def _underlying(
     *,
     spot: float,
     dividend_curve: DiscountCurve | None = None,
-) -> UnderlyingPricingData:
-    return UnderlyingPricingData(
+) -> UnderlyingData:
+    return UnderlyingData(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),

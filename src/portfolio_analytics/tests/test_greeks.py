@@ -23,9 +23,9 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.valuation import (
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
-    UnderlyingPricingData,
+    UnderlyingData,
 )
 from portfolio_analytics.valuation import BinomialParams, MonteCarloParams
 
@@ -36,7 +36,7 @@ class TestGreeksSetup:
     Notes
     -----
     - setup fixture is function-scoped (default), so each test method gets fresh state.
-    - factories avoid mutating shared UnderlyingPricingData instances within a test.
+    - factories avoid mutating shared UnderlyingData instances within a test.
     """
 
     @pytest.fixture(autouse=True)
@@ -70,13 +70,13 @@ class TestGreeksSetup:
         vol: float | None = None,
         dividend_curve: DiscountCurve | None = None,
         pricing_date: dt.datetime | None = None,
-    ) -> UnderlyingPricingData:
+    ) -> UnderlyingData:
         md = (
             self.market_data
             if pricing_date is None
             else MarketData(pricing_date, self.csr, currency=self.currency)
         )
-        return UnderlyingPricingData(
+        return UnderlyingData(
             initial_value=self.spot if spot is None else spot,
             volatility=self.volatility if vol is None else vol,
             market_data=md,
@@ -101,8 +101,8 @@ class TestGreeksSetup:
         strike: float | None = None,
         maturity: dt.datetime | None = None,
         currency: str | None = None,
-    ) -> OptionSpec:
-        return OptionSpec(
+    ) -> VanillaSpec:
+        return VanillaSpec(
             option_type=option_type,
             exercise_type=exercise_type,
             strike=self.strike if strike is None else strike,
@@ -112,8 +112,8 @@ class TestGreeksSetup:
 
     def _make_val(
         self,
-        underlying: PathSimulation | UnderlyingPricingData,
-        spec: OptionSpec,
+        underlying: PathSimulation | UnderlyingData,
+        spec: VanillaSpec,
         method: PricingMethod,
         params=None,
     ) -> OptionValuation:
@@ -620,7 +620,7 @@ class TestGreekImmutability(TestGreeksSetup):
     """Test that greek calculations don't mutate underlying state (thread-safety)."""
 
     def test_delta_does_not_mutate_underlying_pricing_data(self):
-        """Verify delta calculation doesn't mutate UnderlyingPricingData.initial_value."""
+        """Verify delta calculation doesn't mutate UnderlyingData.initial_value."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
         valuation = self._make_val(ud, spec, PricingMethod.BSM)
@@ -637,7 +637,7 @@ class TestGreekImmutability(TestGreeksSetup):
         assert delta is not None  # sanity check
 
     def test_gamma_does_not_mutate_underlying_pricing_data(self):
-        """Verify gamma calculation doesn't mutate UnderlyingPricingData.initial_value."""
+        """Verify gamma calculation doesn't mutate UnderlyingData.initial_value."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
         valuation = self._make_val(
@@ -659,7 +659,7 @@ class TestGreekImmutability(TestGreeksSetup):
         assert gamma is not None  # sanity check
 
     def test_vega_does_not_mutate_underlying_pricing_data(self):
-        """Verify vega calculation doesn't mutate UnderlyingPricingData.volatility."""
+        """Verify vega calculation doesn't mutate UnderlyingData.volatility."""
         ud = self._make_ud()
         spec = self._make_spec(option_type=OptionType.CALL)
         valuation = self._make_val(ud, spec, PricingMethod.BSM)
