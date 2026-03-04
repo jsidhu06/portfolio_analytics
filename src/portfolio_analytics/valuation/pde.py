@@ -293,7 +293,7 @@ def _as_array(coeff: np.ndarray | float, size: int) -> np.ndarray:
 
 
 def _explicit_step(
-    V_old: np.ndarray,
+    V_prev: np.ndarray,
     j: np.ndarray,
     a: np.ndarray | float,
     b: np.ndarray | float,
@@ -310,8 +310,8 @@ def _explicit_step(
     divided by ``(1 + r_dt)`` to apply implicit discounting of the rV
     term.
     """
-    V_new = V_old.copy()
-    interior = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
+    V_new = V_prev.copy()
+    interior = -a * V_prev[j - 1] + (1.0 - b) * V_prev[j] - c * V_prev[j + 1]
     V_new[j] = interior / (1.0 + r_dt)
     V_new[0] = left
     V_new[-1] = right
@@ -354,7 +354,7 @@ def _psor_solve(
 
 
 def _implicit_cn_step(
-    V_old: np.ndarray,
+    V_prev: np.ndarray,
     V: np.ndarray,
     j: np.ndarray,
     a: np.ndarray | float,
@@ -384,9 +384,9 @@ def _implicit_cn_step(
     A_upper = _as_array(c, spot_steps - 1)
 
     if method is PDEMethod.IMPLICIT:
-        rhs = V_old[j].copy()
+        rhs = V_prev[j].copy()
     else:
-        rhs = -a * V_old[j - 1] + (1.0 - b) * V_old[j] - c * V_old[j + 1]
+        rhs = -a * V_prev[j - 1] + (1.0 - b) * V_prev[j] - c * V_prev[j + 1]
 
     V[0] = left
     V[-1] = right
@@ -601,13 +601,16 @@ def _vanilla_fd_core(
     omega: float | None = None,
     tol: float | None = None,
     max_iter: int | None = None,
-) -> tuple[float, np.ndarray, np.ndarray]:
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
     """Core finite-difference solver for vanilla option valuation.
 
     Returns
     -------
-    tuple[float, np.ndarray, np.ndarray]
-        ``(price, spot_grid, value_grid_at_pricing_time)``.
+    tuple[float, np.ndarray, np.ndarray, np.ndarray, float]
+        ``(price, spot_grid, V_final, V_prev, last_dtau)``
+        where *V_prev* is the value slice one time step before pricing
+        time and *last_dtau* is the size of that step (both needed for
+        theta extraction from the grid).
     """
     _validate_fd_inputs(
         option_type=option_type,
@@ -697,6 +700,9 @@ def _vanilla_fd_core(
 
     steps = _build_time_step_schedule(tau_grid, method, rannacher_steps)
 
+    V_prev = V.copy()
+    last_dtau = 0.0
+
     for tau_prev, tau_curr, method_used in steps:
         d_tau = tau_curr - tau_prev
         t_prev = time_to_maturity - tau_prev
@@ -745,7 +751,8 @@ def _vanilla_fd_core(
             early_exercise=early_exercise,
         )
 
-        V_old = V.copy()
+        V_prev = V.copy()
+        last_dtau = d_tau
 
         a, b, c = _scaled_operator_coeffs(gamma=gamma, beta=beta, alpha=alpha, d_tau=d_tau)
 
@@ -753,7 +760,7 @@ def _vanilla_fd_core(
 
         if method_used in (PDEMethod.EXPLICIT, PDEMethod.EXPLICIT_HULL):
             V = _explicit_step(
-                V_old,
+                V_prev,
                 j,
                 a,
                 b,
@@ -765,7 +772,7 @@ def _vanilla_fd_core(
             )
         else:
             V, psor_iters = _implicit_cn_step(
-                V_old,
+                V_prev,
                 V,
                 j,
                 a,
@@ -810,7 +817,7 @@ def _vanilla_fd_core(
     # interpolate at S₀ − D to get the ex-dividend option value.
     interp_spot = spot - pricing_div if pricing_div is not None else spot
     price = np.interp(interp_spot, S, V)
-    return price, S, V
+    return price, S, V, V_prev, last_dtau
 
 
 def _european_vanilla_fd(
@@ -829,7 +836,7 @@ def _european_vanilla_fd(
     method: PDEMethod,
     rannacher_steps: int,
     space_grid: PDESpaceGrid,
-) -> tuple[float, np.ndarray, np.ndarray]:
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
     return _vanilla_fd_core(
         spot=spot,
         strike=strike,
@@ -870,7 +877,7 @@ def _american_vanilla_fd(
     omega: float,
     tol: float,
     max_iter: int,
-) -> tuple[float, np.ndarray, np.ndarray]:
+) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
     return _vanilla_fd_core(
         spot=spot,
         strike=strike,
@@ -894,7 +901,86 @@ def _american_vanilla_fd(
     )
 
 
-class _FDEuropeanValuation:
+class _FDGridGreeksMixin:
+    """Mixin providing delta/gamma/theta extracted from the PDE solution grid.
+
+    Subclasses must define ``_solve()`` returning
+    ``(price, S, V, V_prev, last_dtau)``.
+    """
+
+    parent: "OptionValuation"
+
+    def _solve(
+        self,
+    ) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]: ...
+
+    def _grid_greeks_data(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, int]:
+        """Run the PDE solve and locate the spot node.
+
+        Returns
+        -------
+        S, V, V_prev, last_dtau, j
+            The spot grid, value vector, previous-step value vector,
+            last time-step size, and the spot-grid index closest to
+            the current spot.
+        """
+        _, S, V, V_prev, last_dtau = self._solve()
+        spot = float(self.parent.underlying.initial_value)
+        j = int(np.searchsorted(S, spot))
+        # Clamp to interior so the 3-point stencil is valid.
+        j = max(1, min(j, len(S) - 2))
+        return S, V, V_prev, last_dtau, j
+
+    def delta(self) -> float:
+        r"""Grid delta via central differences at the spot node.
+
+        .. math::
+
+            \Delta \approx \frac{V_{j+1} - V_{j-1}}{S_{j+1} - S_{j-1}}
+        """
+        S, V, _, _, j = self._grid_greeks_data()
+        return float((V[j + 1] - V[j - 1]) / (S[j + 1] - S[j - 1]))
+
+    def gamma(self) -> float:
+        r"""Grid gamma via the standard second-order stencil.
+
+        .. math::
+
+            \Gamma \approx \frac{V_{j+1} - 2V_j + V_{j-1}}
+                               {\tfrac12(S_{j+1} - S_{j-1}) \cdot (S_{j+1} - S_{j-1})/2}
+
+        For a uniform grid this reduces to
+        :math:`(V_{j+1} - 2V_j + V_{j-1}) / h^2`.
+        """
+        S, V, _, _, j = self._grid_greeks_data()
+        h_up = S[j + 1] - S[j]
+        h_dn = S[j] - S[j - 1]
+        return float(
+            2.0
+            * (V[j + 1] * h_dn + V[j - 1] * h_up - V[j] * (h_up + h_dn))
+            / (h_up * h_dn * (h_up + h_dn))
+        )
+
+    def theta(self) -> float:
+        r"""Grid theta via backward difference between the last two time
+        slices.
+
+        .. math::
+
+            \Theta \approx \frac{V^{n}(S_0) - V^{n-1}(S_0)}{\Delta t}
+
+        Returned per **calendar day** (divided by 365).
+        """
+        S, V, V_prev, last_dtau, j = self._grid_greeks_data()
+        if last_dtau <= 0.0:
+            return 0.0
+        theta_annual = (V_prev[j] - V[j]) / last_dtau
+        return float(theta_annual / 365.0)
+
+
+class _FDEuropeanValuation(_FDGridGreeksMixin):
     """European option valuation using PDE finite differences."""
 
     def __init__(self, parent: "OptionValuation") -> None:
@@ -902,10 +988,10 @@ class _FDEuropeanValuation:
 
     def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V = self._solve()
+        pv, S, V, *_ = self._solve()
         return pv, S, V
 
-    def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
+    def _solve(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
         """Run the PDE finite-difference solve for a European option."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
@@ -964,7 +1050,7 @@ class _FDEuropeanValuation:
         return float(pv)
 
 
-class _FDAmericanValuation:
+class _FDAmericanValuation(_FDGridGreeksMixin):
     """American option valuation using PDE finite differences."""
 
     def __init__(self, parent: OptionValuation) -> None:
@@ -972,10 +1058,10 @@ class _FDAmericanValuation:
 
     def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V = self._solve()
+        pv, S, V, *_ = self._solve()
         return pv, S, V
 
-    def _solve(self) -> tuple[float, np.ndarray, np.ndarray]:
+    def _solve(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
         """Run the PDE finite-difference solve for an American option."""
         params = self.parent.params
         if not isinstance(params, PDEParams):

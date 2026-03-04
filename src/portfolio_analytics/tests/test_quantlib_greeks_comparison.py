@@ -344,18 +344,10 @@ def test_american_pde_delta_vs_quantlib(spot, strike, option_type, dividend_yiel
     )
 
 
-@pytest.mark.xfail(
-    reason="Bump-and-revalue gamma amplifies PDE grid noise; "
-    "will pass once Greeks are read directly from the FD grid."
-)
 @pytest.mark.parametrize("spot,strike,option_type", _AM_CASES)
 @pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
 def test_american_pde_gamma_vs_quantlib(spot, strike, option_type, dividend_yield):
-    """PDE bump-and-revalue gamma vs QuantLib FD grid gamma.
-
-    Expected to fail until gamma is extracted directly from the PDE solution
-    grid rather than via three independent PDE solves on different grids.
-    """
+    """PDE grid gamma vs QuantLib FD grid gamma."""
     q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield) if dividend_yield else None
     ov = OptionValuation(
         _underlying(spot=spot, dividend_curve=q_curve),

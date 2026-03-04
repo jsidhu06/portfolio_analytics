@@ -599,11 +599,14 @@ class OptionValuation:
             greek_calc_method,
             tree_capable=True,
             mc_analytic_capable=True,
+            grid_capable=True,
         )
         if method == GreekCalculationMethod.PATHWISE:
             return float(self._impl.delta_pathwise())
         if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
             return float(self._impl.delta_lr())
+        if method == GreekCalculationMethod.GRID:
+            return float(self._impl.delta())
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.delta())
 
@@ -647,6 +650,7 @@ class OptionValuation:
             greek_calc_method,
             tree_capable=True,
             mc_analytic_capable=True,
+            grid_capable=True,
         )
         if method == GreekCalculationMethod.PATHWISE:
             return float(self._impl.gamma_pathwise_fd(epsilon))
@@ -655,6 +659,8 @@ class OptionValuation:
                 "likelihood_ratio is not available for gamma. "
                 "Use PATHWISE (central-difference of pathwise delta) or NUMERICAL."
             )
+        if method == GreekCalculationMethod.GRID:
+            return float(self._impl.gamma())
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.gamma())
 
@@ -735,7 +741,11 @@ class OptionValuation:
         float
             Value change per day.
         """
-        method = self._resolve_greek_method(greek_calc_method, tree_capable=True)
+        method = self._resolve_greek_method(
+            greek_calc_method,
+            tree_capable=True,
+            grid_capable=True,
+        )
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.theta())
 
@@ -1191,6 +1201,7 @@ class OptionValuation:
         *,
         tree_capable: bool = False,
         mc_analytic_capable: bool = False,
+        grid_capable: bool = False,
     ) -> GreekCalculationMethod:
         if greek_calc_method is not None and not isinstance(
             greek_calc_method, GreekCalculationMethod
@@ -1205,6 +1216,8 @@ class OptionValuation:
                 return GreekCalculationMethod.ANALYTICAL
             if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
                 return GreekCalculationMethod.TREE
+            if grid_capable and self._pricing_method == PricingMethod.PDE_FD:
+                return GreekCalculationMethod.GRID
             if (
                 mc_analytic_capable
                 and self._pricing_method == PricingMethod.MONTE_CARLO
@@ -1232,6 +1245,15 @@ class OptionValuation:
                 raise ValidationError(
                     "Tree extraction is not available for this greek. "
                     "Only delta, gamma, and theta support GreekCalculationMethod.TREE."
+                )
+
+        if greek_calc_method == GreekCalculationMethod.GRID:
+            if self._pricing_method != PricingMethod.PDE_FD:
+                raise ValidationError("Grid greeks are only available for PDE_FD pricing method.")
+            if not grid_capable:
+                raise ValidationError(
+                    "Grid extraction is not available for this greek. "
+                    "Only delta, gamma, and theta support GreekCalculationMethod.GRID."
                 )
 
         if greek_calc_method in (
