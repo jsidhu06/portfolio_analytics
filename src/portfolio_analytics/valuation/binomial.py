@@ -361,7 +361,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         else:
             avg_s = prices.mean(axis=1)  # (I,)
 
-        if self.spec.call_put is OptionType.CALL:
+        if self.spec.option_type is OptionType.CALL:
             payoffs = np.maximum(avg_s - K, 0.0)
         else:
             payoffs = np.maximum(K - avg_s, 0.0)
@@ -371,7 +371,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
     def _average_payoff(self, avg_price: np.ndarray | float) -> np.ndarray:
         """Compute Asian option intrinsic payoff given average price(s)."""
         K = self.parent.strike
-        if self.spec.call_put is OptionType.CALL:
+        if self.spec.option_type is OptionType.CALL:
             return np.maximum(avg_price - K, 0.0)
         return np.maximum(K - avg_price, 0.0)
 

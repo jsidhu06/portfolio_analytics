@@ -148,14 +148,14 @@ TREE_AVERAGES = 100
 
 def _asian_spec(
     *,
-    call_put: OptionType,
+    option_type: OptionType,
     strike: float,
     exercise_type: ExerciseType = ExerciseType.AMERICAN,
     averaging: AsianAveraging = AsianAveraging.GEOMETRIC,
 ) -> AsianOptionSpec:
     return AsianOptionSpec(
         averaging=averaging,
-        call_put=call_put,
+        option_type=option_type,
         strike=strike,
         maturity=MATURITY,
         currency=CURRENCY,
@@ -176,7 +176,7 @@ class TestAsianControlVariate:
             control_variate_european=True,
         )
 
-        amer_spec = _asian_spec(call_put=OptionType.PUT, strike=100)
+        amer_spec = _asian_spec(option_type=OptionType.PUT, strike=100)
 
         # Raw American Hull tree
         american_raw = OptionValuation(
@@ -188,7 +188,7 @@ class TestAsianControlVariate:
 
         # European Hull tree (same lattice, no early exercise)
         euro_spec = _asian_spec(
-            call_put=OptionType.PUT,
+            option_type=OptionType.PUT,
             strike=100,
             exercise_type=ExerciseType.EUROPEAN,
         )
@@ -202,7 +202,7 @@ class TestAsianControlVariate:
         # European analytical (Kemna-Vorst)
         bsm_spec = AsianOptionSpec(
             averaging=AsianAveraging.GEOMETRIC,
-            call_put=OptionType.PUT,
+            option_type=OptionType.PUT,
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,
@@ -242,13 +242,13 @@ class TestAsianControlVariate:
             control_variate_european=True,
         )
 
-        for call_put, strike in [
+        for option_type, strike in [
             (OptionType.PUT, 110),
             (OptionType.PUT, 100),
             (OptionType.CALL, 100),
             (OptionType.CALL, 90),
         ]:
-            amer_spec = _asian_spec(call_put=call_put, strike=strike)
+            amer_spec = _asian_spec(option_type=option_type, strike=strike)
             american_cv = OptionValuation(
                 underlying,
                 amer_spec,
@@ -258,7 +258,7 @@ class TestAsianControlVariate:
 
             bsm_spec = AsianOptionSpec(
                 averaging=AsianAveraging.GEOMETRIC,
-                call_put=call_put,
+                option_type=option_type,
                 strike=strike,
                 maturity=MATURITY,
                 currency=CURRENCY,
@@ -271,19 +271,19 @@ class TestAsianControlVariate:
             ).present_value()
 
             assert american_cv >= european_analytical - 1e-8, (
-                f"{call_put.value} K={strike}: "
+                f"{option_type.value} K={strike}: "
                 f"american_cv={american_cv:.6f} < european={european_analytical:.6f}"
             )
 
     @pytest.mark.parametrize(
-        "spot,strike,vol,r,q,days,call_put",
+        "spot,strike,vol,r,q,days,option_type",
         [
             (100, 100, 0.20, 0.05, 0.02, 365, OptionType.PUT),
             (100, 110, 0.25, 0.03, 0.03, 365, OptionType.PUT),
             (100, 90, 0.30, 0.08, 0.01, 365, OptionType.CALL),
         ],
     )
-    def test_cv_reduces_european_bias(self, spot, strike, vol, r, q, days, call_put):
+    def test_cv_reduces_european_bias(self, spot, strike, vol, r, q, days, option_type):
         """For European exercise, CV should eliminate the Hull tree bias entirely."""
         maturity = PRICING_DATE + dt.timedelta(days=days)
         underlying = _build_underlying(spot, vol, r, dividend_rate=q)
@@ -293,7 +293,7 @@ class TestAsianControlVariate:
         # European Hull tree (no CV)
         euro_spec = AsianOptionSpec(
             averaging=AsianAveraging.GEOMETRIC,
-            call_put=call_put,
+            option_type=option_type,
             strike=strike,
             maturity=maturity,
             currency=CURRENCY,
@@ -309,7 +309,7 @@ class TestAsianControlVariate:
         # European analytical
         bsm_spec = AsianOptionSpec(
             averaging=AsianAveraging.GEOMETRIC,
-            call_put=call_put,
+            option_type=option_type,
             strike=strike,
             maturity=maturity,
             currency=CURRENCY,
@@ -325,7 +325,7 @@ class TestAsianControlVariate:
         hull_bias = abs(euro_hull - euro_analytical) / euro_analytical
         logger.info(
             "European Hull bias: %s K=%d %.4f%% (hull=%.6f analytical=%.6f)",
-            call_put.value,
+            option_type.value,
             strike,
             hull_bias * 100,
             euro_hull,
@@ -344,7 +344,7 @@ class TestAsianControlVariate:
             control_variate_european=True,
         )
         amer_spec = _asian_spec(
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=100,
             averaging=AsianAveraging.ARITHMETIC,
         )
@@ -360,7 +360,7 @@ class TestAsianControlVariate:
         # European Hull tree (same lattice)
         euro_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,
@@ -376,7 +376,7 @@ class TestAsianControlVariate:
         # European analytical (Turnbull-Wakeman)
         bsm_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,

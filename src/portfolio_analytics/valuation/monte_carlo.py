@@ -544,7 +544,7 @@ class _MCAsianBase:
     def _asian_payoff(self, avg: np.ndarray) -> np.ndarray:
         """Asian payoff given average prices."""
         K = self.parent.strike
-        if self.spec.call_put is OptionType.CALL:
+        if self.spec.option_type is OptionType.CALL:
             return np.maximum(avg - K, 0.0)
         return np.maximum(K - avg, 0.0)
 

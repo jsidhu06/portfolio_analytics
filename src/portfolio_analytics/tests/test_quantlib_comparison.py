@@ -795,7 +795,7 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
 
     spec = AsianOptionSpec(
         averaging=AsianAveraging.ARITHMETIC,
-        call_put=OptionType.CALL,
+        option_type=OptionType.CALL,
         strike=_ASIAN_STRIKE,
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
@@ -840,7 +840,7 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
 
     spec = AsianOptionSpec(
         averaging=AsianAveraging.GEOMETRIC,
-        call_put=OptionType.PUT,
+        option_type=OptionType.PUT,
         strike=_ASIAN_STRIKE,
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
@@ -900,7 +900,7 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
 
     spec = AsianOptionSpec(
         averaging=AsianAveraging.ARITHMETIC,
-        call_put=OptionType.PUT,
+        option_type=OptionType.PUT,
         strike=_ASIAN_STRIKE,
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,

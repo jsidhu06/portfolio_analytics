@@ -119,7 +119,7 @@ def _asian_spec(
     *,
     strike: float,
     maturity: dt.datetime,
-    call_put: OptionType,
+    option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
     averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
     num_steps: int | None = None,
@@ -127,7 +127,7 @@ def _asian_spec(
 ) -> AsianOptionSpec:
     return AsianOptionSpec(
         averaging=averaging,
-        call_put=call_put,
+        option_type=option_type,
         strike=strike,
         maturity=maturity,
         currency=CURRENCY,
@@ -138,7 +138,7 @@ def _asian_spec(
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,dividend_yield,days,call_put",
+    "spot,strike,vol,short_rate,dividend_yield,days,option_type",
     [
         (100.0, 100.0, 0.2, 0.03, 0.0, 365, OptionType.CALL),
         (100.0, 100.0, 0.2, 0.03, 0.02, 365, OptionType.CALL),
@@ -151,10 +151,10 @@ def _asian_spec(
     ],
 )
 def test_asian_binomial_hull_close_to_mc(
-    spot, strike, vol, short_rate, dividend_yield, days, call_put
+    spot, strike, vol, short_rate, dividend_yield, days, option_type
 ):
     maturity = PRICING_DATE + dt.timedelta(days=days)
-    spec = _asian_spec(strike=strike, maturity=maturity, call_put=call_put)
+    spec = _asian_spec(strike=strike, maturity=maturity, option_type=option_type)
     q_curve = _flat_dividend_curve(dividend_yield, maturity)
 
     mc_underlying = _gbm_underlying(
@@ -204,7 +204,7 @@ def test_asian_binomial_hull_close_to_mc(
 
     logger.info(
         "Asian %s S=%.2f K=%.2f vol=%.2f r=%.2f q=%.2f days=%d\nMC=%.6f Hull=%.6f BinomMC=%.6f",
-        call_put.value,
+        option_type.value,
         spot,
         strike,
         vol,
@@ -238,7 +238,7 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
     maturity = PRICING_DATE + dt.timedelta(days=days)
     divs = [(PRICING_DATE + dt.timedelta(days=day), div_amt) for day in div_days]
 
-    spec = _asian_spec(strike=strike, maturity=maturity, call_put=OptionType.CALL)
+    spec = _asian_spec(strike=strike, maturity=maturity, option_type=OptionType.CALL)
 
     mc_underlying = _gbm_underlying(
         spot=spot,
@@ -324,7 +324,7 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,days,call_put",
+    "spot,strike,vol,short_rate,days,option_type",
     [
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
@@ -332,13 +332,19 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
         (110.0, 100.0, 0.25, 0.01, 270, OptionType.PUT),
     ],
 )
-def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, days, call_put):
+def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, days, option_type):
     maturity = PRICING_DATE + dt.timedelta(days=days)
     euro_spec = _asian_spec(
-        strike=strike, maturity=maturity, call_put=call_put, exercise_type=ExerciseType.EUROPEAN
+        strike=strike,
+        maturity=maturity,
+        option_type=option_type,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     amer_spec = _asian_spec(
-        strike=strike, maturity=maturity, call_put=call_put, exercise_type=ExerciseType.AMERICAN
+        strike=strike,
+        maturity=maturity,
+        option_type=option_type,
+        exercise_type=ExerciseType.AMERICAN,
     )
 
     binom_underlying = _underlying(
@@ -378,7 +384,7 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,days,call_put",
+    "spot,strike,vol,short_rate,days,option_type",
     [
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
@@ -387,13 +393,13 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
         (105.0, 110.0, 0.18, 0.02, 180, OptionType.PUT),
     ],
 )
-def test_geometric_asian_mc_positive_value(spot, strike, vol, short_rate, days, call_put):
+def test_geometric_asian_mc_positive_value(spot, strike, vol, short_rate, days, option_type):
     """Geometric Asian options should produce positive option values."""
     maturity = PRICING_DATE + dt.timedelta(days=days)
     spec = _asian_spec(
         strike=strike,
         maturity=maturity,
-        call_put=call_put,
+        option_type=option_type,
         averaging=AsianAveraging.GEOMETRIC,
     )
 
@@ -416,14 +422,14 @@ def test_geometric_asian_mc_positive_value(spot, strike, vol, short_rate, days, 
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,days,call_put",
+    "spot,strike,vol,short_rate,days,option_type",
     [
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
         (110.0, 100.0, 0.25, 0.01, 270, OptionType.CALL),
     ],
 )
-def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, call_put):
+def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, option_type):
     """Geometric average ≤ arithmetic average ⟹ geometric call ≤ arithmetic call
     (and geometric put ≥ arithmetic put for the same strike).
 
@@ -437,13 +443,13 @@ def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, cal
     arith_spec = _asian_spec(
         strike=strike,
         maturity=maturity,
-        call_put=call_put,
+        option_type=option_type,
         averaging=AsianAveraging.ARITHMETIC,
     )
     geom_spec = _asian_spec(
         strike=strike,
         maturity=maturity,
-        call_put=call_put,
+        option_type=option_type,
         averaging=AsianAveraging.GEOMETRIC,
     )
 
@@ -470,7 +476,7 @@ def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, cal
         params=MonteCarloParams(random_seed=MC_SEED),
     ).present_value()
 
-    if call_put is OptionType.CALL:
+    if option_type is OptionType.CALL:
         # Geometric call ≤ arithmetic call (AM-GM)
         assert geom_pv <= arith_pv + 1e-8
     else:
@@ -479,20 +485,22 @@ def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, cal
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,days,call_put",
+    "spot,strike,vol,short_rate,days,option_type",
     [
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.CALL),
         (110.0, 100.0, 0.25, 0.01, 270, OptionType.CALL),
         (100.0, 100.0, 0.2, 0.03, 365, OptionType.PUT),
     ],
 )
-def test_geometric_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate, days, call_put):
+def test_geometric_asian_binomial_hull_close_to_mc(
+    spot, strike, vol, short_rate, days, option_type
+):
     """Binomial Hull tree with geometric averaging should match MC geometric."""
     maturity = PRICING_DATE + dt.timedelta(days=days)
     spec = _asian_spec(
         strike=strike,
         maturity=maturity,
-        call_put=call_put,
+        option_type=option_type,
         averaging=AsianAveraging.GEOMETRIC,
     )
 
@@ -529,7 +537,7 @@ def test_geometric_asian_binomial_hull_close_to_mc(spot, strike, vol, short_rate
 
     logger.info(
         "Geometric Asian %s S=%.2f K=%.2f | MC=%.6f Hull=%.6f",
-        call_put.value,
+        option_type.value,
         spot,
         strike,
         mc_pv,
@@ -581,7 +589,7 @@ class TestAmericanAsianMC:
 
     def _price(
         self,
-        call_put: OptionType,
+        option_type: OptionType,
         exercise_type: ExerciseType,
         averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
         *,
@@ -598,7 +606,7 @@ class TestAmericanAsianMC:
         spec = _asian_spec(
             strike=strike or self.STRIKE,
             maturity=mat,
-            call_put=call_put,
+            option_type=option_type,
             exercise_type=exercise_type,
             averaging=averaging,
         )
@@ -619,14 +627,14 @@ class TestAmericanAsianMC:
 
     # -- American >= European for puts (early exercise premium) --
 
-    @pytest.mark.parametrize("call_put", [OptionType.PUT])
+    @pytest.mark.parametrize("option_type", [OptionType.PUT])
     @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
-    def test_american_geq_european_put(self, call_put, averaging):
+    def test_american_geq_european_put(self, option_type, averaging):
         """American Asian put >= European Asian put (early exercise premium)."""
-        euro = self._price(call_put, ExerciseType.EUROPEAN, averaging)
-        amer = self._price(call_put, ExerciseType.AMERICAN, averaging)
+        euro = self._price(option_type, ExerciseType.EUROPEAN, averaging)
+        amer = self._price(option_type, ExerciseType.AMERICAN, averaging)
         assert amer >= euro - 1e-6, (
-            f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {call_put.value}"
+            f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {option_type.value}"
         )
 
     # -- American >= European for calls with dividends --
@@ -640,24 +648,24 @@ class TestAmericanAsianMC:
 
     # -- Positive prices --
 
-    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
     @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
-    def test_positive_price(self, call_put, averaging):
-        pv = self._price(call_put, ExerciseType.AMERICAN, averaging)
+    def test_positive_price(self, option_type, averaging):
+        pv = self._price(option_type, ExerciseType.AMERICAN, averaging)
         assert pv > 0.0
 
     # -- Price increases with volatility --
 
-    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
-    def test_price_increases_with_vol(self, call_put):
-        low = self._price(call_put, ExerciseType.AMERICAN, vol=0.15)
-        high = self._price(call_put, ExerciseType.AMERICAN, vol=0.35)
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_price_increases_with_vol(self, option_type):
+        low = self._price(option_type, ExerciseType.AMERICAN, vol=0.15)
+        high = self._price(option_type, ExerciseType.AMERICAN, vol=0.35)
         assert high > low
 
     # -- MC American vs Binomial Hull American --
 
     @pytest.mark.parametrize(
-        "call_put,averaging",
+        "option_type,averaging",
         [
             (OptionType.CALL, AsianAveraging.ARITHMETIC),
             (OptionType.PUT, AsianAveraging.ARITHMETIC),
@@ -665,13 +673,13 @@ class TestAmericanAsianMC:
             (OptionType.PUT, AsianAveraging.GEOMETRIC),
         ],
     )
-    def test_mc_american_close_to_hull_american(self, call_put, averaging):
+    def test_mc_american_close_to_hull_american(self, option_type, averaging):
         """MC LSM American Asian should be close to Hull binomial American Asian."""
         mat = self.maturity
         spec = _asian_spec(
             strike=self.STRIKE,
             maturity=mat,
-            call_put=call_put,
+            option_type=option_type,
             exercise_type=ExerciseType.AMERICAN,
             averaging=averaging,
         )
@@ -705,7 +713,7 @@ class TestAmericanAsianMC:
         logger.info(
             "American Asian %s %s | MC=%.6f Hull=%.6f",
             averaging.value,
-            call_put.value,
+            option_type.value,
             mc_pv,
             hull_pv,
         )
@@ -721,7 +729,7 @@ class TestAmericanAsianMC:
         spec = _asian_spec(
             strike=self.STRIKE,
             maturity=mat,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
         )
         n_paths = 1000
@@ -752,7 +760,7 @@ class TestAmericanAsianMC:
         spec = _asian_spec(
             strike=self.STRIKE,
             maturity=self.maturity,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
         )
         binom_underlying = _underlying(
@@ -815,7 +823,7 @@ _MONTHLY_FIXINGS = tuple(
 
 
 def _fd_asian_pv(
-    call_put: OptionType,
+    option_type: OptionType,
     averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
     fixing_dates: tuple[dt.datetime, ...] = _MONTHLY_FIXINGS,
@@ -825,7 +833,7 @@ def _fd_asian_pv(
     """Helper: MC Asian PV using explicit fixing dates."""
     spec = AsianOptionSpec(
         averaging=averaging,
-        call_put=call_put,
+        option_type=option_type,
         strike=_FD_STRIKE,
         maturity=_FD_MATURITY,
         currency=CURRENCY,
@@ -884,14 +892,14 @@ class TestDividendEffectOnAsians:
 class TestAmericanAsianPremium:
     """American Asians should have non-negative early-exercise premium."""
 
-    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
     @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
-    def test_american_geq_european_with_fixing_dates(self, call_put, averaging):
+    def test_american_geq_european_with_fixing_dates(self, option_type, averaging):
         """American Asian PV >= European Asian PV (using fixing dates)."""
-        euro = _fd_asian_pv(call_put, averaging, ExerciseType.EUROPEAN)
-        amer = _fd_asian_pv(call_put, averaging, ExerciseType.AMERICAN)
+        euro = _fd_asian_pv(option_type, averaging, ExerciseType.EUROPEAN)
+        amer = _fd_asian_pv(option_type, averaging, ExerciseType.AMERICAN)
         assert amer >= euro - 1e-6, (
-            f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {call_put.value}"
+            f"American ({amer:.6f}) < European ({euro:.6f}) for {averaging.value} {option_type.value}"
         )
 
 
@@ -902,7 +910,7 @@ class TestFixingDatesValidation:
         with pytest.raises(ValidationError, match="non-empty"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=100.0,
                 maturity=_FD_MATURITY,
                 fixing_dates=(),
@@ -912,7 +920,7 @@ class TestFixingDatesValidation:
         with pytest.raises(ValidationError, match="ascending"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=100.0,
                 maturity=_FD_MATURITY,
                 fixing_dates=(
@@ -925,7 +933,7 @@ class TestFixingDatesValidation:
         with pytest.raises(ValidationError, match="maturity"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=100.0,
                 maturity=_FD_MATURITY,
                 fixing_dates=(
@@ -938,7 +946,7 @@ class TestFixingDatesValidation:
         with pytest.raises(ValidationError, match="averaging_start"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=100.0,
                 maturity=_FD_MATURITY,
                 averaging_start=dt.datetime(2025, 4, 1),
@@ -952,7 +960,7 @@ class TestFixingDatesValidation:
         """No error raised for well-formed fixing dates."""
         spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=100.0,
             maturity=_FD_MATURITY,
             fixing_dates=_MONTHLY_FIXINGS,
@@ -973,7 +981,7 @@ class TestSmallObservationCounts:
     """
 
     @pytest.mark.parametrize(
-        "spot,strike,vol,r,q,days,call_put",
+        "spot,strike,vol,r,q,days,option_type",
         [
             (100, 100, 0.20, 0.05, 0.00, 365, OptionType.CALL),
             (100, 100, 0.20, 0.05, 0.00, 365, OptionType.PUT),
@@ -981,7 +989,7 @@ class TestSmallObservationCounts:
             (90, 110, 0.25, 0.08, 0.01, 540, OptionType.PUT),
         ],
     )
-    def test_n1_less_than_bsm(self, spot, strike, vol, r, q, days, call_put):
+    def test_n1_less_than_bsm(self, spot, strike, vol, r, q, days, option_type):
         maturity = PRICING_DATE + dt.timedelta(days=days)
         und = _underlying(
             spot=spot,
@@ -996,7 +1004,7 @@ class TestSmallObservationCounts:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=call_put,
+                option_type=option_type,
                 num_steps=1,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1004,7 +1012,7 @@ class TestSmallObservationCounts:
         ).present_value()
 
         vanilla_spec = OptionSpec(
-            option_type=call_put,
+            option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike,
             maturity=maturity,
@@ -1052,7 +1060,7 @@ class TestGeometricAsianPutCallParity:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=num_obs,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1064,7 +1072,7 @@ class TestGeometricAsianPutCallParity:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=num_obs,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1097,7 +1105,7 @@ class TestAnalyticalVsMC:
     """Analytical geometric Asian should match MC geometric within sampling noise."""
 
     @pytest.mark.parametrize(
-        "spot,strike,vol,r,q,days,call_put",
+        "spot,strike,vol,r,q,days,option_type",
         [
             (100, 100, 0.20, 0.05, 0.00, 365, OptionType.CALL),
             (100, 100, 0.20, 0.05, 0.00, 365, OptionType.PUT),
@@ -1106,7 +1114,7 @@ class TestAnalyticalVsMC:
             (95, 90, 0.30, 0.05, 0.01, 540, OptionType.PUT),
         ],
     )
-    def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, call_put):
+    def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, option_type):
         maturity = PRICING_DATE + dt.timedelta(days=days)
         num_steps = 60
 
@@ -1123,7 +1131,7 @@ class TestAnalyticalVsMC:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=call_put,
+                option_type=option_type,
                 num_steps=num_steps,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1145,7 +1153,7 @@ class TestAnalyticalVsMC:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=call_put,
+                option_type=option_type,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.MONTE_CARLO,
@@ -1154,7 +1162,7 @@ class TestAnalyticalVsMC:
 
         logger.info(
             "Geom Asian %s S=%.0f K=%.0f analytical=%.6f MC=%.6f",
-            call_put.value,
+            option_type.value,
             spot,
             strike,
             analytical_pv,
@@ -1183,7 +1191,7 @@ class TestGeometricAsianProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1201,7 +1209,7 @@ class TestGeometricAsianProperties:
                 _asian_spec(
                     strike=100,
                     maturity=maturity,
-                    call_put=OptionType.CALL,
+                    option_type=OptionType.CALL,
                     num_steps=12,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
@@ -1220,7 +1228,7 @@ class TestGeometricAsianProperties:
                 _asian_spec(
                     strike=100,
                     maturity=maturity,
-                    call_put=OptionType.PUT,
+                    option_type=OptionType.PUT,
                     num_steps=12,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
@@ -1244,7 +1252,7 @@ class TestGeometricAsianProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=4,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1255,7 +1263,7 @@ class TestGeometricAsianProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=252,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1273,7 +1281,7 @@ class TestGeometricAsianProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1305,7 +1313,7 @@ class TestGeometricAsianProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1379,7 +1387,7 @@ class TestDividendYield:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1397,7 +1405,7 @@ class TestDividendYield:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1445,7 +1453,7 @@ class TestSeasonedAsian:
         with pytest.raises(Exception, match="observed_average and observed_count"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1457,7 +1465,7 @@ class TestSeasonedAsian:
         with pytest.raises(Exception, match="observed_average and observed_count"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1469,7 +1477,7 @@ class TestSeasonedAsian:
         with pytest.raises(Exception, match="observed_average must be > 0"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1482,7 +1490,7 @@ class TestSeasonedAsian:
         with pytest.raises(Exception, match="observed_count must be a positive integer"):
             AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1494,8 +1502,8 @@ class TestSeasonedAsian:
     # ── K* > 0: reduces to fresh Asian ───────────────────────────────────
 
     @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
-    @pytest.mark.parametrize("call_put", [OptionType.CALL, OptionType.PUT])
-    def test_seasoned_matches_manual_k_star(self, averaging, call_put):
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_seasoned_matches_manual_k_star(self, averaging, option_type):
         """Seasoned PV should equal scale * fresh_PV(K=K*) when K* > 0."""
         n1, S_bar, K = 6, 52.0, 50.0
         n2_steps = 5  # n₂ = 6 future observations
@@ -1509,7 +1517,7 @@ class TestSeasonedAsian:
         # Manual: price fresh Asian with K*
         fresh_spec = AsianOptionSpec(
             averaging=averaging,
-            call_put=call_put,
+            option_type=option_type,
             strike=K_star,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1524,7 +1532,7 @@ class TestSeasonedAsian:
         # Library seasoned
         seasoned_spec = AsianOptionSpec(
             averaging=averaging,
-            call_put=call_put,
+            option_type=option_type,
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1553,7 +1561,7 @@ class TestSeasonedAsian:
 
         seasoned_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1575,7 +1583,7 @@ class TestSeasonedAsian:
         df = np.exp(-self.RATE * ttm)
         zero_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=0.0,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1594,7 +1602,7 @@ class TestSeasonedAsian:
         """When K* <= 0, a put is worthless (average > 0 > K*)."""
         seasoned_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.PUT,
+            option_type=OptionType.PUT,
             strike=50.0,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1624,7 +1632,7 @@ class TestSeasonedAsian:
 
         fresh_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1638,7 +1646,7 @@ class TestSeasonedAsian:
 
         seasoned_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1662,7 +1670,7 @@ class TestSeasonedAsian:
         def _seasoned_call(s_bar: float) -> float:
             spec = AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=self.SPOT,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1686,7 +1694,7 @@ class TestSeasonedAsian:
         def _seasoned_put(s_bar: float) -> float:
             spec = AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 strike=self.SPOT,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1710,7 +1718,7 @@ class TestSeasonedAsian:
         def _seasoned_call(n1: int) -> float:
             spec = AsianOptionSpec(
                 averaging=AsianAveraging.ARITHMETIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=K,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
@@ -1736,7 +1744,7 @@ class TestSeasonedAsian:
 
         seasoned_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1769,7 +1777,7 @@ class TestSeasonedAsian:
 
         seasoned_spec = AsianOptionSpec(
             averaging=AsianAveraging.ARITHMETIC,
-            call_put=OptionType.CALL,
+            option_type=OptionType.CALL,
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
@@ -1808,7 +1816,7 @@ class TestSeasonedAsian:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1826,7 +1834,7 @@ class TestSeasonedAsian:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1853,7 +1861,7 @@ class TestValidation:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -1870,7 +1878,7 @@ class TestValidation:
                 _asian_spec(
                     strike=100,
                     maturity=maturity,
-                    call_put=OptionType.CALL,
+                    option_type=OptionType.CALL,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
                 PricingMethod.BSM,
@@ -1881,7 +1889,7 @@ class TestValidation:
         with pytest.raises(Exception, match="num_steps"):
             AsianOptionSpec(
                 averaging=AsianAveraging.GEOMETRIC,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 strike=100,
                 maturity=maturity,
                 currency=CURRENCY,
@@ -1943,7 +1951,7 @@ class TestAveragingStart:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -1955,7 +1963,7 @@ class TestAveragingStart:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
@@ -1977,7 +1985,7 @@ class TestAveragingStart:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=10,
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
@@ -1990,7 +1998,7 @@ class TestAveragingStart:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=10,
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
@@ -2020,7 +2028,7 @@ class TestAveragingStart:
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,r,q,days,call_put",
+    "spot,strike,vol,r,q,days,option_type",
     [
         (100, 100, 0.20, 0.05, 0.00, 365, OptionType.CALL),
         (100, 100, 0.20, 0.05, 0.00, 365, OptionType.PUT),
@@ -2037,7 +2045,7 @@ def test_geometric_asian_four_method_comparison(
     r,
     q,
     days,
-    call_put,
+    option_type,
 ):
     """Compare geometric Asian European prices across 4 methods.
 
@@ -2068,7 +2076,7 @@ def test_geometric_asian_four_method_comparison(
         _asian_spec(
             strike=strike,
             maturity=maturity,
-            call_put=call_put,
+            option_type=option_type,
             num_steps=NUM_STEPS,
             averaging=AsianAveraging.GEOMETRIC,
         ),
@@ -2081,7 +2089,7 @@ def test_geometric_asian_four_method_comparison(
         _asian_spec(
             strike=strike,
             maturity=maturity,
-            call_put=call_put,
+            option_type=option_type,
             averaging=AsianAveraging.GEOMETRIC,
         ),
         PricingMethod.BINOMIAL,
@@ -2098,7 +2106,7 @@ def test_geometric_asian_four_method_comparison(
         _asian_spec(
             strike=strike,
             maturity=maturity,
-            call_put=call_put,
+            option_type=option_type,
             averaging=AsianAveraging.GEOMETRIC,
         ),
         PricingMethod.BINOMIAL,
@@ -2123,7 +2131,7 @@ def test_geometric_asian_four_method_comparison(
         _asian_spec(
             strike=strike,
             maturity=maturity,
-            call_put=call_put,
+            option_type=option_type,
             averaging=AsianAveraging.GEOMETRIC,
         ),
         PricingMethod.MONTE_CARLO,
@@ -2133,7 +2141,7 @@ def test_geometric_asian_four_method_comparison(
     logger.info(
         "Geometric Asian %s S=%.0f K=%.0f vol=%.2f r=%.2f q=%.2f days=%d\n"
         "  Analytical=%.6f  BinomMC=%.6f  Hull=%.6f  MC=%.6f",
-        call_put.value,
+        option_type.value,
         spot,
         strike,
         vol,
@@ -2290,7 +2298,7 @@ class TestArithmeticPutCallParity:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=num_steps,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2302,7 +2310,7 @@ class TestArithmeticPutCallParity:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=num_steps,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2334,7 +2342,7 @@ class TestArithmeticVsMC:
     """Turnbull-Wakeman approximation should be close to MC arithmetic average."""
 
     @pytest.mark.parametrize(
-        "spot,strike,vol,r,q,days,call_put",
+        "spot,strike,vol,r,q,days,option_type",
         [
             (100, 100, 0.20, 0.05, 0.00, 365, OptionType.CALL),
             (100, 100, 0.20, 0.05, 0.00, 365, OptionType.PUT),
@@ -2343,7 +2351,7 @@ class TestArithmeticVsMC:
             (95, 90, 0.30, 0.05, 0.01, 540, OptionType.PUT),
         ],
     )
-    def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, call_put):
+    def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, option_type):
         maturity = PRICING_DATE + dt.timedelta(days=days)
         num_steps = 60
 
@@ -2360,7 +2368,7 @@ class TestArithmeticVsMC:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=call_put,
+                option_type=option_type,
                 num_steps=num_steps,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2382,7 +2390,7 @@ class TestArithmeticVsMC:
             _asian_spec(
                 strike=strike,
                 maturity=maturity,
-                call_put=call_put,
+                option_type=option_type,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.MONTE_CARLO,
@@ -2391,7 +2399,7 @@ class TestArithmeticVsMC:
 
         logger.info(
             "Arith Asian %s S=%.0f K=%.0f analytical=%.6f MC=%.6f",
-            call_put.value,
+            option_type.value,
             spot,
             strike,
             analytical_pv,
@@ -2421,7 +2429,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2433,7 +2441,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -2452,7 +2460,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2464,7 +2472,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.PUT,
+                option_type=OptionType.PUT,
                 num_steps=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -2483,7 +2491,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2507,13 +2515,13 @@ class TestArithmeticProperties:
     def test_positive_price(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
-        for call_put in (OptionType.CALL, OptionType.PUT):
+        for option_type in (OptionType.CALL, OptionType.PUT):
             pv = OptionValuation(
                 und,
                 _asian_spec(
                     strike=100,
                     maturity=maturity,
-                    call_put=call_put,
+                    option_type=option_type,
                     num_steps=12,
                     averaging=AsianAveraging.ARITHMETIC,
                 ),
@@ -2528,7 +2536,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
@@ -2546,7 +2554,7 @@ class TestArithmeticProperties:
             _asian_spec(
                 strike=100,
                 maturity=maturity,
-                call_put=OptionType.CALL,
+                option_type=OptionType.CALL,
                 num_steps=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),

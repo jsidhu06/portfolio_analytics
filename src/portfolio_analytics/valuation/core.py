@@ -230,7 +230,7 @@ class AsianOptionSpec:
     ----------
     averaging : AsianAveraging
         AsianAveraging.ARITHMETIC or AsianAveraging.GEOMETRIC
-    call_put : OptionType
+    option_type : OptionType
         OptionType.CALL or OptionType.PUT to specify payoff direction
     strike : float
         Strike price
@@ -273,7 +273,7 @@ class AsianOptionSpec:
     """
 
     averaging: AsianAveraging
-    call_put: OptionType  # CALL or PUT
+    option_type: OptionType  # CALL or PUT
     strike: float
     maturity: dt.datetime
     currency: str | None = None
@@ -281,14 +281,9 @@ class AsianOptionSpec:
     num_steps: int | None = None
     contract_size: int | float = 100
     exercise_type: ExerciseType = ExerciseType.EUROPEAN
-    fixing_dates: tuple[dt.datetime, ...] | None = None
+    fixing_dates: Sequence[dt.datetime] | None = None
     observed_average: float | None = None
     observed_count: int | None = None
-
-    @property
-    def option_type(self) -> OptionType:
-        """Alias for ``call_put`` to align with vanilla ``OptionSpec`` naming."""
-        return self.call_put
 
     def __post_init__(self) -> None:
         """Validate Asian option specification."""
@@ -301,13 +296,13 @@ class AsianOptionSpec:
                 f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
             )
 
-        if not isinstance(self.call_put, OptionType):
+        if not isinstance(self.option_type, OptionType):
             raise ConfigurationError(
-                f"call_put must be OptionType enum, got {type(self.call_put).__name__}"
+                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
-        if self.call_put not in (OptionType.CALL, OptionType.PUT):
+        if self.option_type not in (OptionType.CALL, OptionType.PUT):
             raise ValidationError(
-                "AsianOptionSpec.call_put must be OptionType.CALL or OptionType.PUT"
+                "AsianOptionSpec.option_type must be OptionType.CALL or OptionType.PUT"
             )
 
         if self.strike is None:
@@ -1205,12 +1200,12 @@ class OptionValuation:
         # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
         disc_M1 = OptionValuation(
             underlying=self._underlying,
-            spec=dc_replace(fresh_spec_zero, call_put=OptionType.CALL),
+            spec=dc_replace(fresh_spec_zero, option_type=OptionType.CALL),
             pricing_method=self._pricing_method,
             params=self._params,
         ).present_value()
 
-        if spec.call_put is OptionType.CALL:
+        if spec.option_type is OptionType.CALL:
             return scale * (disc_M1 - K_star * df)
         # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
         return 0.0
