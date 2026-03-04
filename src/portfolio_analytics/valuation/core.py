@@ -553,12 +553,6 @@ class OptionValuation:
     # Public API (methods)
     # ──────────────────────────────
 
-    def solve(
-        self,
-    ) -> float | np.ndarray | tuple[np.ndarray, np.ndarray] | tuple[float, np.ndarray, np.ndarray]:
-        """Run the pricing method's core solver and return its raw output."""
-        return self._impl.solve()
-
     def present_value(self) -> float:
         """Calculate present value of the derivative."""
         if self._pv_interceptor is not None:

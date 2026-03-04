@@ -713,9 +713,10 @@ class TestAmericanAsianMC:
             f"MC ({mc_pv:.6f}) vs Hull ({hull_pv:.6f}) too far apart"
         )
 
-    # -- solve() returns expected shapes --
+    # -- private solver returns expected shapes --
 
-    def test_solve_returns_correct_shapes(self):
+    def test_impl_solve_returns_correct_shapes(self):
+        """Access the private solver directly to verify MC Asian output shapes."""
         mat = self.maturity
         spec = _asian_spec(
             strike=self.STRIKE,
@@ -738,7 +739,7 @@ class TestAmericanAsianMC:
             PricingMethod.MONTE_CARLO,
             params=MonteCarloParams(random_seed=self.SEED),
         )
-        avg_paths, running_avg, intrinsic = ov.solve()
+        avg_paths, running_avg, intrinsic = ov._impl.solve()
         assert avg_paths.shape == running_avg.shape == intrinsic.shape
         assert avg_paths.shape[1] == n_paths
         # All intrinsic values should be non-negative
