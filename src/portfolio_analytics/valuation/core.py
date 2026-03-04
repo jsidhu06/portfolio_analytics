@@ -91,6 +91,26 @@ _ASIAN_REGISTRY: dict[tuple[PricingMethod, ExerciseType], type] = {
     (PricingMethod.BSM, ExerciseType.EUROPEAN): _AnalyticalAsianValuation,
 }
 
+# Maps GreekCalculationMethod → (required PricingMethod, capability_flag_name,
+# human-readable str of supported greeks for that capability).
+_GREEK_METHOD_RULES: dict[GreekCalculationMethod, tuple[PricingMethod, str, str]] = {
+    GreekCalculationMethod.ANALYTICAL: (
+        PricingMethod.BSM,
+        "bsm_capable",  # always True for BSM — not a caller flag
+        "all BSM greeks",
+    ),
+    GreekCalculationMethod.TREE: (
+        PricingMethod.BINOMIAL,
+        "tree_capable",
+        "delta, gamma, and theta",
+    ),
+    GreekCalculationMethod.GRID: (
+        PricingMethod.PDE_FD,
+        "grid_capable",
+        "delta, gamma, and theta",
+    ),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class OptionSpec:
@@ -1195,6 +1215,17 @@ class OptionValuation:
         # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
         return 0.0
 
+    @property
+    def _is_mc_analytic_eligible(self) -> bool:
+        """True when pathwise / likelihood-ratio MC Greeks are available."""
+        return (
+            self._pricing_method == PricingMethod.MONTE_CARLO
+            and isinstance(self.underlying, GBMProcess)
+            and isinstance(self._spec, OptionSpec)
+            and self._spec.exercise_type is ExerciseType.EUROPEAN
+            and not self._underlying.discrete_dividends
+        )
+
     def _resolve_greek_method(
         self,
         greek_calc_method: GreekCalculationMethod | None,
@@ -1203,6 +1234,13 @@ class OptionValuation:
         mc_analytic_capable: bool = False,
         grid_capable: bool = False,
     ) -> GreekCalculationMethod:
+        """Resolve and validate the Greek computation method.
+
+        When *greek_calc_method* is ``None`` the best available method is
+        chosen automatically (ANALYTICAL → TREE → GRID → PATHWISE → NUMERICAL).
+        When an explicit method is supplied it is validated against the
+        current pricing engine and capability flags.
+        """
         if greek_calc_method is not None and not isinstance(
             greek_calc_method, GreekCalculationMethod
         ):
@@ -1211,86 +1249,95 @@ class OptionValuation:
                 f"got {type(greek_calc_method).__name__}"
             )
 
+        # --- auto-select when caller passes None ---
         if greek_calc_method is None:
-            if self._pricing_method == PricingMethod.BSM:
-                return GreekCalculationMethod.ANALYTICAL
-            if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
-                return GreekCalculationMethod.TREE
-            if grid_capable and self._pricing_method == PricingMethod.PDE_FD:
-                return GreekCalculationMethod.GRID
-            if (
-                mc_analytic_capable
-                and self._pricing_method == PricingMethod.MONTE_CARLO
-                and isinstance(self.underlying, GBMProcess)
-                and isinstance(self._spec, OptionSpec)
-                and self._spec.exercise_type is ExerciseType.EUROPEAN
-                and not self._underlying.discrete_dividends
-            ):
-                return GreekCalculationMethod.PATHWISE
-            return GreekCalculationMethod.NUMERICAL
-
-        if (
-            greek_calc_method == GreekCalculationMethod.ANALYTICAL
-            and self._pricing_method != PricingMethod.BSM
-        ):
-            raise ValidationError(
-                "Analytical greeks are only available for BSM pricing method. "
-                "Use GreekCalculationMethod.NUMERICAL (or .TREE for binomial delta/gamma/theta)."
+            return self._auto_select_greek_method(
+                tree_capable=tree_capable,
+                mc_analytic_capable=mc_analytic_capable,
+                grid_capable=grid_capable,
             )
 
-        if greek_calc_method == GreekCalculationMethod.TREE:
-            if self._pricing_method != PricingMethod.BINOMIAL:
-                raise ValidationError("Tree greeks are only available for BINOMIAL pricing method.")
-            if not tree_capable:
-                raise ValidationError(
-                    "Tree extraction is not available for this greek. "
-                    "Only delta, gamma, and theta support GreekCalculationMethod.TREE."
-                )
+        # --- validate explicit choice ---
+        capability_flags = {
+            "tree_capable": tree_capable,
+            "grid_capable": grid_capable,
+            "bsm_capable": True,  # ANALYTICAL has no per-greek gate
+        }
 
-        if greek_calc_method == GreekCalculationMethod.GRID:
-            if self._pricing_method != PricingMethod.PDE_FD:
-                raise ValidationError("Grid greeks are only available for PDE_FD pricing method.")
-            if not grid_capable:
+        rule = _GREEK_METHOD_RULES.get(greek_calc_method)
+        if rule is not None:
+            required_method, cap_flag, supported_greeks = rule
+            if self._pricing_method != required_method:
                 raise ValidationError(
-                    "Grid extraction is not available for this greek. "
-                    "Only delta, gamma, and theta support GreekCalculationMethod.GRID."
+                    f"{greek_calc_method.value.capitalize()} greeks are only available for "
+                    f"{required_method.name} pricing method."
                 )
-
-        if greek_calc_method in (
+            if not capability_flags[cap_flag]:
+                raise ValidationError(
+                    f"{greek_calc_method.value.capitalize()} extraction is not available "
+                    f"for this greek. Only {supported_greeks} support "
+                    f"GreekCalculationMethod.{greek_calc_method.name}."
+                )
+        elif greek_calc_method in (
             GreekCalculationMethod.PATHWISE,
             GreekCalculationMethod.LIKELIHOOD_RATIO,
         ):
-            if self._pricing_method != PricingMethod.MONTE_CARLO:
-                raise ValidationError(
-                    f"{greek_calc_method.value} greeks are only available for "
-                    "MONTE_CARLO pricing method."
-                )
-
-            if not isinstance(self.underlying, GBMProcess):
-                raise ValidationError("MC greeks are only available for GBMProcess underlying.")
-
-            if not mc_analytic_capable:
-                raise ValidationError(
-                    f"{greek_calc_method.value} is not available for this greek. "
-                    "Only delta, gamma, and vega support PATHWISE; "
-                    "only delta and vega support LIKELIHOOD_RATIO."
-                )
-            if not (
-                isinstance(self._spec, OptionSpec)
-                and isinstance(self._spec.exercise_type, ExerciseType.EUROPEAN)
-            ):
-                raise ValidationError(
-                    f"{greek_calc_method.value} greeks are only implemented for "
-                    "vanilla European options (OptionSpec)."
-                )
-
-            if self._underlying.discrete_dividends:
-                raise UnsupportedFeatureError(
-                    "Pathwise and likelihood-ratio MC Greeks are not supported "
-                    "with discrete dividends."
-                )
+            self._validate_mc_greek_method(greek_calc_method, mc_analytic_capable)
 
         return greek_calc_method
+
+    def _auto_select_greek_method(
+        self,
+        *,
+        tree_capable: bool,
+        mc_analytic_capable: bool,
+        grid_capable: bool,
+    ) -> GreekCalculationMethod:
+        """Choose the best Greek method for the current pricing engine."""
+        if self._pricing_method == PricingMethod.BSM:
+            return GreekCalculationMethod.ANALYTICAL
+        if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
+            return GreekCalculationMethod.TREE
+        if grid_capable and self._pricing_method == PricingMethod.PDE_FD:
+            return GreekCalculationMethod.GRID
+        if mc_analytic_capable and self._is_mc_analytic_eligible:
+            return GreekCalculationMethod.PATHWISE
+        return GreekCalculationMethod.NUMERICAL
+
+    def _validate_mc_greek_method(
+        self,
+        method: GreekCalculationMethod,
+        mc_analytic_capable: bool,
+    ) -> None:
+        """Validate PATHWISE / LIKELIHOOD_RATIO against MC prerequisites.
+
+        Provides specific error messages for each failing condition.
+        The fast-path check ``_is_mc_analytic_eligible`` covers the same
+        conditions but returns a bool; this method gives actionable errors.
+        """
+        if self._pricing_method != PricingMethod.MONTE_CARLO:
+            raise ValidationError(
+                f"{method.value} greeks are only available for MONTE_CARLO pricing method."
+            )
+        if not mc_analytic_capable:
+            raise ValidationError(
+                f"{method.value} is not available for this greek. "
+                "Only delta, gamma, and vega support PATHWISE; "
+                "only delta and vega support LIKELIHOOD_RATIO."
+            )
+        if not isinstance(self.underlying, GBMProcess):
+            raise ValidationError("MC greeks are only available for GBMProcess underlying.")
+        if not (
+            isinstance(self._spec, OptionSpec) and self._spec.exercise_type is ExerciseType.EUROPEAN
+        ):
+            raise ValidationError(
+                f"{method.value} greeks are only implemented for "
+                "vanilla European options (OptionSpec)."
+            )
+        if self._underlying.discrete_dividends:
+            raise UnsupportedFeatureError(
+                "Pathwise and likelihood-ratio MC Greeks are not supported with discrete dividends."
+            )
 
     def _build_valuation(self, *, underlying) -> "OptionValuation":
         return OptionValuation(
