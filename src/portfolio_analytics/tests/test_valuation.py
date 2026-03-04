@@ -9,7 +9,7 @@ from portfolio_analytics.exceptions import (
     ValidationError,
 )
 from portfolio_analytics.valuation import (
-    OptionSpec,
+    VanillaSpec,
     PayoffSpec,
     UnderlyingPricingData,
     OptionValuation,
@@ -41,12 +41,12 @@ from portfolio_analytics.valuation.pde import _FDAmericanValuation
 from portfolio_analytics.tests.helpers import flat_curve
 
 
-class TestOptionSpec:
-    """Tests for OptionSpec dataclass."""
+class TestVanillaSpec:
+    """Tests for VanillaSpec dataclass."""
 
     def test_valid_option_spec_creation(self):
-        """Test successful creation of valid OptionSpec."""
-        spec = OptionSpec(
+        """Test successful creation of valid VanillaSpec."""
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=100.0,
@@ -60,9 +60,9 @@ class TestOptionSpec:
         assert spec.contract_size == 100
 
     def test_option_spec_with_none_strike(self):
-        """Test that None strike is rejected for vanilla OptionSpec."""
-        with pytest.raises(ValidationError, match="OptionSpec\\.strike must be provided"):
-            OptionSpec(
+        """Test that None strike is rejected for vanilla VanillaSpec."""
+        with pytest.raises(ValidationError, match="VanillaSpec\\.strike must be provided"):
+            VanillaSpec(
                 option_type=OptionType.CALL,
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=None,
@@ -73,7 +73,7 @@ class TestOptionSpec:
     def test_option_spec_invalid_option_type(self):
         """Test that invalid option_type raises TypeError."""
         with pytest.raises(ConfigurationError, match="option_type must be OptionType enum"):
-            OptionSpec(
+            VanillaSpec(
                 option_type="CALL",  # Invalid: string instead of enum
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=100.0,
@@ -84,7 +84,7 @@ class TestOptionSpec:
     def test_option_spec_invalid_exercise_type(self):
         """Test that invalid exercise_type raises TypeError."""
         with pytest.raises(ConfigurationError, match="exercise_type must be ExerciseType enum"):
-            OptionSpec(
+            VanillaSpec(
                 option_type=OptionType.PUT,
                 exercise_type="EUROPEAN",  # Invalid: string instead of enum
                 strike=100.0,
@@ -93,8 +93,8 @@ class TestOptionSpec:
             )
 
     def test_option_spec_frozen(self):
-        """Test that OptionSpec is frozen (immutable)."""
-        spec = OptionSpec(
+        """Test that VanillaSpec is frozen (immutable)."""
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=100.0,
@@ -199,7 +199,7 @@ class TestOptionValuation:
         self.market_data = MarketData(self.pricing_date, self.curve, currency="USD")
 
         # Standard option spec
-        self.call_spec = OptionSpec(
+        self.call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -207,7 +207,7 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        self.put_spec = OptionSpec(
+        self.put_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -342,7 +342,7 @@ class TestOptionValuation:
             market_data=self.market_data,
         )
 
-        invalid_spec = OptionSpec(
+        invalid_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -365,7 +365,7 @@ class TestOptionValuation:
             market_data=self.market_data,
         )
 
-        eur_spec = OptionSpec(
+        eur_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -415,7 +415,7 @@ class TestOptionValuation:
 
         leg_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=k,
@@ -468,7 +468,7 @@ class TestOptionValuation:
 
         leg_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=k,
@@ -515,7 +515,7 @@ class TestOptionValuation:
 
         binomial_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=k,
@@ -534,7 +534,7 @@ class TestOptionValuation:
 
         mcs_pv = 0.0
         for opt_type, k, w in condor_spec.leg_definitions():
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=k,
@@ -653,7 +653,7 @@ class TestOptionValuation:
         ]
         leg_pv = 0.0
         for opt_type, k, w in leg_specs:
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.AMERICAN,
                 strike=k,
@@ -699,7 +699,7 @@ class TestOptionValuation:
         ]
         leg_pv = 0.0
         for opt_type, k, w in leg_specs:
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=ExerciseType.AMERICAN,
                 strike=k,
@@ -836,7 +836,7 @@ class TestOptionValuation:
             market_data=self.market_data,
         )
 
-        american_spec = OptionSpec(
+        american_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -859,7 +859,7 @@ class TestOptionValuation:
             market_data=self.market_data,
             dividend_curve=None,
         )
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -877,7 +877,7 @@ class TestOptionValuation:
             market_data=self.market_data,
             dividend_curve=None,
         )
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -908,7 +908,7 @@ class TestOptionValuation:
             market_data=self.market_data,
             dividend_curve=flat_curve(self.pricing_date, self.maturity, 0.03),
         )
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
@@ -944,14 +944,14 @@ class TestOptionValuation:
             market_data=self.market_data,
             dividend_curve=None,
         )
-        spec_am = OptionSpec(
+        spec_am = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
             maturity=self.maturity,
             currency="USD",
         )
-        spec_eu = OptionSpec(
+        spec_eu = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -976,14 +976,14 @@ class TestOptionValuation:
             market_data=self.market_data,
             dividend_curve=None,
         )
-        spec_am = OptionSpec(
+        spec_am = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.AMERICAN,
             strike=self.strike,
             maturity=self.maturity,
             currency="USD",
         )
-        spec_eu = OptionSpec(
+        spec_eu = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -1007,7 +1007,7 @@ class TestOptionValuation:
 
     def test_binomial_discrete_dividends_close_to_bsm(self):
         """Binomial with discrete dividends should be close to BSM with dividend-adjusted spot."""
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,

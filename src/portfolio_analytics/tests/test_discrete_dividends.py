@@ -15,7 +15,7 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.utils import pv_discrete_dividends
-from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
 
@@ -35,7 +35,7 @@ def _build_case():
         (pricing_date + dt.timedelta(days=270), 0.5),
     ]
 
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -135,7 +135,7 @@ def test_binomial_accepts_discrete_dividends_with_nonflat_curve():
         market_data=market_data,
         discrete_dividends=divs,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=50.0,

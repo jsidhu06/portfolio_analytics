@@ -23,7 +23,7 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.valuation import (
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
     UnderlyingPricingData,
 )
@@ -101,8 +101,8 @@ class TestGreeksSetup:
         strike: float | None = None,
         maturity: dt.datetime | None = None,
         currency: str | None = None,
-    ) -> OptionSpec:
-        return OptionSpec(
+    ) -> VanillaSpec:
+        return VanillaSpec(
             option_type=option_type,
             exercise_type=exercise_type,
             strike=self.strike if strike is None else strike,
@@ -113,7 +113,7 @@ class TestGreeksSetup:
     def _make_val(
         self,
         underlying: PathSimulation | UnderlyingPricingData,
-        spec: OptionSpec,
+        spec: VanillaSpec,
         method: PricingMethod,
         params=None,
     ) -> OptionValuation:

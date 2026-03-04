@@ -18,8 +18,8 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
-    AsianOptionSpec,
-    OptionSpec,
+    AsianSpec,
+    VanillaSpec,
     OptionValuation,
     UnderlyingPricingData,
 )
@@ -73,8 +73,8 @@ def _spec(
     strike: float,
     option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.AMERICAN,
-) -> OptionSpec:
-    return OptionSpec(
+) -> VanillaSpec:
+    return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
@@ -793,7 +793,7 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         engine_factory=lambda p: ql.TurnbullWakemanAsianEngine(p),
     )
 
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=AsianAveraging.ARITHMETIC,
         option_type=OptionType.CALL,
         strike=_ASIAN_STRIKE,
@@ -838,7 +838,7 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         engine_factory=lambda p: ql.AnalyticDiscreteGeometricAveragePriceAsianEngine(p),
     )
 
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=AsianAveraging.GEOMETRIC,
         option_type=OptionType.PUT,
         strike=_ASIAN_STRIKE,
@@ -898,7 +898,7 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         div_handle=div_handle,
     )
 
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=AsianAveraging.ARITHMETIC,
         option_type=OptionType.PUT,
         strike=_ASIAN_STRIKE,

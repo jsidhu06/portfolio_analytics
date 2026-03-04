@@ -23,7 +23,7 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
     BinomialParams,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
     PDEParams,
     UnderlyingPricingData,
@@ -57,8 +57,8 @@ def _spec(
     option_type: OptionType = OptionType.CALL,
     exercise: ExerciseType = ExerciseType.EUROPEAN,
     maturity: dt.datetime = MATURITY,
-) -> OptionSpec:
-    return OptionSpec(
+) -> VanillaSpec:
+    return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise,
         strike=strike,
@@ -69,7 +69,7 @@ def _spec(
 
 def _pv(
     ud: UnderlyingPricingData,
-    spec: OptionSpec,
+    spec: VanillaSpec,
     method: PricingMethod,
     **kw,
 ) -> float:

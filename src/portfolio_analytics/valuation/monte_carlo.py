@@ -13,7 +13,7 @@ from .params import MonteCarloParams
 
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianOptionSpec
+    from .core import OptionValuation, AsianSpec
 
 
 logger = logging.getLogger(__name__)
@@ -526,7 +526,7 @@ class _MCAsianBase:
                 "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
             )
         self.underlying: PathSimulation = parent.underlying
-        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
     # helpers

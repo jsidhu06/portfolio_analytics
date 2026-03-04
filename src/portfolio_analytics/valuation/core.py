@@ -2,7 +2,7 @@
 
 This module is the central orchestration layer for pricing:
 
-- Spec dataclasses (`OptionSpec`, `PayoffSpec`, `AsianOptionSpec`)
+- Spec dataclasses (`VanillaSpec`, `PayoffSpec`, `AsianSpec`)
 - Underlying data container (`UnderlyingPricingData`)
 - Registry-based dispatcher (`OptionValuation`) that maps
     `(PricingMethod, ExerciseType)` to a private implementation engine
@@ -62,10 +62,10 @@ _PV_INTERCEPTORS: dict[str, str] = {
 
 
 def _resolve_interceptor(
-    spec: OptionSpec | PayoffSpec | AsianOptionSpec,
+    spec: VanillaSpec | PayoffSpec | AsianSpec,
 ) -> str | None:
     """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation."""
-    if isinstance(spec, AsianOptionSpec) and spec.observed_average is not None:
+    if isinstance(spec, AsianSpec) and spec.observed_average is not None:
         return "SEASONED_ASIAN"
     return None
 
@@ -113,7 +113,7 @@ _GREEK_METHOD_RULES: dict[GreekCalculationMethod, tuple[PricingMethod, str, str]
 
 
 @dataclass(frozen=True, slots=True)
-class OptionSpec:
+class VanillaSpec:
     """Contract specification for a vanilla option.
 
     Parameters
@@ -147,7 +147,7 @@ class OptionSpec:
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
             raise ValidationError(
-                "OptionSpec.option_type must be OptionType.CALL or OptionType.PUT"
+                "VanillaSpec.option_type must be OptionType.CALL or OptionType.PUT"
             )
         if not isinstance(self.exercise_type, ExerciseType):
             raise ConfigurationError(
@@ -155,15 +155,15 @@ class OptionSpec:
             )
 
         if self.strike is None:
-            raise ValidationError("OptionSpec.strike must be provided")
+            raise ValidationError("VanillaSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise ConfigurationError("OptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("VanillaSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValidationError("OptionSpec.strike must be finite")
+            raise ValidationError("VanillaSpec.strike must be finite")
         if strike < 0.0:
-            raise ValidationError("OptionSpec.strike must be >= 0")
+            raise ValidationError("VanillaSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
 
@@ -220,7 +220,7 @@ class PayoffSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class AsianOptionSpec:
+class AsianSpec:
     """Contract specification for an Asian option.
 
     Asian options are path-dependent options where the payoff depends on the average
@@ -301,20 +301,18 @@ class AsianOptionSpec:
                 f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
             )
         if self.option_type not in (OptionType.CALL, OptionType.PUT):
-            raise ValidationError(
-                "AsianOptionSpec.option_type must be OptionType.CALL or OptionType.PUT"
-            )
+            raise ValidationError("AsianSpec.option_type must be OptionType.CALL or OptionType.PUT")
 
         if self.strike is None:
-            raise ValidationError("AsianOptionSpec.strike must be provided")
+            raise ValidationError("AsianSpec.strike must be provided")
         try:
             strike = float(self.strike)
         except (TypeError, ValueError) as exc:
-            raise ConfigurationError("AsianOptionSpec.strike must be numeric") from exc
+            raise ConfigurationError("AsianSpec.strike must be numeric") from exc
         if not np.isfinite(strike):
-            raise ValidationError("AsianOptionSpec.strike must be finite")
+            raise ValidationError("AsianSpec.strike must be finite")
         if strike < 0.0:
-            raise ValidationError("AsianOptionSpec.strike must be >= 0")
+            raise ValidationError("AsianSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
         if self.num_steps is not None:
@@ -459,7 +457,7 @@ class OptionValuation:
     def __init__(
         self,
         underlying: PathSimulation | UnderlyingPricingData,
-        spec: OptionSpec | PayoffSpec | AsianOptionSpec,
+        spec: VanillaSpec | PayoffSpec | AsianSpec,
         pricing_method: PricingMethod,
         params: ValuationParams | None = None,
     ) -> None:
@@ -515,7 +513,7 @@ class OptionValuation:
             key_dates = {self.pricing_date, self.maturity}
             # When explicit fixing dates are given, inject them so the
             # time grid contains exact nodes at each observation date.
-            if isinstance(spec, AsianOptionSpec) and spec.fixing_dates is not None:
+            if isinstance(spec, AsianSpec) and spec.fixing_dates is not None:
                 key_dates |= set(spec.fixing_dates)
             merged = underlying.observation_dates | key_dates
             replace_kw: dict = {}
@@ -526,7 +524,7 @@ class OptionValuation:
             # averaging_start itself will land on the grid because
             # _build_time_grid includes grid_start in all_dates.
             if (
-                isinstance(spec, AsianOptionSpec)
+                isinstance(spec, AsianSpec)
                 and spec.averaging_start is not None
                 and underlying.grid_start != spec.averaging_start
             ):
@@ -841,7 +839,7 @@ class OptionValuation:
         return self._underlying
 
     @property
-    def spec(self) -> OptionSpec | PayoffSpec | AsianOptionSpec:
+    def spec(self) -> VanillaSpec | PayoffSpec | AsianSpec:
         """Contract specification object for the valued instrument."""
         return self._spec
 
@@ -903,7 +901,7 @@ class OptionValuation:
     def _build_impl(self):
         spec = self._spec
 
-        if isinstance(spec, AsianOptionSpec):
+        if isinstance(spec, AsianSpec):
             impl_cls = _ASIAN_REGISTRY.get((self._pricing_method, spec.exercise_type))
             if impl_cls is None:
                 raise ValidationError(
@@ -979,7 +977,7 @@ class OptionValuation:
                 "control_variate_european is only valid for options with American exercise."
             )
 
-        if isinstance(self._spec, AsianOptionSpec):
+        if isinstance(self._spec, AsianSpec):
             return self._apply_asian_control_variate(base_pv)
 
         if self._pricing_method not in (
@@ -991,9 +989,9 @@ class OptionValuation:
                 "control_variate_european is only supported for BINOMIAL, PDE_FD, "
                 "and MONTE_CARLO pricing."
             )
-        if not isinstance(self._spec, OptionSpec):
+        if not isinstance(self._spec, VanillaSpec):
             raise UnsupportedFeatureError(
-                "Vanilla control_variate_european requires spec to be of type OptionSpec. "
+                "Vanilla control_variate_european requires spec to be of type VanillaSpec. "
                 "PayoffSpec is not supported."
             )
         if self._option_type not in (OptionType.CALL, OptionType.PUT):
@@ -1052,7 +1050,7 @@ class OptionValuation:
                 "BINOMIAL and MONTE_CARLO pricing."
             )
         spec = self._spec
-        assert isinstance(spec, AsianOptionSpec)
+        assert isinstance(spec, AsianSpec)
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
                 "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
@@ -1107,12 +1105,12 @@ class OptionValuation:
     def _seasoned_asian_future_obs(self) -> int:
         """Return the number of *future* averaging observations (n₂)."""
         spec = self._spec
-        assert isinstance(spec, AsianOptionSpec)
+        assert isinstance(spec, AsianSpec)
 
         if self._pricing_method is PricingMethod.BSM:
             if spec.num_steps is None:
                 raise ValidationError(
-                    "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
+                    "num_steps is required on AsianSpec for analytical (BSM) pricing."
                 )
             return spec.num_steps + 1
 
@@ -1148,7 +1146,7 @@ class OptionValuation:
 
         See Hull, *Options, Futures, and Other Derivatives*, Section 26.13."""
         spec = self._spec
-        assert isinstance(spec, AsianOptionSpec)
+        assert isinstance(spec, AsianSpec)
         assert spec.observed_average is not None and spec.observed_count is not None
 
         n1 = spec.observed_count
@@ -1216,7 +1214,7 @@ class OptionValuation:
         return (
             self._pricing_method == PricingMethod.MONTE_CARLO
             and isinstance(self.underlying, GBMProcess)
-            and isinstance(self._spec, OptionSpec)
+            and isinstance(self._spec, VanillaSpec)
             and self._spec.exercise_type is ExerciseType.EUROPEAN
             and not self._underlying.discrete_dividends
         )
@@ -1323,11 +1321,12 @@ class OptionValuation:
         if not isinstance(self.underlying, GBMProcess):
             raise ValidationError("MC greeks are only available for GBMProcess underlying.")
         if not (
-            isinstance(self._spec, OptionSpec) and self._spec.exercise_type is ExerciseType.EUROPEAN
+            isinstance(self._spec, VanillaSpec)
+            and self._spec.exercise_type is ExerciseType.EUROPEAN
         ):
             raise ValidationError(
                 f"{method.value} greeks are only implemented for "
-                "vanilla European options (OptionSpec)."
+                "vanilla European options (VanillaSpec)."
             )
         if self._underlying.discrete_dividends:
             raise UnsupportedFeatureError(

@@ -34,12 +34,12 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
-from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
     _asian_geometric_analytical,
 )
-from portfolio_analytics.valuation.core import AsianOptionSpec
+from portfolio_analytics.valuation.core import AsianSpec
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
 
 
@@ -124,8 +124,8 @@ def _asian_spec(
     averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
     num_steps: int | None = None,
     averaging_start: dt.datetime | None = None,
-) -> AsianOptionSpec:
-    return AsianOptionSpec(
+) -> AsianSpec:
+    return AsianSpec(
         averaging=averaging,
         option_type=option_type,
         strike=strike,
@@ -831,7 +831,7 @@ def _fd_asian_pv(
     seed: int = _FD_SEED,
 ) -> float:
     """Helper: MC Asian PV using explicit fixing dates."""
-    spec = AsianOptionSpec(
+    spec = AsianSpec(
         averaging=averaging,
         option_type=option_type,
         strike=_FD_STRIKE,
@@ -904,11 +904,11 @@ class TestAmericanAsianPremium:
 
 
 class TestFixingDatesValidation:
-    """Validation rules for fixing_dates on AsianOptionSpec."""
+    """Validation rules for fixing_dates on AsianSpec."""
 
     def test_empty_fixing_dates_raises(self):
         with pytest.raises(ValidationError, match="non-empty"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=100.0,
@@ -918,7 +918,7 @@ class TestFixingDatesValidation:
 
     def test_unsorted_fixing_dates_raises(self):
         with pytest.raises(ValidationError, match="ascending"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=100.0,
@@ -931,7 +931,7 @@ class TestFixingDatesValidation:
 
     def test_fixing_dates_beyond_maturity_raises(self):
         with pytest.raises(ValidationError, match="maturity"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=100.0,
@@ -944,7 +944,7 @@ class TestFixingDatesValidation:
 
     def test_fixing_dates_before_averaging_start_raises(self):
         with pytest.raises(ValidationError, match="averaging_start"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=100.0,
@@ -958,7 +958,7 @@ class TestFixingDatesValidation:
 
     def test_valid_fixing_dates_accepted(self):
         """No error raised for well-formed fixing dates."""
-        spec = AsianOptionSpec(
+        spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=100.0,
@@ -1011,7 +1011,7 @@ class TestSmallObservationCounts:
             PricingMethod.BSM,
         ).present_value()
 
-        vanilla_spec = OptionSpec(
+        vanilla_spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike,
@@ -1288,7 +1288,7 @@ class TestGeometricAsianProperties:
             PricingMethod.BSM,
         ).present_value()
 
-        vanilla_spec = OptionSpec(
+        vanilla_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=100,
@@ -1320,7 +1320,7 @@ class TestGeometricAsianProperties:
             PricingMethod.BSM,
         ).present_value()
 
-        vanilla_spec = OptionSpec(
+        vanilla_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=100,
@@ -1451,7 +1451,7 @@ class TestSeasonedAsian:
 
     def test_observed_average_requires_observed_count(self):
         with pytest.raises(Exception, match="observed_average and observed_count"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=50.0,
@@ -1463,7 +1463,7 @@ class TestSeasonedAsian:
 
     def test_observed_count_requires_observed_average(self):
         with pytest.raises(Exception, match="observed_average and observed_count"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=50.0,
@@ -1475,7 +1475,7 @@ class TestSeasonedAsian:
 
     def test_observed_average_must_be_positive(self):
         with pytest.raises(Exception, match="observed_average must be > 0"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=50.0,
@@ -1488,7 +1488,7 @@ class TestSeasonedAsian:
 
     def test_observed_count_must_be_positive_int(self):
         with pytest.raises(Exception, match="observed_count must be a positive integer"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=50.0,
@@ -1515,7 +1515,7 @@ class TestSeasonedAsian:
         scale = n2 / n_total
 
         # Manual: price fresh Asian with K*
-        fresh_spec = AsianOptionSpec(
+        fresh_spec = AsianSpec(
             averaging=averaging,
             option_type=option_type,
             strike=K_star,
@@ -1530,7 +1530,7 @@ class TestSeasonedAsian:
         ).present_value()
 
         # Library seasoned
-        seasoned_spec = AsianOptionSpec(
+        seasoned_spec = AsianSpec(
             averaging=averaging,
             option_type=option_type,
             strike=K,
@@ -1559,7 +1559,7 @@ class TestSeasonedAsian:
         K_star = (n_total / n2) * K - (n1 / n2) * S_bar
         assert K_star < 0, "This test requires K* < 0"
 
-        seasoned_spec = AsianOptionSpec(
+        seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=K,
@@ -1581,7 +1581,7 @@ class TestSeasonedAsian:
         # Manual: scale * (disc_M1 - K* * df)
         ttm = 1.0
         df = np.exp(-self.RATE * ttm)
-        zero_spec = AsianOptionSpec(
+        zero_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=0.0,
@@ -1600,7 +1600,7 @@ class TestSeasonedAsian:
 
     def test_k_star_negative_put_is_zero(self):
         """When K* <= 0, a put is worthless (average > 0 > K*)."""
-        seasoned_spec = AsianOptionSpec(
+        seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.PUT,
             strike=50.0,
@@ -1630,7 +1630,7 @@ class TestSeasonedAsian:
         n2_steps = 5
         n1 = 6
 
-        fresh_spec = AsianOptionSpec(
+        fresh_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=K,
@@ -1644,7 +1644,7 @@ class TestSeasonedAsian:
             PricingMethod.BSM,
         ).present_value()
 
-        seasoned_spec = AsianOptionSpec(
+        seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=K,
@@ -1668,7 +1668,7 @@ class TestSeasonedAsian:
         n1 = 6
 
         def _seasoned_call(s_bar: float) -> float:
-            spec = AsianOptionSpec(
+            spec = AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=self.SPOT,
@@ -1692,7 +1692,7 @@ class TestSeasonedAsian:
         n1 = 6
 
         def _seasoned_put(s_bar: float) -> float:
-            spec = AsianOptionSpec(
+            spec = AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.PUT,
                 strike=self.SPOT,
@@ -1716,7 +1716,7 @@ class TestSeasonedAsian:
         K = self.SPOT
 
         def _seasoned_call(n1: int) -> float:
-            spec = AsianOptionSpec(
+            spec = AsianSpec(
                 averaging=AsianAveraging.ARITHMETIC,
                 option_type=OptionType.CALL,
                 strike=K,
@@ -1742,7 +1742,7 @@ class TestSeasonedAsian:
         n1, S_bar, K = 6, 52.0, 50.0
         n2_steps = 60
 
-        seasoned_spec = AsianOptionSpec(
+        seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=K,
@@ -1775,7 +1775,7 @@ class TestSeasonedAsian:
         n1, S_bar, K = 6, 52.0, 50.0
         n2_steps = 60
 
-        seasoned_spec = AsianOptionSpec(
+        seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=K,
@@ -1887,7 +1887,7 @@ class TestValidation:
     def test_invalid_num_steps_on_spec(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         with pytest.raises(Exception, match="num_steps"):
-            AsianOptionSpec(
+            AsianSpec(
                 averaging=AsianAveraging.GEOMETRIC,
                 option_type=OptionType.CALL,
                 strike=100,
@@ -2500,7 +2500,7 @@ class TestArithmeticProperties:
 
         vanilla_pv = OptionValuation(
             und,
-            OptionSpec(
+            VanillaSpec(
                 option_type=OptionType.CALL,
                 exercise_type=ExerciseType.EUROPEAN,
                 strike=100,

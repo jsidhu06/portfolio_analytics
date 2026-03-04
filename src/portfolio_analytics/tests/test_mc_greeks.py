@@ -24,7 +24,7 @@ from portfolio_analytics.tests.helpers import flat_curve
 
 from portfolio_analytics.valuation import (
     MonteCarloParams,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
     UnderlyingPricingData,
 )
@@ -91,7 +91,7 @@ class _MCGreekTestBase:
         strike: float | None = None,
         process: GBMProcess | None = None,
     ) -> OptionValuation:
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike or self.strike,
@@ -118,7 +118,7 @@ class _MCGreekTestBase:
             market_data=self.market_data,
             dividend_curve=self.qcr,
         )
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike or self.strike,
@@ -379,7 +379,7 @@ class TestMCGreekNoDividend(_MCGreekTestBase):
 
     def test_pathwise_delta_no_div(self):
         process = self._make_process(q_curve=None)
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -469,7 +469,7 @@ class TestMCGreekMethodAgreement:
             end_date=self.MATURITY,
         )
         process = GBMProcess(md, params, sim)
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,
             strike=strike,

@@ -14,8 +14,8 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
-from portfolio_analytics.valuation.core import AsianOptionSpec
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation.core import AsianSpec
 from portfolio_analytics.valuation.params import BinomialParams, PDEParams
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,8 @@ def _build_underlying(spot: float, vol: float, rate: float, dividend_rate: float
     )
 
 
-def _build_spec(option_type: OptionType, exercise_type: ExerciseType, strike: float) -> OptionSpec:
-    return OptionSpec(
+def _build_spec(option_type: OptionType, exercise_type: ExerciseType, strike: float) -> VanillaSpec:
+    return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
@@ -152,8 +152,8 @@ def _asian_spec(
     strike: float,
     exercise_type: ExerciseType = ExerciseType.AMERICAN,
     averaging: AsianAveraging = AsianAveraging.GEOMETRIC,
-) -> AsianOptionSpec:
-    return AsianOptionSpec(
+) -> AsianSpec:
+    return AsianSpec(
         averaging=averaging,
         option_type=option_type,
         strike=strike,
@@ -200,7 +200,7 @@ class TestAsianControlVariate:
         ).present_value()
 
         # European analytical (Kemna-Vorst)
-        bsm_spec = AsianOptionSpec(
+        bsm_spec = AsianSpec(
             averaging=AsianAveraging.GEOMETRIC,
             option_type=OptionType.PUT,
             strike=100,
@@ -256,7 +256,7 @@ class TestAsianControlVariate:
                 params=cv_params,
             ).present_value()
 
-            bsm_spec = AsianOptionSpec(
+            bsm_spec = AsianSpec(
                 averaging=AsianAveraging.GEOMETRIC,
                 option_type=option_type,
                 strike=strike,
@@ -291,7 +291,7 @@ class TestAsianControlVariate:
         hull_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
 
         # European Hull tree (no CV)
-        euro_spec = AsianOptionSpec(
+        euro_spec = AsianSpec(
             averaging=AsianAveraging.GEOMETRIC,
             option_type=option_type,
             strike=strike,
@@ -307,7 +307,7 @@ class TestAsianControlVariate:
         ).present_value()
 
         # European analytical
-        bsm_spec = AsianOptionSpec(
+        bsm_spec = AsianSpec(
             averaging=AsianAveraging.GEOMETRIC,
             option_type=option_type,
             strike=strike,
@@ -358,7 +358,7 @@ class TestAsianControlVariate:
         ).present_value()
 
         # European Hull tree (same lattice)
-        euro_spec = AsianOptionSpec(
+        euro_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=100,
@@ -374,7 +374,7 @@ class TestAsianControlVariate:
         ).present_value()
 
         # European analytical (Turnbull-Wakeman)
-        bsm_spec = AsianOptionSpec(
+        bsm_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
             option_type=OptionType.CALL,
             strike=100,

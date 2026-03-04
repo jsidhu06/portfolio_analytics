@@ -8,7 +8,7 @@ from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.valuation import (
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
     UnderlyingPricingData,
 )
@@ -46,7 +46,7 @@ class TestBSMValuation:
 
     def test_bsm_call_option_atm(self):
         """Test BSM pricing for ATM call option (basic sanity check)."""
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -69,7 +69,7 @@ class TestBSMValuation:
 
     def test_bsm_discrete_dividends_reduce_call_price(self):
         """Discrete dividends should reduce European call price (all else equal)."""
-        spec = OptionSpec(
+        spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -103,7 +103,7 @@ class TestBSMValuation:
 
     def test_bsm_put_option_atm(self):
         """Test BSM pricing for ATM put option."""
-        put_spec = OptionSpec(
+        put_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -132,7 +132,7 @@ class TestBSMValuation:
             market_data=self.market_data,
         )
 
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -160,7 +160,7 @@ class TestBSMValuation:
             market_data=self.market_data,
         )
 
-        put_spec = OptionSpec(
+        put_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -184,7 +184,7 @@ class TestBSMValuation:
 
     def test_bsm_with_dividend_curve(self):
         """Test BSM pricing with dividend curve."""
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -212,7 +212,7 @@ class TestBSMValuation:
 
     def test_bsm_call_put_parity(self):
         """Test BSM call-put parity: C - P = S*exp(-q*T) - K*exp(-r*T)."""
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -220,7 +220,7 @@ class TestBSMValuation:
             currency="USD",
         )
 
-        put_spec = OptionSpec(
+        put_spec = VanillaSpec(
             option_type=OptionType.PUT,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,
@@ -258,7 +258,7 @@ class TestBSMValuation:
 
     def test_bsm_present_value_returns_float(self):
         """Test BSM present_value returns a scalar float."""
-        call_spec = OptionSpec(
+        call_spec = VanillaSpec(
             option_type=OptionType.CALL,
             exercise_type=ExerciseType.EUROPEAN,
             strike=self.strike,

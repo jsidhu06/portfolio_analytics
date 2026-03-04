@@ -6,7 +6,7 @@ import numpy as np
 from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import OptionSpec, UnderlyingPricingData, OptionValuation
+from portfolio_analytics.valuation import VanillaSpec, UnderlyingPricingData, OptionValuation
 from portfolio_analytics.utils import (
     calculate_year_fraction,
     forward_price,
@@ -113,14 +113,14 @@ def test_put_call_parity_bsm_no_dividend():
         market_data=market_data,
     )
 
-    call_spec = OptionSpec(
+    call_spec = VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
         maturity=maturity,
         currency="USD",
     )
-    put_spec = OptionSpec(
+    put_spec = VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -175,14 +175,14 @@ def test_put_call_parity_bsm_with_dividend_curve():
         dividend_curve=q_curve,
     )
 
-    call_spec = OptionSpec(
+    call_spec = VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
         maturity=maturity,
         currency="USD",
     )
-    put_spec = OptionSpec(
+    put_spec = VanillaSpec(
         option_type=OptionType.PUT,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,

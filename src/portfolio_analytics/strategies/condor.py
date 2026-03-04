@@ -15,7 +15,7 @@ import numpy as np
 
 from ..enums import ExerciseType, OptionType, PositionSide
 from ..exceptions import ConfigurationError, ValidationError
-from ..valuation.core import OptionSpec, OptionValuation
+from ..valuation.core import VanillaSpec, OptionValuation
 from ..valuation.params import ValuationParams
 
 if TYPE_CHECKING:
@@ -134,7 +134,7 @@ class CondorSpec:
         """
         total = 0.0
         for opt_type, strike, weight in self.leg_definitions():
-            leg_spec = OptionSpec(
+            leg_spec = VanillaSpec(
                 option_type=opt_type,
                 exercise_type=self.exercise_type,
                 strike=strike,

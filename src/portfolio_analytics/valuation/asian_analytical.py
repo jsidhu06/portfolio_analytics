@@ -46,7 +46,7 @@ from ..exceptions import (
 from ..utils import calculate_year_fraction
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianOptionSpec
+    from .core import OptionValuation, AsianSpec
 
 
 logger = logging.getLogger(__name__)
@@ -308,7 +308,7 @@ def _asian_arithmetic_analytical(
 class _AnalyticalAsianValuation:
     """Analytical Asian option valuation.
 
-    Dispatched by OptionValuation when spec is AsianOptionSpec and
+    Dispatched by OptionValuation when spec is AsianSpec and
     pricing_method is BSM.
 
     - GEOMETRIC: Kemna-Vorst (1990) exact closed-form.
@@ -318,7 +318,7 @@ class _AnalyticalAsianValuation:
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
-        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
         spec = self.spec
         if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
             raise UnsupportedFeatureError(
@@ -326,7 +326,7 @@ class _AnalyticalAsianValuation:
             )
         if spec.num_steps is None:
             raise ValidationError(
-                "num_steps is required on AsianOptionSpec for analytical (BSM) pricing."
+                "num_steps is required on AsianSpec for analytical (BSM) pricing."
             )
 
     def _extract_rates(self, time_to_maturity: float) -> tuple[float, float]:

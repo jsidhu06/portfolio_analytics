@@ -22,7 +22,7 @@ from portfolio_analytics.stochastic_processes import (
 )
 from portfolio_analytics.valuation import (
     ImpliedVolResult,
-    OptionSpec,
+    VanillaSpec,
     OptionValuation,
     UnderlyingPricingData,
     implied_volatility,
@@ -52,7 +52,7 @@ def _build_valuation(
         market_data=market_data,
         dividend_curve=dividend_curve,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=option_type,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -88,7 +88,7 @@ def _build_discrete_dividend_valuation(
         market_data=market_data,
         discrete_dividends=divs,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=option_type,
         exercise_type=ExerciseType.EUROPEAN,
         strike=strike,
@@ -126,7 +126,7 @@ def _build_binomial_valuation(
         market_data=market_data,
         dividend_curve=dividend_curve,
     )
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
@@ -193,7 +193,7 @@ def test_implied_volatility_rejects_monte_carlo():
         volatility=0.2,
     )
     underlying = GBMProcess(market_data, gbm_params, sim_config)
-    spec = OptionSpec(
+    spec = VanillaSpec(
         option_type=OptionType.CALL,
         exercise_type=ExerciseType.EUROPEAN,
         strike=100.0,

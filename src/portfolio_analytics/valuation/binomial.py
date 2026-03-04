@@ -21,7 +21,7 @@ from ..exceptions import (
 from .params import BinomialParams
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianOptionSpec
+    from .core import OptionValuation, AsianSpec
 
 
 logger = logging.getLogger(__name__)
@@ -314,7 +314,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
     def __init__(self, parent: OptionValuation) -> None:
         super().__init__(parent)
-        self.spec: AsianOptionSpec = parent.spec  # type: ignore[assignment]
+        self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
 
     def _solve_mc(self) -> np.ndarray:
         """Price Asian option via Monte Carlo sampling on the binomial tree.

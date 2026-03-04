@@ -23,7 +23,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import OptionSpec, OptionValuation, UnderlyingPricingData
+from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingPricingData
 from portfolio_analytics.valuation import BinomialParams
 
 
@@ -52,8 +52,8 @@ def _make_spec(
     maturity: dt.datetime,
     currency: str = "USD",
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
-) -> OptionSpec:
-    return OptionSpec(
+) -> VanillaSpec:
+    return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise_type,
         strike=strike,
