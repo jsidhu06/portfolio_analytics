@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 import datetime as dt
 import numpy as np
+from .enums import DayCountConvention
 from .rates import DiscountCurve
 from .exceptions import ValidationError
 
@@ -16,6 +17,7 @@ class MarketData:
     pricing_date: dt.datetime
     discount_curve: DiscountCurve
     currency: str
+    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
 
     def __post_init__(self) -> None:
         if not isinstance(self.pricing_date, dt.datetime):
@@ -28,6 +30,11 @@ class MarketData:
             )
         if not isinstance(self.currency, str) or not self.currency:
             raise ValidationError("currency must be a non-empty string")
+        if not isinstance(self.day_count_convention, DayCountConvention):
+            raise ValidationError(
+                f"day_count_convention must be a DayCountConvention enum, "
+                f"got {type(self.day_count_convention).__name__}"
+            )
 
 
 @dataclass(frozen=True, slots=True)

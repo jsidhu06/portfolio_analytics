@@ -24,7 +24,6 @@ from portfolio_analytics.valuation.binomial import (
 )
 from portfolio_analytics.valuation.monte_carlo import _MCEuropeanValuation
 from portfolio_analytics.enums import (
-    DayCountConvention,
     OptionType,
     ExerciseType,
     PricingMethod,
@@ -301,7 +300,6 @@ class TestOptionValuation:
 
         sim_config = SimulationConfig(
             paths=20000,
-            day_count_convention=DayCountConvention.ACT_365F,
             time_grid=time_grid,
         )
 
@@ -438,7 +436,6 @@ class TestOptionValuation:
         simulation_config = SimulationConfig(
             paths=200_000,
             frequency="W",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
@@ -498,7 +495,6 @@ class TestOptionValuation:
         simulation_config = SimulationConfig(
             paths=200_000,
             frequency="W",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=initial_value, volatility=volatility)
@@ -675,7 +671,6 @@ class TestOptionValuation:
         simulation_config = SimulationConfig(
             paths=50_000,
             frequency="W",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.maturity,
         )
         process_params = GBMParams(initial_value=90, volatility=0.2)
@@ -772,7 +767,6 @@ class TestOptionValuation:
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim_config=SimulationConfig(
                 paths=1000,
-                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )
@@ -793,7 +787,6 @@ class TestOptionValuation:
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim_config=SimulationConfig(
                 paths=1000,
-                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )
@@ -814,7 +807,6 @@ class TestOptionValuation:
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
             sim_config=SimulationConfig(
                 paths=1000,
-                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )

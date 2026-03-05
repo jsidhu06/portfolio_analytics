@@ -46,7 +46,6 @@ class SimulationConfig:
     frequency: str | None = None
     end_date: dt.datetime | None = None
     num_steps: int | None = None
-    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
     observation_dates: set[dt.datetime] = field(default_factory=set)
     grid_start: dt.datetime | None = None
@@ -56,12 +55,6 @@ class SimulationConfig:
     def __post_init__(self) -> None:
         if self.paths is None or int(self.paths) <= 0:
             raise ValidationError("SimulationConfig.paths must be a positive integer")
-
-        if not isinstance(self.day_count_convention, DayCountConvention):
-            raise ConfigurationError(
-                f"day_count_convention must be a DayCountConvention enum, "
-                f"got {type(self.day_count_convention).__name__}"
-            )
 
         has_end_date = self.end_date is not None
         has_time_grid = self.time_grid is not None
@@ -398,7 +391,7 @@ class PathSimulation(ABC):
     @property
     def day_count_convention(self) -> DayCountConvention:
         """Day-count basis used to convert dates to year fractions."""
-        return self._sim_config.day_count_convention
+        return self._market_data.day_count_convention
 
     @property
     def end_date(self) -> dt.datetime | None:
@@ -583,7 +576,6 @@ class PathSimulation(ABC):
             "paths",
             "frequency",
             "num_steps",
-            "day_count_convention",
             "end_date",
             "grid_start",
         }
@@ -597,8 +589,6 @@ class PathSimulation(ABC):
             sim_updates["frequency"] = kwargs["frequency"]
         if "num_steps" in kwargs:
             sim_updates["num_steps"] = kwargs["num_steps"]
-        if "day_count_convention" in kwargs:
-            sim_updates["day_count_convention"] = kwargs["day_count_convention"]
         if "end_date" in kwargs:
             sim_updates["end_date"] = kwargs["end_date"]
         if "grid_start" in kwargs:
@@ -658,7 +648,7 @@ class PathSimulation(ABC):
             cloned._market_data = kwargs["market_data"]
             return
 
-        market_data_keys = {"pricing_date", "discount_curve", "currency"}
+        market_data_keys = {"pricing_date", "discount_curve", "currency", "day_count_convention"}
         if not market_data_keys.intersection(kwargs):
             return
 
@@ -669,6 +659,8 @@ class PathSimulation(ABC):
             updates["discount_curve"] = kwargs["discount_curve"]
         if "currency" in kwargs:
             updates["currency"] = kwargs["currency"]
+        if "day_count_convention" in kwargs:
+            updates["day_count_convention"] = kwargs["day_count_convention"]
         cloned._market_data = dc_replace(cloned._market_data, **updates)
 
     @staticmethod

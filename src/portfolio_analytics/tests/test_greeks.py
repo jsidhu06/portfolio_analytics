@@ -11,7 +11,6 @@ from portfolio_analytics.enums import (
     GreekCalculationMethod,
     OptionType,
     PricingMethod,
-    DayCountConvention,
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
@@ -57,7 +56,6 @@ class TestGreeksSetup:
         self.sim_config = SimulationConfig(
             paths=200_000,
             frequency="W",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.maturity,
         )
 
@@ -683,7 +681,6 @@ class TestGreekImmutability(TestGreeksSetup):
             process_params=GBMParams(initial_value=self.spot, volatility=self.volatility),
             sim_config=SimulationConfig(
                 paths=1000,
-                day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
             ),
         )

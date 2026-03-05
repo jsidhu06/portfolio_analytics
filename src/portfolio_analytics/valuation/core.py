@@ -435,6 +435,11 @@ class UnderlyingData:
         """Currency from ``market_data``."""
         return self.market_data.currency
 
+    @property
+    def day_count_convention(self) -> DayCountConvention:
+        """Day-count convention from ``market_data``."""
+        return self.market_data.day_count_convention
+
     def replace(self, **kwargs: object) -> "UnderlyingData":
         """Create a new UnderlyingData instance with modified fields.
 
@@ -907,9 +912,7 @@ class OptionValuation:
     @property
     def day_count_convention(self) -> DayCountConvention:
         """Day-count basis used for date-to-year-fraction conversions."""
-        if isinstance(self._underlying, PathSimulation):
-            return self._underlying.day_count_convention
-        return DayCountConvention.ACT_365F
+        return self._underlying.day_count_convention
 
     # ──────────────────────────────
     # Private API (helpers)

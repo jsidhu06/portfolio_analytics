@@ -1,7 +1,7 @@
 import pytest
 import datetime as dt
 import numpy as np
-from portfolio_analytics.exceptions import ConfigurationError, ValidationError
+from portfolio_analytics.exceptions import ValidationError
 from portfolio_analytics.stochastic_processes import (
     PathSimulation,
     GBMProcess,
@@ -13,7 +13,6 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.enums import DayCountConvention
 from portfolio_analytics.tests.helpers import flat_curve
 
 
@@ -392,30 +391,6 @@ class TestSimulationConfig:
         assert config.paths == 5000
         assert config.frequency == "D"
         assert config.end_date == dt.datetime(2026, 1, 1)
-        assert config.day_count_convention == DayCountConvention.ACT_365F  # default
-
-    def test_simulation_config_custom_day_count(self):
-        """Test SimulationConfig with a non-default DayCountConvention."""
-        config = SimulationConfig(
-            paths=1000,
-            frequency="W",
-            end_date=dt.datetime(2026, 1, 1),
-            day_count_convention=DayCountConvention.ACT_360,
-        )
-
-        assert config.day_count_convention == DayCountConvention.ACT_360
-
-    def test_simulation_config_rejects_non_enum_day_count(self):
-        """Passing a raw int/str instead of DayCountConvention must raise TypeError."""
-        with pytest.raises(
-            ConfigurationError, match="day_count_convention must be a DayCountConvention"
-        ):
-            SimulationConfig(
-                paths=1000,
-                frequency="W",
-                end_date=dt.datetime(2026, 1, 1),
-                day_count_convention=360,
-            )
 
     def test_simulation_config_with_observation_dates(self):
         """Test SimulationConfig with special dates."""

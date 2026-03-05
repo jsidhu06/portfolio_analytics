@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from portfolio_analytics.enums import (
-    DayCountConvention,
     ExerciseType,
     GreekCalculationMethod,
     OptionType,
@@ -79,7 +78,6 @@ class _MCGreekTestBase:
         sim_config = SimulationConfig(
             paths=self.n_paths,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.maturity,
         )
         return GBMProcess(self.market_data, params, sim_config)
@@ -343,7 +341,6 @@ class TestMCGreekValidation(_MCGreekTestBase):
         sim_config = SimulationConfig(
             paths=10_000,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=dt.datetime(2026, 1, 1),
         )
         process = GBMProcess(self.market_data, params, sim_config)
@@ -360,7 +357,6 @@ class TestMCGreekValidation(_MCGreekTestBase):
         sim_config = SimulationConfig(
             paths=10_000,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=dt.datetime(2026, 1, 1),
         )
         process = GBMProcess(self.market_data, params, sim_config)
@@ -465,7 +461,6 @@ class TestMCGreekMethodAgreement:
         sim_config = SimulationConfig(
             paths=self.N_PATHS,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.MATURITY,
         )
         process = GBMProcess(md, params, sim_config)
