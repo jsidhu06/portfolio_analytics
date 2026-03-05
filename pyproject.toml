@@ -82,3 +82,24 @@ warn_unreachable = false
 warn_redundant_casts = false
 warn_unused_ignores = false
 no_implicit_reexport = false
+
+[tool.pylint.messages_control]
+disable = [
+  "missing-module-docstring",      # C0114
+  "missing-class-docstring",       # C0115
+  "missing-function-docstring",    # C0116
+  "invalid-name",                  # C0103 (includes non-snake-case variable names)
+  "too-many-arguments",            # R0913
+  "too-many-positional-arguments", # R0917
+  "too-few-public-methods",        # R0903 (common "too few ..." class warning)
+  "too-many-locals",               # R0914
+  "wrong-import-position"          # C0413
+]
+
+[tool.pylint.main]
+ignore-paths = [
+  ".*/tests/.*",
+  ".*/tutorials/.*",
+  ".*/examples/.*",
+  ".*\\.ipynb$",
+]
