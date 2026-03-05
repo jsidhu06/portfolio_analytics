@@ -770,7 +770,7 @@ class TestOptionValuation:
         process = GBMProcess(
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
-            sim=SimulationConfig(
+            sim_config=SimulationConfig(
                 paths=1000,
                 day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
@@ -791,7 +791,7 @@ class TestOptionValuation:
         process = GBMProcess(
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
-            sim=SimulationConfig(
+            sim_config=SimulationConfig(
                 paths=1000,
                 day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),
@@ -812,7 +812,7 @@ class TestOptionValuation:
         process = GBMProcess(
             market_data=self.market_data,
             process_params=GBMParams(initial_value=100.0, volatility=0.2),
-            sim=SimulationConfig(
+            sim_config=SimulationConfig(
                 paths=1000,
                 day_count_convention=DayCountConvention.ACT_365F,
                 time_grid=np.array([self.pricing_date, self.maturity]),

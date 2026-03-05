@@ -238,7 +238,7 @@ class PathSimulation(ABC):
         Market data used by the process (pricing date, discount curve, currency).
     process_params
         Model-specific process parameters (for example GBM, JD, or SRD parameters).
-    sim
+    sim_config
         Simulation configuration controlling path count and time grid rules.
     corr
         Optional multi-asset correlation context.
@@ -250,14 +250,14 @@ class PathSimulation(ABC):
         self,
         market_data: MarketData,
         process_params: GBMParams | JDParams | SRDParams,
-        sim: SimulationConfig,
+        sim_config: SimulationConfig,
         corr: CorrelationContext | None = None,
         name: str | None = None,
     ) -> None:
         self._name = name
         self._market_data = market_data
         self._process_params = process_params
-        self._sim = sim
+        self._sim_config = sim_config
         self._correlation_context = corr
 
         # Mutable working state (not from config)
@@ -267,8 +267,8 @@ class PathSimulation(ABC):
             self.discrete_dividends = tuple()
 
         self._last_normals: np.ndarray | None = None
-        self.time_grid = sim.time_grid
-        self.observation_dates = set(sim.observation_dates)
+        self.time_grid = sim_config.time_grid
+        self.observation_dates = set(sim_config.observation_dates)
         if self.discrete_dividends:
             for ex_date, _ in self.discrete_dividends:
                 self.observation_dates.add(ex_date)
@@ -310,17 +310,17 @@ class PathSimulation(ABC):
     @property
     def paths(self) -> int:
         """Number of Monte Carlo paths."""
-        return self._sim.paths
+        return self._sim_config.paths
 
     @property
     def frequency(self) -> str | None:
         """Pandas frequency string for generated calendar grids."""
-        return self._sim.frequency
+        return self._sim_config.frequency
 
     @property
     def num_steps(self) -> int | None:
         """Number of time steps for uniform-step grids."""
-        return self._sim.num_steps
+        return self._sim_config.num_steps
 
     @property
     def grid_start(self) -> dt.datetime | None:
@@ -330,20 +330,20 @@ class PathSimulation(ABC):
         ``[grid_start, end_date]`` rather than ``[pricing_date, end_date]``.
         Defaults to ``None`` (dense grid starts at ``pricing_date``).
         """
-        return self._sim.grid_start
+        return self._sim_config.grid_start
 
     @property
     def day_count_convention(self) -> DayCountConvention:
         """Day-count basis used to convert dates to year fractions."""
-        return self._sim.day_count_convention
+        return self._sim_config.day_count_convention
 
     @property
     def end_date(self) -> dt.datetime | None:
         """Simulation horizon end date."""
-        # Computed based on time_grid if present, else from sim config
+        # Computed based on time_grid if present, else from sim_config config
         if self.time_grid is not None:
             return max(self.time_grid)
-        return self._sim.end_date
+        return self._sim_config.end_date
 
     @property
     def correlation_context(self) -> CorrelationContext | None:
@@ -410,13 +410,13 @@ class PathSimulation(ABC):
         if self.correlation_context is None:
             rng = np.random.default_rng(random_seed)
 
-            if self._sim.antithetic and paths % 2 == 0:
+            if self._sim_config.antithetic and paths % 2 == 0:
                 # Antithetic variates: generate half, mirror with negation
                 half_paths = paths // 2
                 ran = rng.standard_normal((steps, half_paths))
                 ran = np.concatenate((ran, -ran), axis=1)
             else:
-                if self._sim.antithetic and paths % 2 != 0:
+                if self._sim_config.antithetic and paths % 2 != 0:
                     warnings.warn(
                         f"antithetic=True but paths={paths} is odd; "
                         "antithetic variates require an even number of paths. "
@@ -425,7 +425,7 @@ class PathSimulation(ABC):
                     )
                 ran = rng.standard_normal((steps, paths))
 
-            if self._sim.moment_matching:
+            if self._sim_config.moment_matching:
                 # Moment matching: centre and scale to N(0,1)
                 ran = (ran - np.mean(ran)) / np.std(ran)
 
@@ -540,7 +540,7 @@ class PathSimulation(ABC):
             sim_updates["end_date"] = kwargs["end_date"]
         if "grid_start" in kwargs:
             sim_updates["grid_start"] = kwargs["grid_start"]
-        cloned._sim = dc_replace(cloned._sim, **sim_updates)
+        cloned._sim_config = dc_replace(cloned._sim_config, **sim_updates)
 
     @staticmethod
     def _apply_observation_dates_override(cloned: PathSimulation, kwargs: dict) -> None:
@@ -570,7 +570,10 @@ class PathSimulation(ABC):
     def _handle_grid_state_after_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         if PathSimulation._needs_grid_rebuild(kwargs):
             cloned.time_grid = None
-            if cloned._sim.grid_start is not None and not cloned._sim._can_rebuild_grid():
+            if (
+                cloned._sim_config.grid_start is not None
+                and not cloned._sim_config._can_rebuild_grid()
+            ):
                 raise ConfigurationError(
                     "grid_start requires end_date + num_steps or frequency "
                     "for grid generation. Cannot set grid_start on a "
@@ -795,11 +798,11 @@ class JDProcess(PathSimulation):
         self,
         market_data: MarketData,
         process_params: JDParams,
-        sim: SimulationConfig,
+        sim_config: SimulationConfig,
         corr: CorrelationContext | None = None,
         name: str | None = None,
     ):
-        super().__init__(market_data, process_params, sim, corr=corr, name=name)
+        super().__init__(market_data, process_params, sim_config, corr=corr, name=name)
 
     @property
     def lambd(self) -> float:
@@ -956,11 +959,11 @@ class SRDProcess(PathSimulation):
         self,
         market_data: MarketData,
         process_params: SRDParams,
-        sim: SimulationConfig,
+        sim_config: SimulationConfig,
         corr: CorrelationContext | None = None,
         name: str | None = None,
     ):
-        super().__init__(market_data, process_params, sim, corr=corr, name=name)
+        super().__init__(market_data, process_params, sim_config, corr=corr, name=name)
 
     @property
     def kappa(self) -> float:
