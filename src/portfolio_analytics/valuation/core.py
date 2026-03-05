@@ -25,6 +25,7 @@ import numpy as np
 from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
+    DayCountConvention,
     OptionType,
     AsianAveraging,
     ExerciseType,
@@ -819,7 +820,11 @@ class OptionValuation:
         rate_up = self.discount_curve.flat_rate + rate_bump / 2
         rate_down = self.discount_curve.flat_rate - rate_bump / 2
 
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        ttm = calculate_year_fraction(
+            self.pricing_date,
+            self.maturity,
+            day_count_convention=self.day_count_convention,
+        )
         curve_up = DiscountCurve.flat(rate_up, end_time=ttm)
         curve_down = DiscountCurve.flat(rate_down, end_time=ttm)
 
@@ -898,6 +903,13 @@ class OptionValuation:
     def discount_curve(self) -> DiscountCurve:
         """Discount curve used for valuation."""
         return self._underlying.discount_curve
+
+    @property
+    def day_count_convention(self) -> DayCountConvention:
+        """Day-count basis used for date-to-year-fraction conversions."""
+        if isinstance(self._underlying, PathSimulation):
+            return self._underlying.day_count_convention
+        return DayCountConvention.ACT_365F
 
     # ──────────────────────────────
     # Private API (helpers)
@@ -1191,7 +1203,11 @@ class OptionValuation:
         # (deep ITM) which equals the discounted expected average, then apply the
         # K* offset.
 
-        ttm = calculate_year_fraction(self.pricing_date, self.maturity)
+        ttm = calculate_year_fraction(
+            self.pricing_date,
+            self.maturity,
+            day_count_convention=self.day_count_convention,
+        )
         df = float(self.discount_curve.df(ttm))
 
         fresh_spec_zero = dc_replace(

@@ -7,7 +7,7 @@ import numpy as np
 
 from ..utils import calculate_year_fraction, log_timing
 from ..stochastic_processes import PathSimulation
-from ..enums import OptionType, AsianAveraging
+from ..enums import AsianAveraging, DayCountConvention, OptionType
 from ..exceptions import ConfigurationError, NumericalError, ValidationError
 from .params import MonteCarloParams
 
@@ -53,7 +53,12 @@ def _warn_if_high_std_error(
         )
 
 
-def _resolve_time_index(time_grid: np.ndarray, target, label: str) -> int:
+def _resolve_time_index(
+    time_grid: np.ndarray,
+    target,
+    label: str,
+    day_count_convention: DayCountConvention,
+) -> int:
     """Return the index of the entry in *time_grid* closest to *target*.
 
     Uses ``np.searchsorted`` on year-fraction offsets so that minor
@@ -71,8 +76,22 @@ def _resolve_time_index(time_grid: np.ndarray, target, label: str) -> int:
 
     # Tolerance-based fallback: compare as year fractions from grid[0]
     ref = time_grid[0]
-    target_yf = calculate_year_fraction(ref, target)
-    grid_yf = np.array([calculate_year_fraction(ref, t) for t in time_grid], dtype=float)
+    target_yf = calculate_year_fraction(
+        ref,
+        target,
+        day_count_convention=day_count_convention,
+    )
+    grid_yf = np.array(
+        [
+            calculate_year_fraction(
+                ref,
+                t,
+                day_count_convention=day_count_convention,
+            )
+            for t in time_grid
+        ],
+        dtype=float,
+    )
     idx = int(np.argmin(np.abs(grid_yf - target_yf)))
     # ~1 second tolerance expressed as year fraction
     if abs(grid_yf[idx] - target_yf) > 1.0 / (365.25 * 86400):
@@ -182,9 +201,20 @@ def _ridge_lsm_continuation(
     return cont
 
 
-def _year_fractions(pricing_date, dates: np.ndarray) -> np.ndarray:
+def _year_fractions(
+    pricing_date,
+    dates: np.ndarray,
+    day_count_convention: DayCountConvention,
+) -> np.ndarray:
     return np.array(
-        [calculate_year_fraction(pricing_date, d) for d in dates],
+        [
+            calculate_year_fraction(
+                pricing_date,
+                d,
+                day_count_convention=day_count_convention,
+            )
+            for d in dates
+        ],
         dtype=float,
     )
 
@@ -210,7 +240,12 @@ class _MCEuropeanValuation:
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
 
-        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        time_index_end = _resolve_time_index(
+            time_grid,
+            self.parent.maturity,
+            "maturity",
+            day_count_convention=self.underlying.day_count_convention,
+        )
         maturity_value = paths[time_index_end]
 
         K = self.parent.strike
@@ -243,7 +278,13 @@ class _MCEuropeanValuation:
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
+        ttm = float(
+            calculate_year_fraction(
+                self.parent.pricing_date,
+                self.parent.maturity,
+                day_count_convention=self.underlying.day_count_convention,
+            )
+        )
         discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
@@ -261,9 +302,20 @@ class _MCEuropeanValuation:
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
-        idx = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        idx = _resolve_time_index(
+            time_grid,
+            self.parent.maturity,
+            "maturity",
+            day_count_convention=self.underlying.day_count_convention,
+        )
         ST: np.ndarray = paths[idx]
-        ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
+        ttm = float(
+            calculate_year_fraction(
+                self.parent.pricing_date,
+                self.parent.maturity,
+                day_count_convention=self.underlying.day_count_convention,
+            )
+        )
         df = float(self.parent.discount_curve.df(ttm))
         return ST, idx, ttm, df
 
@@ -440,8 +492,18 @@ class _MCAmericanValuation:
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         time_grid = self.underlying.time_grid
-        time_index_start = _resolve_time_index(time_grid, self.parent.pricing_date, "Pricing date")
-        time_index_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        time_index_start = _resolve_time_index(
+            time_grid,
+            self.parent.pricing_date,
+            "Pricing date",
+            day_count_convention=self.underlying.day_count_convention,
+        )
+        time_index_end = _resolve_time_index(
+            time_grid,
+            self.parent.maturity,
+            "maturity",
+            day_count_convention=self.underlying.day_count_convention,
+        )
 
         spot_paths = paths[time_index_start : time_index_end + 1]
 
@@ -477,7 +539,11 @@ class _MCAmericanValuation:
         """Return discounted present values for each path (LSM output at pricing date)."""
         spot_paths, intrinsic_values, time_index_start, time_index_end = self.solve()
         time_list = self.underlying.time_grid[time_index_start : time_index_end + 1]
-        t_grid = _year_fractions(self.parent.pricing_date, time_list)
+        t_grid = _year_fractions(
+            self.parent.pricing_date,
+            time_list,
+            day_count_convention=self.underlying.day_count_convention,
+        )
         discount_factors = self.parent.discount_curve.df(t_grid)
         values = np.zeros_like(intrinsic_values)
         values[-1] = intrinsic_values[-1]
@@ -537,7 +603,15 @@ class _MCAsianBase:
         if self.spec.fixing_dates is None:
             return None
         return np.array(
-            [_resolve_time_index(time_grid, d, "fixing_date") for d in self.spec.fixing_dates],
+            [
+                _resolve_time_index(
+                    time_grid,
+                    d,
+                    "fixing_date",
+                    day_count_convention=self.underlying.day_count_convention,
+                )
+                for d in self.spec.fixing_dates
+            ],
             dtype=int,
         )
 
@@ -565,8 +639,18 @@ class _MCAsianBase:
 
         spec = self.spec
         averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
-        idx_start = _resolve_time_index(time_grid, averaging_start, "averaging_start")
-        idx_end = _resolve_time_index(time_grid, self.parent.maturity, "maturity")
+        idx_start = _resolve_time_index(
+            time_grid,
+            averaging_start,
+            "averaging_start",
+            day_count_convention=self.underlying.day_count_convention,
+        )
+        idx_end = _resolve_time_index(
+            time_grid,
+            self.parent.maturity,
+            "maturity",
+            day_count_convention=self.underlying.day_count_convention,
+        )
         return paths[idx_start : idx_end + 1], time_grid[idx_start : idx_end + 1]
 
 
@@ -624,7 +708,13 @@ class _MCAsianValuation(_MCAsianBase):
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        ttm = float(calculate_year_fraction(self.parent.pricing_date, self.parent.maturity))
+        ttm = float(
+            calculate_year_fraction(
+                self.parent.pricing_date,
+                self.parent.maturity,
+                day_count_convention=self.underlying.day_count_convention,
+            )
+        )
         discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
@@ -818,7 +908,11 @@ class _MCAsianAmericanValuation(_MCAsianBase):
         """Discounted PV for each path via LSM on (S_t, A_t)."""
         averaging_paths, running_avg, intrinsic, time_list = self._get_averaging_data()
 
-        t_grid = _year_fractions(self.parent.pricing_date, time_list)
+        t_grid = _year_fractions(
+            self.parent.pricing_date,
+            time_list,
+            day_count_convention=self.underlying.day_count_convention,
+        )
         discount_factors = self.parent.discount_curve.df(t_grid)
 
         n_obs = averaging_paths.shape[0]

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import logging
 import numpy as np
 import pandas as pd
-from ..enums import OptionType, AsianAveraging, ExerciseType
+from ..enums import AsianAveraging, ExerciseType, OptionType
 from ..utils import calculate_year_fraction, pv_discrete_dividends, log_timing
 from ..exceptions import (
     ArbitrageViolationError,
@@ -58,7 +58,15 @@ class _BinomialValuationBase:
 
         # Numerical Parameters
         time_grid = np.array(
-            [calculate_year_fraction(start, t) for t in time_intervals], dtype=float
+            [
+                calculate_year_fraction(
+                    start,
+                    t,
+                    day_count_convention=self.parent.day_count_convention,
+                )
+                for t in time_intervals
+            ],
+            dtype=float,
         )
         dt_steps = np.diff(time_grid)
         if not np.allclose(dt_steps, dt_steps[0]):
@@ -122,6 +130,7 @@ class _BinomialValuationBase:
                 curve_date=time_intervals[0],
                 end_date=time_intervals[-1],
                 discount_curve=discount_curve,
+                day_count_convention=self.parent.day_count_convention,
                 include_start=True,
             )
             spot = max(spot - pv_all, 0.0)
@@ -142,6 +151,7 @@ class _BinomialValuationBase:
                     end_date=time_intervals[-1],
                     discount_curve=discount_curve,
                     start_date=t,
+                    day_count_convention=self.parent.day_count_convention,
                     include_start=False,
                 )
                 for t in time_intervals
@@ -191,7 +201,11 @@ class _BinomialValuationBase:
                 "Tree Greeks are only available for vanilla binomial options, "
                 "not Asian or other path-dependent specs."
             )
-        T = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+        T = calculate_year_fraction(
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
+        )
         dt = T / num_steps
         return option_lattice, spot_lattice, dt
 

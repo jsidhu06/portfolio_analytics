@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from scipy.stats import norm
 from ..utils import calculate_year_fraction, pv_discrete_dividends
-from ..enums import DayCountConvention, OptionType
+from ..enums import OptionType
 from ..exceptions import ValidationError
 
 if TYPE_CHECKING:
@@ -110,6 +110,7 @@ class _BSMValuationBase:
             curve_date=self.parent.pricing_date,
             end_date=self.parent.maturity,
             discount_curve=self.parent.discount_curve,
+            day_count_convention=self.parent.day_count_convention,
         )
         return max(spot - pv_divs, 0.0)
 
@@ -126,7 +127,7 @@ class _BSMValuationBase:
         time_to_maturity = calculate_year_fraction(
             self.parent.pricing_date,
             self.parent.maturity,
-            day_count_convention=DayCountConvention.ACT_365F,
+            day_count_convention=self.parent.day_count_convention,
         )
         df_r, df_q = self._effective_discount_factors(time_to_maturity)
         d1, d2 = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)

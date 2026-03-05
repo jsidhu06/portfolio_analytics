@@ -23,7 +23,7 @@ import datetime as dt
 
 import numpy as np
 
-from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
+from ..enums import DayCountConvention, PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
 from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction, log_timing
 from ..exceptions import (
@@ -115,6 +115,7 @@ def _dividend_tau_schedule(
     discrete_dividends: Sequence[tuple[dt.datetime, float]],
     pricing_date: dt.datetime,
     maturity: dt.datetime,
+    day_count_convention: DayCountConvention,
 ) -> list[tuple[float, float]]:
     """Return list of (tau, amount) for dividends between pricing_date and maturity.
 
@@ -125,11 +126,19 @@ def _dividend_tau_schedule(
     if not discrete_dividends:
         return []
 
-    ttm = calculate_year_fraction(pricing_date, maturity)
+    ttm = calculate_year_fraction(
+        pricing_date,
+        maturity,
+        day_count_convention=day_count_convention,
+    )
     schedule: dict[float, float] = {}
     for ex_date, amount in discrete_dividends:
         if pricing_date <= ex_date <= maturity:
-            t = calculate_year_fraction(pricing_date, ex_date)
+            t = calculate_year_fraction(
+                pricing_date,
+                ex_date,
+                day_count_convention=day_count_convention,
+            )
             tau = ttm - t
             key = round(float(tau), 12)
             schedule[key] = schedule.get(key, 0.0) + float(amount)
@@ -1011,12 +1020,17 @@ class _FDEuropeanValuation(_FDGridGreeksMixin):
         dividend_curve = self.parent.underlying.dividend_curve
         discrete_dividends = self.parent.underlying.discrete_dividends
 
-        time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
+        )
 
         dividend_schedule = _dividend_tau_schedule(
             discrete_dividends=discrete_dividends,
             pricing_date=self.parent.pricing_date,
             maturity=self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
         )
 
         smax_mult = float(params.smax_mult)
@@ -1082,12 +1096,17 @@ class _FDAmericanValuation(_FDGridGreeksMixin):
         dividend_curve = self.parent.underlying.dividend_curve
         discrete_dividends = self.parent.underlying.discrete_dividends
 
-        time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
+        )
 
         dividend_schedule = _dividend_tau_schedule(
             discrete_dividends=discrete_dividends,
             pricing_date=self.parent.pricing_date,
             maturity=self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
         )
 
         smax_mult = float(params.smax_mult)

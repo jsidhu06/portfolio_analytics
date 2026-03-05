@@ -10,7 +10,6 @@ import numpy as np
 from scipy import optimize
 
 from ..enums import (
-    DayCountConvention,
     ExerciseType,
     ImpliedVolMethod,
     OptionType,
@@ -62,7 +61,7 @@ def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, f
         time_to_maturity = calculate_year_fraction(
             valuation.pricing_date,
             valuation.maturity,
-            day_count_convention=DayCountConvention.ACT_365F,
+            day_count_convention=valuation.day_count_convention,
         )
         return spot, float(dividend_curve.df(time_to_maturity))
     pv_divs = pv_discrete_dividends(
@@ -70,6 +69,7 @@ def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, f
         curve_date=valuation.pricing_date,
         end_date=valuation.maturity,
         discount_curve=valuation.discount_curve,
+        day_count_convention=valuation.day_count_convention,
     )
     if dividend_curve is None:
         df_q = 1.0
@@ -77,7 +77,7 @@ def _adjusted_spot_and_dividend_df(valuation: OptionValuation) -> tuple[float, f
         time_to_maturity = calculate_year_fraction(
             valuation.pricing_date,
             valuation.maturity,
-            day_count_convention=DayCountConvention.ACT_365F,
+            day_count_convention=valuation.day_count_convention,
         )
         df_q = float(dividend_curve.df(time_to_maturity))
     return max(spot - pv_divs, 0.0), df_q
@@ -99,7 +99,7 @@ def _price_bounds(valuation: OptionValuation) -> tuple[float, float]:
     time_to_maturity = calculate_year_fraction(
         valuation.pricing_date,
         valuation.maturity,
-        day_count_convention=DayCountConvention.ACT_365F,
+        day_count_convention=valuation.day_count_convention,
     )
     if time_to_maturity <= 0:
         raise ValidationError("Option maturity must be after pricing date.")
@@ -155,7 +155,7 @@ def _non_bsm_initial_guess(
     time_to_maturity = calculate_year_fraction(
         valuation.pricing_date,
         valuation.maturity,
-        day_count_convention=DayCountConvention.ACT_365F,
+        day_count_convention=valuation.day_count_convention,
     )
     time_sqrt = np.sqrt(max(time_to_maturity, 1.0e-8))
 
@@ -343,7 +343,7 @@ def implied_volatility(
         time_to_maturity = calculate_year_fraction(
             valuation.pricing_date,
             valuation.maturity,
-            day_count_convention=DayCountConvention.ACT_365F,
+            day_count_convention=valuation.day_count_convention,
         )
         dt = time_to_maturity / max(int(valuation.params.num_steps), 1)
         df_r = float(valuation.discount_curve.df(time_to_maturity))
