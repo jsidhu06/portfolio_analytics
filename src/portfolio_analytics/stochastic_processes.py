@@ -862,9 +862,9 @@ class JDProcess(PathSimulation):
 
         lam = float(self.lambd)
         mu_j = float(self.mu)
-        sig_j = float(self.delta)
+        delta_j = float(self.delta)
         vol = float(self.volatility)
-        k = np.exp(mu_j + 0.5 * sig_j**2) - 1.0
+        k = np.exp(mu_j + 0.5 * delta_j**2) - 1.0
 
         # Derive independent RNG streams for diffusion and jump components.
         # Using the same seed for both would create correlated bit streams;
@@ -895,7 +895,9 @@ class JDProcess(PathSimulation):
             # Sample the sum directly: N_Δ·μ_J + √N_Δ·δ_J·Z_J.
             jump_normals = jump_rng.standard_normal(size=(len(dt_matrix), num_paths))
             jump_magnitude = np.where(
-                poi_counts > 0, poi_counts * mu_j + np.sqrt(poi_counts) * sig_j * jump_normals, 0.0
+                poi_counts > 0,
+                poi_counts * mu_j + np.sqrt(poi_counts) * delta_j * jump_normals,
+                0.0,
             )
 
             log_increments = drift_diffusion + diffusion_term + jump_magnitude
@@ -925,7 +927,7 @@ class JDProcess(PathSimulation):
             jump_sum = np.where(
                 jump_counts > 0,
                 jump_counts * mu_j
-                + np.sqrt(jump_counts) * sig_j * jump_rng.standard_normal(num_paths),
+                + np.sqrt(jump_counts) * delta_j * jump_rng.standard_normal(num_paths),
                 0.0,
             )
             jump_multiplier = np.exp(jump_sum)
