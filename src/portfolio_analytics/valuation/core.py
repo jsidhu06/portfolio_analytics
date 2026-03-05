@@ -504,7 +504,7 @@ class OptionValuation:
             OptionType.PUT,
         ):
             raise UnsupportedFeatureError(
-                "BSM pricing is only available for vanilla CALL/PUT option types."
+                "BSM pricing requires a CALL or PUT option type (not available for custom PayoffSpec)."
             )
 
         # Optional sanity check: maturity must be after pricing date
