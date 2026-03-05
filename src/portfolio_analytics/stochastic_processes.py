@@ -110,6 +110,24 @@ class SimulationConfig:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GBMParams:
+    """Parameters for Geometric Brownian Motion.
+
+    Attributes
+    ----------
+    initial_value
+        Spot price of the underlying at the pricing date.
+    volatility
+        Annualised Black-Scholes volatility (σ ≥ 0).
+    discrete_dividends
+        Optional sequence of ``(ex_date, cash_amount)`` pairs for known
+        future cash dividends.  The spot is reduced by the dividend
+        amount on each ex-date during path generation.
+    dividend_curve
+        Optional continuous dividend-yield curve.  When provided the
+        risk-neutral drift is adjusted by the instantaneous yield at
+        each time step.
+    """
+
     initial_value: float
     volatility: float
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None
@@ -140,11 +158,34 @@ class GBMParams:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class JDParams:
+    """Parameters for the Merton (1976) jump-diffusion process.
+
+    The diffusive component follows GBM; jumps arrive as a Poisson
+    process with log-normal jump sizes.
+
+    Attributes
+    ----------
+    initial_value
+        Spot price of the underlying at the pricing date.
+    volatility
+        Annualised diffusive volatility (σ ≥ 0).
+    lambd
+        Jump intensity — expected number of jumps per year (λ ≥ 0).
+    mu
+        Mean of the log-jump size distribution (μ_J).
+    delta
+        Standard deviation of the log-jump size distribution (δ_J ≥ 0).
+    discrete_dividends
+        Optional ``(ex_date, cash_amount)`` pairs (see ``GBMParams``).
+    dividend_curve
+        Optional continuous dividend-yield curve (see ``GBMParams``).
+    """
+
     initial_value: float
     volatility: float
-    lambd: float  # lambda (per year)
-    mu: float  # mu_J (mean of log jump size)
-    delta: float  # delta_J (std of log jump size)
+    lambd: float
+    mu: float
+    delta: float
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None
     dividend_curve: DiscountCurve | None = None
 
@@ -187,10 +228,32 @@ class JDParams:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SRDParams:
+    """Parameters for the Square-Root Diffusion (CIR) process.
+
+    The SDE is  dX_t = κ(θ − X_t) dt + σ √X_t dW_t.
+
+    Attributes
+    ----------
+    initial_value
+        Starting value of the process (X_0 > 0).
+    volatility
+        Volatility coefficient (σ ≥ 0).
+    kappa
+        Mean-reversion speed (κ ≥ 0).
+    theta
+        Long-run mean level (θ ≥ 0).
+
+    Notes
+    -----
+    The Feller condition 2κθ ≥ σ² ensures the process stays strictly
+    positive.  When violated the full-truncation Euler scheme still
+    converges, but a warning is emitted.
+    """
+
     initial_value: float
     volatility: float
-    kappa: float  # mean reversion speed
-    theta: float  # long-run mean
+    kappa: float
+    theta: float
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
