@@ -30,6 +30,7 @@ dev = [
 ]
 jupyter = [
     "jupyterlab>=4.3,<5",
+    "nbconvert>=7.16,<8",
     "ipykernel>=6.29,<7",
     "matplotlib>=3.9,<4",
     "plotly>=6,<7",
