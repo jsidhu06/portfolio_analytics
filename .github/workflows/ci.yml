@@ -50,7 +50,11 @@ jobs:
 
       - name: Pytest
         run: |
-          pytest src/portfolio_analytics/tests/ -q
+          pytest src/portfolio_analytics/tests/ \
+              --cov=portfolio_analytics \
+              --cov-report=term-missing \
+              --cov-branch \
+              -q
 
   compatibility:
     name: Compatibility (resolver-based)
