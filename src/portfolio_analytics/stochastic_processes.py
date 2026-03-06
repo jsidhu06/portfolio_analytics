@@ -46,7 +46,6 @@ class SimulationConfig:
     frequency: str | None = None
     end_date: dt.datetime | None = None
     num_steps: int | None = None
-    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F
     time_grid: np.ndarray | None = None  # optional portfolio override
     observation_dates: set[dt.datetime] = field(default_factory=set)
     grid_start: dt.datetime | None = None
@@ -56,12 +55,6 @@ class SimulationConfig:
     def __post_init__(self) -> None:
         if self.paths is None or int(self.paths) <= 0:
             raise ValidationError("SimulationConfig.paths must be a positive integer")
-
-        if not isinstance(self.day_count_convention, DayCountConvention):
-            raise ConfigurationError(
-                f"day_count_convention must be a DayCountConvention enum, "
-                f"got {type(self.day_count_convention).__name__}"
-            )
 
         has_end_date = self.end_date is not None
         has_time_grid = self.time_grid is not None
@@ -110,6 +103,24 @@ class SimulationConfig:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GBMParams:
+    """Parameters for Geometric Brownian Motion.
+
+    Attributes
+    ----------
+    initial_value
+        Spot price of the underlying at the pricing date.
+    volatility
+        Annualised Black-Scholes volatility (σ ≥ 0).
+    discrete_dividends
+        Optional sequence of ``(ex_date, cash_amount)`` pairs for known
+        future cash dividends.  The spot is reduced by the dividend
+        amount on each ex-date during path generation.
+    dividend_curve
+        Optional continuous dividend-yield curve.  When provided the
+        risk-neutral drift is adjusted by the instantaneous yield at
+        each time step.
+    """
+
     initial_value: float
     volatility: float
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None
@@ -140,11 +151,34 @@ class GBMParams:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class JDParams:
+    """Parameters for the Merton (1976) jump-diffusion process.
+
+    The diffusive component follows GBM; jumps arrive as a Poisson
+    process with log-normal jump sizes.
+
+    Attributes
+    ----------
+    initial_value
+        Spot price of the underlying at the pricing date.
+    volatility
+        Annualised diffusive volatility (σ ≥ 0).
+    lambd
+        Jump intensity — expected number of jumps per year (λ ≥ 0).
+    mu
+        Mean of the log-jump size distribution (μ_J).
+    delta
+        Standard deviation of the log-jump size distribution (δ_J ≥ 0).
+    discrete_dividends
+        Optional ``(ex_date, cash_amount)`` pairs (see ``GBMParams``).
+    dividend_curve
+        Optional continuous dividend-yield curve (see ``GBMParams``).
+    """
+
     initial_value: float
     volatility: float
-    lambd: float  # lambda (per year)
-    mu: float  # mu_J (mean of log jump size)
-    delta: float  # delta_J (std of log jump size)
+    lambd: float
+    mu: float
+    delta: float
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None
     dividend_curve: DiscountCurve | None = None
 
@@ -187,10 +221,32 @@ class JDParams:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SRDParams:
+    """Parameters for the Square-Root Diffusion (CIR) process.
+
+    The SDE is  dX_t = κ(θ − X_t) dt + σ √X_t dW_t.
+
+    Attributes
+    ----------
+    initial_value
+        Starting value of the process (X_0 > 0).
+    volatility
+        Volatility coefficient (σ ≥ 0).
+    kappa
+        Mean-reversion speed (κ ≥ 0).
+    theta
+        Long-run mean level (θ ≥ 0).
+
+    Notes
+    -----
+    The Feller condition 2κθ ≥ σ² ensures the process stays strictly
+    positive.  When violated the full-truncation Euler scheme still
+    converges, but a warning is emitted.
+    """
+
     initial_value: float
     volatility: float
-    kappa: float  # mean reversion speed
-    theta: float  # long-run mean
+    kappa: float
+    theta: float
 
     def __post_init__(self) -> None:
         if self.initial_value is None:
@@ -238,7 +294,7 @@ class PathSimulation(ABC):
         Market data used by the process (pricing date, discount curve, currency).
     process_params
         Model-specific process parameters (for example GBM, JD, or SRD parameters).
-    sim
+    sim_config
         Simulation configuration controlling path count and time grid rules.
     corr
         Optional multi-asset correlation context.
@@ -250,14 +306,14 @@ class PathSimulation(ABC):
         self,
         market_data: MarketData,
         process_params: GBMParams | JDParams | SRDParams,
-        sim: SimulationConfig,
+        sim_config: SimulationConfig,
         corr: CorrelationContext | None = None,
         name: str | None = None,
     ) -> None:
         self._name = name
         self._market_data = market_data
         self._process_params = process_params
-        self._sim = sim
+        self._sim_config = sim_config
         self._correlation_context = corr
 
         # Mutable working state (not from config)
@@ -267,8 +323,8 @@ class PathSimulation(ABC):
             self.discrete_dividends = tuple()
 
         self._last_normals: np.ndarray | None = None
-        self.time_grid = sim.time_grid
-        self.observation_dates = set(sim.observation_dates)
+        self.time_grid = sim_config.time_grid
+        self.observation_dates = set(sim_config.observation_dates)
         if self.discrete_dividends:
             for ex_date, _ in self.discrete_dividends:
                 self.observation_dates.add(ex_date)
@@ -310,17 +366,17 @@ class PathSimulation(ABC):
     @property
     def paths(self) -> int:
         """Number of Monte Carlo paths."""
-        return self._sim.paths
+        return self._sim_config.paths
 
     @property
     def frequency(self) -> str | None:
         """Pandas frequency string for generated calendar grids."""
-        return self._sim.frequency
+        return self._sim_config.frequency
 
     @property
     def num_steps(self) -> int | None:
         """Number of time steps for uniform-step grids."""
-        return self._sim.num_steps
+        return self._sim_config.num_steps
 
     @property
     def grid_start(self) -> dt.datetime | None:
@@ -330,20 +386,20 @@ class PathSimulation(ABC):
         ``[grid_start, end_date]`` rather than ``[pricing_date, end_date]``.
         Defaults to ``None`` (dense grid starts at ``pricing_date``).
         """
-        return self._sim.grid_start
+        return self._sim_config.grid_start
 
     @property
     def day_count_convention(self) -> DayCountConvention:
         """Day-count basis used to convert dates to year fractions."""
-        return self._sim.day_count_convention
+        return self._market_data.day_count_convention
 
     @property
     def end_date(self) -> dt.datetime | None:
         """Simulation horizon end date."""
-        # Computed based on time_grid if present, else from sim config
+        # Computed based on time_grid if present, else from sim_config config
         if self.time_grid is not None:
             return max(self.time_grid)
-        return self._sim.end_date
+        return self._sim_config.end_date
 
     @property
     def correlation_context(self) -> CorrelationContext | None:
@@ -410,13 +466,13 @@ class PathSimulation(ABC):
         if self.correlation_context is None:
             rng = np.random.default_rng(random_seed)
 
-            if self._sim.antithetic and paths % 2 == 0:
+            if self._sim_config.antithetic and paths % 2 == 0:
                 # Antithetic variates: generate half, mirror with negation
                 half_paths = paths // 2
                 ran = rng.standard_normal((steps, half_paths))
                 ran = np.concatenate((ran, -ran), axis=1)
             else:
-                if self._sim.antithetic and paths % 2 != 0:
+                if self._sim_config.antithetic and paths % 2 != 0:
                     warnings.warn(
                         f"antithetic=True but paths={paths} is odd; "
                         "antithetic variates require an even number of paths. "
@@ -425,7 +481,7 @@ class PathSimulation(ABC):
                     )
                 ran = rng.standard_normal((steps, paths))
 
-            if self._sim.moment_matching:
+            if self._sim_config.moment_matching:
                 # Moment matching: centre and scale to N(0,1)
                 ran = (ran - np.mean(ran)) / np.std(ran)
 
@@ -520,7 +576,6 @@ class PathSimulation(ABC):
             "paths",
             "frequency",
             "num_steps",
-            "day_count_convention",
             "end_date",
             "grid_start",
         }
@@ -534,13 +589,11 @@ class PathSimulation(ABC):
             sim_updates["frequency"] = kwargs["frequency"]
         if "num_steps" in kwargs:
             sim_updates["num_steps"] = kwargs["num_steps"]
-        if "day_count_convention" in kwargs:
-            sim_updates["day_count_convention"] = kwargs["day_count_convention"]
         if "end_date" in kwargs:
             sim_updates["end_date"] = kwargs["end_date"]
         if "grid_start" in kwargs:
             sim_updates["grid_start"] = kwargs["grid_start"]
-        cloned._sim = dc_replace(cloned._sim, **sim_updates)
+        cloned._sim_config = dc_replace(cloned._sim_config, **sim_updates)
 
     @staticmethod
     def _apply_observation_dates_override(cloned: PathSimulation, kwargs: dict) -> None:
@@ -570,7 +623,10 @@ class PathSimulation(ABC):
     def _handle_grid_state_after_overrides(cloned: PathSimulation, kwargs: dict) -> None:
         if PathSimulation._needs_grid_rebuild(kwargs):
             cloned.time_grid = None
-            if cloned._sim.grid_start is not None and not cloned._sim._can_rebuild_grid():
+            if (
+                cloned._sim_config.grid_start is not None
+                and not cloned._sim_config._can_rebuild_grid()
+            ):
                 raise ConfigurationError(
                     "grid_start requires end_date + num_steps or frequency "
                     "for grid generation. Cannot set grid_start on a "
@@ -592,7 +648,7 @@ class PathSimulation(ABC):
             cloned._market_data = kwargs["market_data"]
             return
 
-        market_data_keys = {"pricing_date", "discount_curve", "currency"}
+        market_data_keys = {"pricing_date", "discount_curve", "currency", "day_count_convention"}
         if not market_data_keys.intersection(kwargs):
             return
 
@@ -603,6 +659,8 @@ class PathSimulation(ABC):
             updates["discount_curve"] = kwargs["discount_curve"]
         if "currency" in kwargs:
             updates["currency"] = kwargs["currency"]
+        if "day_count_convention" in kwargs:
+            updates["day_count_convention"] = kwargs["day_count_convention"]
         cloned._market_data = dc_replace(cloned._market_data, **updates)
 
     @staticmethod
@@ -795,11 +853,11 @@ class JDProcess(PathSimulation):
         self,
         market_data: MarketData,
         process_params: JDParams,
-        sim: SimulationConfig,
+        sim_config: SimulationConfig,
         corr: CorrelationContext | None = None,
         name: str | None = None,
     ):
-        super().__init__(market_data, process_params, sim, corr=corr, name=name)
+        super().__init__(market_data, process_params, sim_config, corr=corr, name=name)
 
     @property
     def lambd(self) -> float:
@@ -862,9 +920,9 @@ class JDProcess(PathSimulation):
 
         lam = float(self.lambd)
         mu_j = float(self.mu)
-        sig_j = float(self.delta)
+        delta_j = float(self.delta)
         vol = float(self.volatility)
-        k = np.exp(mu_j + 0.5 * sig_j**2) - 1.0
+        k = np.exp(mu_j + 0.5 * delta_j**2) - 1.0
 
         # Derive independent RNG streams for diffusion and jump components.
         # Using the same seed for both would create correlated bit streams;
@@ -895,7 +953,9 @@ class JDProcess(PathSimulation):
             # Sample the sum directly: N_Δ·μ_J + √N_Δ·δ_J·Z_J.
             jump_normals = jump_rng.standard_normal(size=(len(dt_matrix), num_paths))
             jump_magnitude = np.where(
-                poi_counts > 0, poi_counts * mu_j + np.sqrt(poi_counts) * sig_j * jump_normals, 0.0
+                poi_counts > 0,
+                poi_counts * mu_j + np.sqrt(poi_counts) * delta_j * jump_normals,
+                0.0,
             )
 
             log_increments = drift_diffusion + diffusion_term + jump_magnitude
@@ -925,7 +985,7 @@ class JDProcess(PathSimulation):
             jump_sum = np.where(
                 jump_counts > 0,
                 jump_counts * mu_j
-                + np.sqrt(jump_counts) * sig_j * jump_rng.standard_normal(num_paths),
+                + np.sqrt(jump_counts) * delta_j * jump_rng.standard_normal(num_paths),
                 0.0,
             )
             jump_multiplier = np.exp(jump_sum)
@@ -954,11 +1014,11 @@ class SRDProcess(PathSimulation):
         self,
         market_data: MarketData,
         process_params: SRDParams,
-        sim: SimulationConfig,
+        sim_config: SimulationConfig,
         corr: CorrelationContext | None = None,
         name: str | None = None,
     ):
-        super().__init__(market_data, process_params, sim, corr=corr, name=name)
+        super().__init__(market_data, process_params, sim_config, corr=corr, name=name)
 
     @property
     def kappa(self) -> float:

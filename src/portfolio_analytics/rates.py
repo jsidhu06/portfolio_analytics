@@ -164,7 +164,20 @@ class DiscountCurve:
         return np.exp(out)
 
     def forward_rate(self, t0: float, t1: float) -> float:
-        """Return continuously-compounded forward rate on ``[t0, t1]``."""
+        """Continuously-compounded forward rate on the interval ``[t0, t1]``.
+
+        Parameters
+        ----------
+        t0
+            Start of the interval (year fraction).
+        t1
+            End of the interval (year fraction, must be > t0).
+
+        Returns
+        -------
+        float
+            Forward rate ``f`` such that ``D(t1) = D(t0) · exp(−f · (t1 − t0))``.
+        """
         if t1 <= t0:
             raise ValidationError("Need t1 > t0")
         df0 = float(self.df(t0))
@@ -172,7 +185,19 @@ class DiscountCurve:
         return (np.log(df0) - np.log(df1)) / (t1 - t0)
 
     def step_forward_rates(self, grid: np.ndarray) -> np.ndarray:
-        """Return forward rates on each interval of a time grid."""
+        """Forward rates for each consecutive interval of a time grid.
+
+        Parameters
+        ----------
+        grid
+            Strictly increasing array of year fractions (length *n*).
+
+        Returns
+        -------
+        np.ndarray
+            Array of length *n − 1* with the piecewise-constant forward
+            rate on each ``[grid[i], grid[i+1]]`` interval.
+        """
         grid = np.asarray(grid, dtype=float)
         if np.any(np.diff(grid) <= 0.0):
             raise ValidationError("grid must be strictly increasing")

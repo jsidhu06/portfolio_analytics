@@ -1,8 +1,7 @@
 """Finite difference (PDE) valuation implementations.
 
 This module follows the same structure as other valuation modules:
-- an internal implementation class that plugs into OptionValuation
-- thin convenience wrappers for direct function-style pricing
+private implementation classes that plug into OptionValuation.
 
 Current scope
 -------------
@@ -23,7 +22,7 @@ import datetime as dt
 
 import numpy as np
 
-from ..enums import PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
+from ..enums import DayCountConvention, PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
 from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction, log_timing
 from ..exceptions import (
@@ -35,7 +34,7 @@ from ..exceptions import (
 from .params import PDEParams
 
 if TYPE_CHECKING:
-    from .core import OptionValuation
+    from .core import OptionValuation, UnderlyingData
 
 
 logger = logging.getLogger(__name__)
@@ -77,14 +76,14 @@ def _solve_tridiagonal_thomas(
         raise ValidationError("lower/upper must have length n-1")
 
     # Copy to avoid mutating inputs
-    c: np.ndarray = upper.astype(float, copy=True)
+    a: np.ndarray = lower.astype(float, copy=True)
     d: np.ndarray = diag.astype(float, copy=True)
-    b: np.ndarray = lower.astype(float, copy=True)
+    c: np.ndarray = upper.astype(float, copy=True)
     y: np.ndarray = rhs.astype(float, copy=True)
 
     # Forward elimination
     for i in range(1, n):
-        w = b[i - 1] / d[i - 1]
+        w = a[i - 1] / d[i - 1]
         d[i] -= w * c[i - 1]
         y[i] -= w * y[i - 1]
 
@@ -115,6 +114,7 @@ def _dividend_tau_schedule(
     discrete_dividends: Sequence[tuple[dt.datetime, float]],
     pricing_date: dt.datetime,
     maturity: dt.datetime,
+    day_count_convention: DayCountConvention,
 ) -> list[tuple[float, float]]:
     """Return list of (tau, amount) for dividends between pricing_date and maturity.
 
@@ -125,11 +125,19 @@ def _dividend_tau_schedule(
     if not discrete_dividends:
         return []
 
-    ttm = calculate_year_fraction(pricing_date, maturity)
+    ttm = calculate_year_fraction(
+        pricing_date,
+        maturity,
+        day_count_convention=day_count_convention,
+    )
     schedule: dict[float, float] = {}
     for ex_date, amount in discrete_dividends:
         if pricing_date <= ex_date <= maturity:
-            t = calculate_year_fraction(pricing_date, ex_date)
+            t = calculate_year_fraction(
+                pricing_date,
+                ex_date,
+                day_count_convention=day_count_convention,
+            )
             tau = ttm - t
             key = round(float(tau), 12)
             schedule[key] = schedule.get(key, 0.0) + float(amount)
@@ -253,8 +261,13 @@ def _log_operator_coeffs(
     dividend_rate: float,
     volatility: float,
     hull_discounting: bool = False,
-) -> tuple[float, float, float]:
+    size: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Spatial operator coefficients on the log-spot grid.
+
+    Returns constant (Toeplitz) arrays of length *size*, matching the
+    signature of ``_spot_operator_coeffs`` so callers can treat both
+    grids uniformly.
 
     When *hull_discounting* is True (Hull's explicit scheme), r is
     excluded from beta.
@@ -262,29 +275,23 @@ def _log_operator_coeffs(
     mu = risk_free_rate - dividend_rate - 0.5 * volatility**2
     diffusion = (volatility**2) / (dz**2)
     drift = mu / dz
-    gamma = 0.5 * (diffusion - drift)
-    beta = -diffusion if hull_discounting else -(diffusion + risk_free_rate)
-    alpha = 0.5 * (diffusion + drift)
+    gamma = np.full(size, 0.5 * (diffusion - drift))
+    beta = np.full(size, -diffusion if hull_discounting else -(diffusion + risk_free_rate))
+    alpha = np.full(size, 0.5 * (diffusion + drift))
     return gamma, beta, alpha
 
 
 def _scaled_operator_coeffs(
     *,
-    gamma: np.ndarray | float,
-    beta: np.ndarray | float,
-    alpha: np.ndarray | float,
+    gamma: np.ndarray,
+    beta: np.ndarray,
+    alpha: np.ndarray,
     d_tau: float,
-) -> tuple[np.ndarray | float, np.ndarray | float, np.ndarray | float]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     a = -d_tau * gamma
     b = -d_tau * beta
     c = -d_tau * alpha
     return a, b, c
-
-
-def _as_array(coeff: np.ndarray | float, size: int) -> np.ndarray:
-    if isinstance(coeff, np.ndarray):
-        return coeff
-    return np.full(size, float(coeff))
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +302,9 @@ def _as_array(coeff: np.ndarray | float, size: int) -> np.ndarray:
 def _explicit_step(
     V_prev: np.ndarray,
     j: np.ndarray,
-    a: np.ndarray | float,
-    b: np.ndarray | float,
-    c: np.ndarray | float,
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
     left: float,
     right: float,
     intrinsic: np.ndarray | None,
@@ -324,9 +331,9 @@ def _psor_solve(
     x: np.ndarray,
     exercise_j: np.ndarray,
     rhs: np.ndarray,
-    A_lower: np.ndarray,
-    A_diag: np.ndarray,
-    A_upper: np.ndarray,
+    lower: np.ndarray,
+    diag: np.ndarray,
+    upper: np.ndarray,
     V_left: float | np.floating,
     V_right: float | np.floating,
     omega: float,
@@ -344,7 +351,7 @@ def _psor_solve(
         for k in range(x.size):
             left_val = x[k - 1] if k > 0 else V_left
             right_val = x[k + 1] if k < x.size - 1 else V_right
-            gs = (rhs[k] - A_lower[k] * left_val - A_upper[k] * right_val) / A_diag[k]
+            gs = (rhs[k] - lower[k] * left_val - upper[k] * right_val) / diag[k]
             sor = x[k] + omega * (gs - x[k])
             x[k] = max(sor, exercise_j[k])
         if np.max(np.abs(x - x_prev)) < tol:
@@ -357,15 +364,14 @@ def _implicit_cn_step(
     V_prev: np.ndarray,
     V: np.ndarray,
     j: np.ndarray,
-    a: np.ndarray | float,
-    b: np.ndarray | float,
-    c: np.ndarray | float,
+    a: np.ndarray,
+    b: np.ndarray,
+    c: np.ndarray,
     left: float,
     right: float,
-    method: "PDEMethod",
-    spot_steps: int,
+    method: PDEMethod,
     intrinsic: np.ndarray | None,
-    american_solver: "PDEEarlyExercise",
+    american_solver: PDEEarlyExercise,
     omega: float | None,
     tol: float | None,
     max_iter: int | None,
@@ -379,9 +385,8 @@ def _implicit_cn_step(
         b = b * 0.5
         c = c * 0.5
 
-    A_lower = _as_array(a, spot_steps - 1)
-    A_diag = _as_array(1.0 + b, spot_steps - 1)
-    A_upper = _as_array(c, spot_steps - 1)
+    # Tridiagonal system (I - θ·dt·L)x = rhs, diagonals are (a, 1+b, c)
+    diag = 1.0 + b
 
     if method is PDEMethod.IMPLICIT:
         rhs = V_prev[j].copy()
@@ -392,10 +397,10 @@ def _implicit_cn_step(
     V[-1] = right
 
     rhs_adj = rhs.copy()
-    rhs_adj[0] -= A_lower[0] * V[0]
-    rhs_adj[-1] -= A_upper[-1] * V[-1]
+    rhs_adj[0] -= a[0] * V[0]
+    rhs_adj[-1] -= c[-1] * V[-1]
 
-    x = _solve_tridiagonal_thomas(A_lower[1:], A_diag, A_upper[:-1], rhs_adj)
+    x = _solve_tridiagonal_thomas(a[1:], diag, c[:-1], rhs_adj)
     psor_iters: int | None = None
 
     if intrinsic is None:
@@ -409,9 +414,9 @@ def _implicit_cn_step(
                 x,
                 exercise_j,
                 rhs,
-                A_lower,
-                A_diag,
-                A_upper,
+                a,
+                diag,
+                c,
                 float(V[0]),
                 float(V[-1]),
                 float(omega),
@@ -726,12 +731,13 @@ def _vanilla_fd_core(
                 hull_discounting=hull_discounting,
             )
         else:
-            gamma, beta, alpha = _log_operator_coeffs(  # type: ignore[assignment]
+            gamma, beta, alpha = _log_operator_coeffs(
                 dz=dz,
                 risk_free_rate=r,
                 dividend_rate=q,
                 volatility=volatility,
                 hull_discounting=hull_discounting,
+                size=spot_steps - 1,
             )
 
         df_0t = float(discount_curve.df(t_curr))
@@ -740,7 +746,7 @@ def _vanilla_fd_core(
             dq_0t = float(dividend_curve.df(t_curr))
             dq_tT: float = dq_0T / dq_0t  # type: ignore[operator]
         else:
-            dq_tT = float(np.exp(-q * tau_curr))
+            dq_tT = 1.0
 
         left, right = _boundary_values(
             option_type=option_type,
@@ -781,7 +787,6 @@ def _vanilla_fd_core(
                 left,
                 right,
                 method_used,
-                spot_steps,
                 intrinsic_for_step,
                 american_solver,
                 omega,
@@ -820,87 +825,6 @@ def _vanilla_fd_core(
     return price, S, V, V_prev, last_dtau
 
 
-def _european_vanilla_fd(
-    *,
-    spot: float,
-    strike: float,
-    time_to_maturity: float,
-    volatility: float,
-    discount_curve: DiscountCurve,
-    dividend_curve: DiscountCurve | None,
-    dividend_schedule: list[tuple[float, float]] | None,
-    option_type: OptionType,
-    smax_mult: float,
-    spot_steps: int,
-    time_steps: int,
-    method: PDEMethod,
-    rannacher_steps: int,
-    space_grid: PDESpaceGrid,
-) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
-    return _vanilla_fd_core(
-        spot=spot,
-        strike=strike,
-        time_to_maturity=time_to_maturity,
-        volatility=volatility,
-        discount_curve=discount_curve,
-        dividend_curve=dividend_curve,
-        dividend_schedule=dividend_schedule,
-        option_type=option_type,
-        smax_mult=smax_mult,
-        spot_steps=spot_steps,
-        time_steps=time_steps,
-        early_exercise=False,
-        method=method,
-        rannacher_steps=rannacher_steps,
-        space_grid=space_grid,
-        american_solver=PDEEarlyExercise.INTRINSIC,
-    )
-
-
-def _american_vanilla_fd(
-    *,
-    spot: float,
-    strike: float,
-    time_to_maturity: float,
-    volatility: float,
-    discount_curve: DiscountCurve,
-    dividend_curve: DiscountCurve | None,
-    dividend_schedule: list[tuple[float, float]] | None,
-    option_type: OptionType,
-    smax_mult: float,
-    spot_steps: int,
-    time_steps: int,
-    method: PDEMethod,
-    rannacher_steps: int,
-    space_grid: PDESpaceGrid,
-    american_solver: PDEEarlyExercise,
-    omega: float,
-    tol: float,
-    max_iter: int,
-) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
-    return _vanilla_fd_core(
-        spot=spot,
-        strike=strike,
-        time_to_maturity=time_to_maturity,
-        volatility=volatility,
-        discount_curve=discount_curve,
-        dividend_curve=dividend_curve,
-        dividend_schedule=dividend_schedule,
-        option_type=option_type,
-        smax_mult=smax_mult,
-        spot_steps=spot_steps,
-        time_steps=time_steps,
-        early_exercise=True,
-        method=method,
-        rannacher_steps=rannacher_steps,
-        space_grid=space_grid,
-        american_solver=american_solver,
-        omega=omega,
-        tol=tol,
-        max_iter=max_iter,
-    )
-
-
 class _FDGridGreeksMixin:
     """Mixin providing delta/gamma/theta extracted from the PDE solution grid.
 
@@ -908,7 +832,8 @@ class _FDGridGreeksMixin:
     ``(price, S, V, V_prev, last_dtau)``.
     """
 
-    parent: "OptionValuation"
+    parent: OptionValuation
+    underlying: UnderlyingData
 
     def _solve(
         self,
@@ -927,7 +852,7 @@ class _FDGridGreeksMixin:
             the current spot.
         """
         _, S, V, V_prev, last_dtau = self._solve()
-        spot = float(self.parent.underlying.initial_value)
+        spot = float(self.underlying.initial_value)
         j = int(np.searchsorted(S, spot))
         # Clamp to interior so the 3-point stencil is valid.
         j = max(1, min(j, len(S) - 2))
@@ -980,81 +905,14 @@ class _FDGridGreeksMixin:
         return float(theta_annual / 365.0)
 
 
-class _FDEuropeanValuation(_FDGridGreeksMixin):
-    """European option valuation using PDE finite differences."""
+class _FDValuationBase(_FDGridGreeksMixin):
+    """Base class for European/American FD valuation."""
 
-    def __init__(self, parent: "OptionValuation") -> None:
-        self.parent = parent
-
-    def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
-        """Compute the full FD solution on the spot grid at pricing time."""
-        pv, S, V, *_ = self._solve()
-        return pv, S, V
-
-    def _solve(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
-        """Run the PDE finite-difference solve for a European option."""
-        params = self.parent.params
-        if not isinstance(params, PDEParams):
-            raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
-        logger.debug(
-            "PDE European method=%s grid=%s spot_steps=%d time_steps=%d",
-            params.method.value,
-            params.space_grid.value,
-            params.spot_steps,
-            params.time_steps,
-        )
-        spot = float(self.parent.underlying.initial_value)
-        strike = self.parent.strike
-
-        volatility = float(self.parent.underlying.volatility)
-        discount_curve = self.parent.discount_curve
-        dividend_curve = self.parent.underlying.dividend_curve
-        discrete_dividends = self.parent.underlying.discrete_dividends
-
-        time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
-
-        dividend_schedule = _dividend_tau_schedule(
-            discrete_dividends=discrete_dividends,
-            pricing_date=self.parent.pricing_date,
-            maturity=self.parent.maturity,
-        )
-
-        smax_mult = float(params.smax_mult)
-        spot_steps = int(params.spot_steps)
-        time_steps = int(params.time_steps)
-
-        return _european_vanilla_fd(
-            spot=spot,
-            strike=float(strike),
-            time_to_maturity=float(time_to_maturity),
-            volatility=volatility,
-            discount_curve=discount_curve,
-            dividend_curve=dividend_curve,
-            dividend_schedule=dividend_schedule,
-            option_type=self.parent.option_type,
-            smax_mult=smax_mult,
-            spot_steps=spot_steps,
-            time_steps=time_steps,
-            method=params.method,
-            rannacher_steps=int(params.rannacher_steps),
-            space_grid=params.space_grid,
-        )
-
-    def present_value(self) -> float:
-        """Return European present value from the PDE solve."""
-        params = self.parent.params
-        if not isinstance(params, PDEParams):
-            raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
-        with log_timing(logger, "PDE European present_value", params.log_timings):
-            pv, *_ = self._solve()
-        return float(pv)
-
-
-class _FDAmericanValuation(_FDGridGreeksMixin):
-    """American option valuation using PDE finite differences."""
+    _early_exercise: bool = False
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
+        self.underlying = parent.underlying  # type: ignore[assignment]
 
     def solve(self) -> tuple[float, np.ndarray, np.ndarray]:
         """Compute the full FD solution on the spot grid at pricing time."""
@@ -1062,42 +920,54 @@ class _FDAmericanValuation(_FDGridGreeksMixin):
         return pv, S, V
 
     def _solve(self) -> tuple[float, np.ndarray, np.ndarray, np.ndarray, float]:
-        """Run the PDE finite-difference solve for an American option."""
+        """Run the PDE finite-difference solve."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
-        logger.debug(
-            "PDE American method=%s grid=%s solver=%s spot_steps=%d time_steps=%d",
-            params.method.value,
-            params.space_grid.value,
-            params.american_solver.value,
-            params.spot_steps,
-            params.time_steps,
-        )
-        spot = float(self.parent.underlying.initial_value)
+
+        if self._early_exercise:
+            logger.debug(
+                "PDE American method=%s grid=%s solver=%s spot_steps=%d time_steps=%d",
+                params.method.value,
+                params.space_grid.value,
+                params.american_solver.value,
+                params.spot_steps,
+                params.time_steps,
+            )
+        else:
+            logger.debug(
+                "PDE European method=%s grid=%s spot_steps=%d time_steps=%d",
+                params.method.value,
+                params.space_grid.value,
+                params.spot_steps,
+                params.time_steps,
+            )
+
+        spot = float(self.underlying.initial_value)
         strike = self.parent.strike
-
-        volatility = float(self.parent.underlying.volatility)
+        volatility = float(self.underlying.volatility)
         discount_curve = self.parent.discount_curve
-        dividend_curve = self.parent.underlying.dividend_curve
-        discrete_dividends = self.parent.underlying.discrete_dividends
+        dividend_curve = self.underlying.dividend_curve
+        discrete_dividends = self.underlying.discrete_dividends
 
-        time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
+        )
 
         dividend_schedule = _dividend_tau_schedule(
             discrete_dividends=discrete_dividends,
             pricing_date=self.parent.pricing_date,
             maturity=self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
         )
 
         smax_mult = float(params.smax_mult)
         spot_steps = int(params.spot_steps)
         time_steps = int(params.time_steps)
-        omega = float(params.omega)
-        tol = float(params.tol)
-        max_iter = int(params.max_iter)
 
-        return _american_vanilla_fd(
+        return _vanilla_fd_core(
             spot=spot,
             strike=float(strike),
             time_to_maturity=float(time_to_maturity),
@@ -1109,20 +979,36 @@ class _FDAmericanValuation(_FDGridGreeksMixin):
             smax_mult=smax_mult,
             spot_steps=spot_steps,
             time_steps=time_steps,
+            early_exercise=self._early_exercise,
             method=params.method,
             rannacher_steps=int(params.rannacher_steps),
             space_grid=params.space_grid,
-            american_solver=params.american_solver,
-            omega=omega,
-            tol=tol,
-            max_iter=max_iter,
+            american_solver=params.american_solver
+            if self._early_exercise
+            else PDEEarlyExercise.INTRINSIC,
+            omega=float(params.omega) if self._early_exercise else None,
+            tol=float(params.tol) if self._early_exercise else None,
+            max_iter=int(params.max_iter) if self._early_exercise else None,
         )
 
     def present_value(self) -> float:
-        """Return American present value from the PDE solve."""
+        """Return present value from the PDE solve."""
         params = self.parent.params
         if not isinstance(params, PDEParams):
             raise ConfigurationError("PDE valuation requires PDEParams on OptionValuation")
-        with log_timing(logger, "PDE American present_value", params.log_timings):
+        label = "PDE American" if self._early_exercise else "PDE European"
+        with log_timing(logger, f"{label} present_value", params.log_timings):
             pv, *_ = self._solve()
         return float(pv)
+
+
+class _FDEuropeanValuation(_FDValuationBase):
+    """European option valuation using PDE finite differences."""
+
+    _early_exercise = False
+
+
+class _FDAmericanValuation(_FDValuationBase):
+    """American option valuation using PDE finite differences."""
+
+    _early_exercise = True

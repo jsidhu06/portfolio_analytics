@@ -357,7 +357,11 @@ class _AnalyticalAsianValuation:
         strike = float(spec.strike)
         volatility = float(self.parent.underlying.volatility)
 
-        time_to_maturity = calculate_year_fraction(self.parent.pricing_date, self.parent.maturity)
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
+        )
 
         if self.parent.underlying.discrete_dividends:
             raise UnsupportedFeatureError(
@@ -371,7 +375,9 @@ class _AnalyticalAsianValuation:
         averaging_start_frac = 0.0
         if spec.averaging_start is not None and spec.averaging_start > self.parent.pricing_date:
             averaging_start_frac = calculate_year_fraction(
-                self.parent.pricing_date, spec.averaging_start
+                self.parent.pricing_date,
+                spec.averaging_start,
+                day_count_convention=self.parent.day_count_convention,
             )
 
         pricer = (

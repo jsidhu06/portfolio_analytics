@@ -5,7 +5,6 @@ import datetime as dt
 import numpy as np
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
-from portfolio_analytics.enums import DayCountConvention
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
@@ -52,7 +51,6 @@ def _build_case():
 
     sim_config = SimulationConfig(
         paths=200_000,
-        day_count_convention=DayCountConvention.ACT_365F,
         frequency="W",
         end_date=maturity,
     )

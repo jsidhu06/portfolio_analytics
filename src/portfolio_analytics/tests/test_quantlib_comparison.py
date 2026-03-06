@@ -974,7 +974,7 @@ def _gbm(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     paths: int = 200_000,
 ) -> GBMProcess:
-    sim = SimulationConfig(
+    sim_config = SimulationConfig(
         paths=paths,
         frequency="W",
         end_date=MATURITY,
@@ -985,7 +985,7 @@ def _gbm(
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
-    return GBMProcess(_me_market_data(r_curve), params, sim)
+    return GBMProcess(_me_market_data(r_curve), params, sim_config)
 
 
 def _ql_price(

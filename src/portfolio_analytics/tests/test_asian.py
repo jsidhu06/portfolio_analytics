@@ -19,7 +19,6 @@ from scipy.stats import norm
 
 from portfolio_analytics.enums import (
     AsianAveraging,
-    DayCountConvention,
     ExerciseType,
     OptionType,
     PricingMethod,
@@ -98,7 +97,6 @@ def _gbm_underlying(
 ) -> GBMProcess:
     sim_config = SimulationConfig(
         paths=paths,
-        day_count_convention=DayCountConvention.ACT_365F,
         num_steps=num_steps,
         end_date=maturity,
     )

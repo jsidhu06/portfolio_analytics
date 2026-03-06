@@ -1,7 +1,7 @@
 import pytest
 import datetime as dt
 import numpy as np
-from portfolio_analytics.exceptions import ConfigurationError, ValidationError
+from portfolio_analytics.exceptions import ValidationError
 from portfolio_analytics.stochastic_processes import (
     PathSimulation,
     GBMProcess,
@@ -13,7 +13,6 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.enums import DayCountConvention
 from portfolio_analytics.tests.helpers import flat_curve
 
 
@@ -27,7 +26,7 @@ class TestPathSimulation:
         curve = flat_curve(pricing_date, end_date, 0.05)
         market_data = MarketData(pricing_date, curve, currency="EUR")
         process_params = GBMParams(initial_value=100.0, volatility=0.2)
-        sim = SimulationConfig(
+        sim_config = SimulationConfig(
             paths=10000,
             frequency="ME",
             end_date=dt.datetime(2026, 1, 1),
@@ -37,7 +36,7 @@ class TestPathSimulation:
             TypeError,
             match=r"Can't instantiate abstract class PathSimulation.*_generate_paths",
         ):
-            PathSimulation("test_name", market_data, process_params, sim, corr=None)
+            PathSimulation("test_name", market_data, process_params, sim_config, corr=None)
 
 
 class TestGBMProcess:
@@ -50,7 +49,7 @@ class TestGBMProcess:
         self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=36.0, volatility=0.2)
-        self.sim = SimulationConfig(
+        self.sim_config = SimulationConfig(
             paths=10000,
             frequency="ME",
             end_date=self.end_date,
@@ -58,7 +57,7 @@ class TestGBMProcess:
         self.gbm = GBMProcess(
             self.market_data,
             self.process_params,
-            self.sim,
+            self.sim_config,
             corr=None,
         )
 
@@ -71,7 +70,7 @@ class TestGBMProcess:
         gbm_2 = GBMProcess(
             self.market_data,
             self.process_params,
-            self.sim,
+            self.sim_config,
             corr=None,
         )
         paths_2 = gbm_2.simulate(random_seed=1000).copy()
@@ -85,7 +84,7 @@ class TestGBMProcess:
 
         # Check shape: (M, num_paths) where M is time steps, num_paths is paths
         M = len(self.gbm.time_grid)
-        num_paths = self.sim.paths
+        num_paths = self.sim_config.paths
         assert paths.shape == (M, num_paths)
 
         # First row should be initial value
@@ -101,7 +100,7 @@ class TestGBMProcess:
         # Should return a valid ndarray
         assert isinstance(paths, np.ndarray)
         assert paths.shape[0] == len(self.gbm.time_grid)
-        assert paths.shape[1] == self.sim.paths
+        assert paths.shape[1] == self.sim_config.paths
 
     def test_time_grid_generation(self):
         """Test that time_grid is generated correctly."""
@@ -111,7 +110,7 @@ class TestGBMProcess:
         assert self.gbm.time_grid is not None
         # Time grid should start with pricing_date and end with end_date
         assert self.gbm.time_grid[0] == self.market_data.pricing_date
-        assert self.gbm.time_grid[-1] == self.sim.end_date
+        assert self.gbm.time_grid[-1] == self.sim_config.end_date
 
     def test_simulate(self):
         """Test simulate method."""
@@ -119,7 +118,7 @@ class TestGBMProcess:
 
         # Should return the instrument values array
         assert values is not None
-        assert values.shape == (len(self.gbm.time_grid), self.sim.paths)
+        assert values.shape == (len(self.gbm.time_grid), self.sim_config.paths)
 
     def test_gbm_with_different_volatilities(self):
         """Test GBM with different volatility levels."""
@@ -129,13 +128,13 @@ class TestGBMProcess:
         gbm_low = GBMProcess(
             self.market_data,
             low_vol_params,
-            self.sim,
+            self.sim_config,
         )
 
         gbm_high = GBMProcess(
             self.market_data,
             high_vol_params,
-            self.sim,
+            self.sim_config,
         )
 
         paths_low = gbm_low.simulate(random_seed=42)
@@ -194,7 +193,7 @@ class TestSRDProcess:
             kappa=0.2,
             theta=0.05,
         )
-        self.sim = SimulationConfig(
+        self.sim_config = SimulationConfig(
             paths=5000,
             frequency="D",
             end_date=self.end_date,
@@ -202,7 +201,7 @@ class TestSRDProcess:
         self.srd = SRDProcess(
             self.market_data,
             self.process_params,
-            self.sim,
+            self.sim_config,
         )
 
     def test_srd_initialization(self):
@@ -217,7 +216,7 @@ class TestSRDProcess:
 
         # Check shape
         assert paths.shape[0] == len(self.srd.time_grid)
-        assert paths.shape[1] == self.sim.paths
+        assert paths.shape[1] == self.sim_config.paths
 
         # First row should be initial value
         np.testing.assert_array_almost_equal(paths[0], self.process_params.initial_value)
@@ -227,7 +226,7 @@ class TestSRDProcess:
 
     def test_srd_mean_reversion(self):
         """Test that SRD exhibits mean reversion towards theta."""
-        long_sim = SimulationConfig(
+        long_sim_config = SimulationConfig(
             paths=5000,
             frequency="D",
             end_date=dt.datetime(2030, 1, 1),  # 5 years
@@ -236,7 +235,7 @@ class TestSRDProcess:
         srd_long = SRDProcess(
             self.market_data,
             self.process_params,
-            long_sim,
+            long_sim_config,
         )
 
         paths = srd_long.simulate(random_seed=42)
@@ -261,7 +260,7 @@ class TestSRDProcess:
         srd2 = SRDProcess(
             self.market_data,
             self.process_params,
-            self.sim,
+            self.sim_config,
         )
 
         paths2 = srd2.simulate(random_seed=123)
@@ -285,7 +284,7 @@ class TestJDProcess:
             mu=-0.1,
             delta=0.3,
         )
-        self.sim = SimulationConfig(
+        self.sim_config = SimulationConfig(
             paths=5000,
             frequency="D",
             end_date=self.end_date,
@@ -293,7 +292,7 @@ class TestJDProcess:
         self.jd = JDProcess(
             self.market_data,
             self.process_params,
-            self.sim,
+            self.sim_config,
         )
 
     def test_jd_initialization(self):
@@ -309,7 +308,7 @@ class TestJDProcess:
 
         # Check shape
         assert paths.shape[0] == len(self.jd.time_grid)
-        assert paths.shape[1] == self.sim.paths
+        assert paths.shape[1] == self.sim_config.paths
 
         # First row should be initial value
         np.testing.assert_array_almost_equal(paths[0], self.process_params.initial_value)
@@ -330,7 +329,7 @@ class TestJDProcess:
         gbm = GBMProcess(
             self.market_data,
             gbm_params,
-            self.sim,
+            self.sim_config,
         )
 
         paths_gbm = gbm.simulate(random_seed=42)
@@ -349,7 +348,7 @@ class TestJDProcess:
         jd2 = JDProcess(
             self.market_data,
             self.process_params,
-            self.sim,
+            self.sim_config,
         )
 
         paths2 = jd2.simulate(random_seed=456)
@@ -369,7 +368,7 @@ class TestJDProcess:
         jd_no_jump = JDProcess(
             self.market_data,
             no_jump_params,
-            self.sim,
+            self.sim_config,
         )
 
         paths_jd = jd_no_jump.simulate(random_seed=99)
@@ -392,30 +391,6 @@ class TestSimulationConfig:
         assert config.paths == 5000
         assert config.frequency == "D"
         assert config.end_date == dt.datetime(2026, 1, 1)
-        assert config.day_count_convention == DayCountConvention.ACT_365F  # default
-
-    def test_simulation_config_custom_day_count(self):
-        """Test SimulationConfig with a non-default DayCountConvention."""
-        config = SimulationConfig(
-            paths=1000,
-            frequency="W",
-            end_date=dt.datetime(2026, 1, 1),
-            day_count_convention=DayCountConvention.ACT_360,
-        )
-
-        assert config.day_count_convention == DayCountConvention.ACT_360
-
-    def test_simulation_config_rejects_non_enum_day_count(self):
-        """Passing a raw int/str instead of DayCountConvention must raise TypeError."""
-        with pytest.raises(
-            ConfigurationError, match="day_count_convention must be a DayCountConvention"
-        ):
-            SimulationConfig(
-                paths=1000,
-                frequency="W",
-                end_date=dt.datetime(2026, 1, 1),
-                day_count_convention=360,
-            )
 
     def test_simulation_config_with_observation_dates(self):
         """Test SimulationConfig with special dates."""
@@ -499,20 +474,20 @@ class TestVarianceReduction:
         self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
 
     def _make_gbm(self, *, antithetic: bool, moment_matching: bool, paths: int = 10000):
-        sim = SimulationConfig(
+        sim_config = SimulationConfig(
             paths=paths,
             end_date=self.end_date,
             num_steps=252,
             antithetic=antithetic,
             moment_matching=moment_matching,
         )
-        return GBMProcess(self.market_data, self.process_params, sim, corr=None)
+        return GBMProcess(self.market_data, self.process_params, sim_config, corr=None)
 
     def test_defaults_are_true(self):
         """SimulationConfig defaults to antithetic=True, moment_matching=True."""
-        sim = SimulationConfig(paths=100, end_date=self.end_date, num_steps=10)
-        assert sim.antithetic is True
-        assert sim.moment_matching is True
+        sim_config = SimulationConfig(paths=100, end_date=self.end_date, num_steps=10)
+        assert sim_config.antithetic is True
+        assert sim_config.moment_matching is True
 
     def test_antithetic_produces_symmetric_randoms(self):
         """With antithetic=True, random draws should come in negated pairs."""
@@ -596,12 +571,12 @@ class TestPathSimulationReplace:
         self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
         self.market_data = MarketData(self.pricing_date, self.curve, currency="EUR")
         self.process_params = GBMParams(initial_value=100.0, volatility=0.2)
-        self.sim = SimulationConfig(
+        self.sim_config = SimulationConfig(
             paths=1000,
             frequency="ME",
             end_date=self.end_date,
         )
-        self.gbm = GBMProcess(self.market_data, self.process_params, self.sim)
+        self.gbm = GBMProcess(self.market_data, self.process_params, self.sim_config)
 
     # --- Type preservation ---
 
@@ -613,7 +588,7 @@ class TestPathSimulationReplace:
     def test_replace_jd_returns_jd(self):
         """replace() on a JDProcess should return a JDProcess."""
         jd_params = JDParams(initial_value=100.0, volatility=0.2, lambd=0.5, mu=-0.1, delta=0.3)
-        jd = JDProcess(self.market_data, jd_params, self.sim)
+        jd = JDProcess(self.market_data, jd_params, self.sim_config)
         cloned = jd.replace(initial_value=110.0)
         assert type(cloned) is JDProcess
         assert cloned.initial_value == 110.0
@@ -653,7 +628,7 @@ class TestPathSimulationReplace:
         assert cloned.end_date == new_end
 
     def test_replace_num_steps(self):
-        """replace(num_steps=...) routes to sim config."""
+        """replace(num_steps=...) routes to sim_config config."""
         sim_steps = SimulationConfig(paths=1000, num_steps=50, end_date=self.end_date)
         gbm_steps = GBMProcess(self.market_data, self.process_params, sim_steps)
         cloned = gbm_steps.replace(num_steps=100)
@@ -766,7 +741,7 @@ class TestPathSimulationReplace:
         """Replacing a param not on the process_params type should raise."""
         # SRD doesn't have dividend_curve
         srd_params = SRDParams(initial_value=0.03, volatility=0.015, kappa=0.2, theta=0.05)
-        srd = SRDProcess(self.market_data, srd_params, self.sim)
+        srd = SRDProcess(self.market_data, srd_params, self.sim_config)
         with pytest.raises(ValidationError, match="dividend_curve.*not supported"):
             srd.replace(dividend_curve=self.curve)
 

@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from portfolio_analytics.enums import (
-    DayCountConvention,
     ExerciseType,
     GreekCalculationMethod,
     OptionType,
@@ -76,13 +75,12 @@ class _MCGreekTestBase:
             volatility=vol or self.vol,
             dividend_curve=resolved_q_curve,
         )
-        sim = SimulationConfig(
+        sim_config = SimulationConfig(
             paths=self.n_paths,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.maturity,
         )
-        return GBMProcess(self.market_data, params, sim)
+        return GBMProcess(self.market_data, params, sim_config)
 
     def _make_val(
         self,
@@ -340,13 +338,12 @@ class TestMCGreekValidation(_MCGreekTestBase):
             volatility=0.20,
             discrete_dividends=[(dt.datetime(2025, 6, 15), 2.0)],
         )
-        sim = SimulationConfig(
+        sim_config = SimulationConfig(
             paths=10_000,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=dt.datetime(2026, 1, 1),
         )
-        process = GBMProcess(self.market_data, params, sim)
+        process = GBMProcess(self.market_data, params, sim_config)
         mc_val = self._make_val(OptionType.CALL, process=process)
         with pytest.raises(UnsupportedFeatureError, match="discrete dividends"):
             mc_val.delta(greek_calc_method=GreekCalculationMethod.PATHWISE)
@@ -357,13 +354,12 @@ class TestMCGreekValidation(_MCGreekTestBase):
             volatility=0.20,
             discrete_dividends=[(dt.datetime(2025, 6, 15), 2.0)],
         )
-        sim = SimulationConfig(
+        sim_config = SimulationConfig(
             paths=10_000,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=dt.datetime(2026, 1, 1),
         )
-        process = GBMProcess(self.market_data, params, sim)
+        process = GBMProcess(self.market_data, params, sim_config)
         mc_val = self._make_val(OptionType.CALL, process=process)
         with pytest.raises(UnsupportedFeatureError, match="discrete dividends"):
             mc_val.delta(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
@@ -462,13 +458,12 @@ class TestMCGreekMethodAgreement:
         div_curve = self._build_curve(div_spec, default_rate=0.02)
         md = MarketData(self.PRICING_DATE, rate_curve, currency=self.CURRENCY)
         params = GBMParams(initial_value=self.SPOT, volatility=vol, dividend_curve=div_curve)
-        sim = SimulationConfig(
+        sim_config = SimulationConfig(
             paths=self.N_PATHS,
             frequency="ME",
-            day_count_convention=DayCountConvention.ACT_365F,
             end_date=self.MATURITY,
         )
-        process = GBMProcess(md, params, sim)
+        process = GBMProcess(md, params, sim_config)
         spec = VanillaSpec(
             option_type=option_type,
             exercise_type=ExerciseType.EUROPEAN,

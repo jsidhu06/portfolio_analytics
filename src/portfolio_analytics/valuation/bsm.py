@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import numpy as np
 from scipy.stats import norm
 from ..utils import calculate_year_fraction, pv_discrete_dividends
-from ..enums import DayCountConvention, OptionType
+from ..enums import OptionType
 from ..exceptions import ValidationError
 
 if TYPE_CHECKING:
@@ -30,6 +30,7 @@ class _BSMValuationBase:
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
+        self.underlying = parent.underlying
 
     def _calculate_d_values(
         self,
@@ -88,7 +89,7 @@ class _BSMValuationBase:
 
     def _effective_discount_factors(self, time_to_maturity: float) -> tuple[float, float]:
         df_r = float(self.parent.discount_curve.df(time_to_maturity))
-        dividend_curve = self.parent.underlying.dividend_curve
+        dividend_curve = self.underlying.dividend_curve
         if dividend_curve is not None:
             df_q = float(dividend_curve.df(time_to_maturity))
         else:
@@ -101,8 +102,8 @@ class _BSMValuationBase:
 
     def _adjusted_spot(self) -> float:
         """Adjust spot for discrete dividends using PV of future dividends."""
-        spot = float(self.parent.underlying.initial_value)
-        discrete_dividends = self.parent.underlying.discrete_dividends
+        spot = float(self.underlying.initial_value)
+        discrete_dividends = self.underlying.discrete_dividends
         if not discrete_dividends:
             return spot
         pv_divs = pv_discrete_dividends(
@@ -110,6 +111,7 @@ class _BSMValuationBase:
             curve_date=self.parent.pricing_date,
             end_date=self.parent.maturity,
             discount_curve=self.parent.discount_curve,
+            day_count_convention=self.parent.day_count_convention,
         )
         return max(spot - pv_divs, 0.0)
 
@@ -122,11 +124,11 @@ class _BSMValuationBase:
         """
         spot = self._adjusted_spot()
         strike = self.parent.strike
-        volatility = self.parent.underlying.volatility
+        volatility = self.underlying.volatility
         time_to_maturity = calculate_year_fraction(
             self.parent.pricing_date,
             self.parent.maturity,
-            day_count_convention=DayCountConvention.ACT_365F,
+            day_count_convention=self.parent.day_count_convention,
         )
         df_r, df_q = self._effective_discount_factors(time_to_maturity)
         d1, d2 = self._calculate_d_values(spot, strike, time_to_maturity, volatility, df_r, df_q)

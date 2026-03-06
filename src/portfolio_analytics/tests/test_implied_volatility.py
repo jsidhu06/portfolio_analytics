@@ -7,7 +7,6 @@ import pytest
 
 from portfolio_analytics.exceptions import UnsupportedFeatureError, ValidationError
 from portfolio_analytics.enums import (
-    DayCountConvention,
     ExerciseType,
     ImpliedVolMethod,
     OptionType,
@@ -184,7 +183,6 @@ def test_implied_volatility_rejects_monte_carlo():
     market_data = MarketData(pricing_date, curve, currency="USD")
     sim_config = SimulationConfig(
         paths=5_000,
-        day_count_convention=DayCountConvention.ACT_365F,
         num_steps=50,
         end_date=maturity,
     )
