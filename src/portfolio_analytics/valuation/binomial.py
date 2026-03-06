@@ -21,7 +21,7 @@ from ..exceptions import (
 from .params import BinomialParams
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianSpec
+    from .core import AsianSpec, OptionValuation
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,7 @@ class _BinomialValuationBase:
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
+        self.underlying = parent.underlying
         if not isinstance(parent.params, BinomialParams):
             raise ConfigurationError(
                 "Binomial valuation requires BinomialParams on OptionValuation"
@@ -73,23 +74,30 @@ class _BinomialValuationBase:
             raise ValidationError("Binomial tree requires equal time steps.")
         delta_t = float(dt_steps[0])
 
-        sigma = float(self.parent.underlying.volatility)
+        sigma = float(self.underlying.volatility)
         u = np.exp(sigma * np.sqrt(delta_t))
         d = 1.0 / u
 
         discount_curve = self.parent.discount_curve
         forward_rates = discount_curve.step_forward_rates(time_grid)
 
-        dividend_curve = self.parent.underlying.dividend_curve
+        dividend_curve = self.underlying.dividend_curve
         if dividend_curve is not None:
             dividend_forwards = dividend_curve.step_forward_rates(time_grid)
         else:
             dividend_forwards = np.zeros(num_steps, dtype=float)
 
         growth = np.exp((forward_rates - dividend_forwards) * delta_t)
-        if np.any(growth <= d) or np.any(growth >= u):
+        too_low = growth <= d
+        too_high = growth >= u
+        if np.any(too_low) or np.any(too_high):
+            parts = []
+            if np.any(too_low):
+                parts.append(f"exp((r-q)*dt) <= d at {int(np.sum(too_low))} step(s)")
+            if np.any(too_high):
+                parts.append(f"exp((r-q)*dt) >= u at {int(np.sum(too_high))} step(s)")
             raise ArbitrageViolationError(
-                "Arbitrage condition violated: d < exp((f-g)*dt) < u for at least one step"
+                "No-arbitrage condition d < exp((r-q)*dt) < u violated: " + "; ".join(parts)
             )
 
         p = (growth - d) / (u - d)
@@ -115,8 +123,8 @@ class _BinomialValuationBase:
         The down factor is ``1/up`` — the CRR recombining-tree.
         """
         down = 1.0 / up
-        spot = float(self.parent.underlying.initial_value)
-        discrete_dividends = self.parent.underlying.discrete_dividends
+        spot = float(self.underlying.initial_value)
+        discrete_dividends = self.underlying.discrete_dividends
         discount_curve = self.parent.discount_curve
 
         i_idx = np.arange(num_steps + 1)[:, None]
@@ -182,6 +190,39 @@ class _BinomialValuationBase:
 
         payoff_fn = self.parent.spec.payoff  # type: ignore[union-attr]
         return payoff_fn(instrument_values)
+
+    def _solve_backward(self, *, early_exercise: bool) -> np.ndarray:
+        """Run CRR backward induction, optionally with early exercise.
+
+        Parameters
+        ----------
+        early_exercise
+            If True, option values are projected up to intrinsic at every
+            step (American exercise).
+
+        Returns
+        -------
+        np.ndarray
+            Option value lattice, shape ``(num_steps+1, num_steps+1)``.
+        """
+        num_steps = int(self.binom_params.num_steps)
+        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
+
+        option_lattice = np.zeros_like(spot_lattice)
+        intrinsic = self._get_intrinsic_values(spot_lattice)
+        option_lattice[:, num_steps] = intrinsic[:, num_steps]
+
+        for t in range(num_steps - 1, -1, -1):
+            continuation = (
+                p[t] * option_lattice[: t + 1, t + 1]
+                + (1 - p[t]) * option_lattice[1 : t + 2, t + 1]
+            ) * discount_factors[t]
+            if early_exercise:
+                option_lattice[: t + 1, t] = np.maximum(intrinsic[: t + 1, t], continuation)
+            else:
+                option_lattice[: t + 1, t] = continuation
+
+        return option_lattice
 
     # ------------------------------------------------------------------
     # Tree Greeks (Hull Ch. 13)
@@ -265,22 +306,8 @@ class _BinomialEuropeanValuation(_BinomialValuationBase):
 
     def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree."""
-        num_steps = int(self.binom_params.num_steps)
-        logger.debug("Binomial European num_steps=%d", num_steps)
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
-
-        option_lattice = np.zeros_like(spot_lattice)
-        option_lattice[:, num_steps] = self._get_intrinsic_values(spot_lattice[:, num_steps])
-
-        # Backward induction through the tree (time in columns)
-        for t in range(num_steps - 1, -1, -1):
-            continuation = (
-                p[t] * option_lattice[: t + 1, t + 1]
-                + (1 - p[t]) * option_lattice[1 : t + 2, t + 1]
-            ) * discount_factors[t]
-            option_lattice[: t + 1, t] = continuation
-
-        return option_lattice
+        logger.debug("Binomial European num_steps=%d", self.binom_params.num_steps)
+        return self._solve_backward(early_exercise=False)
 
     def present_value(self) -> float:
         """Return PV using binomial tree method."""
@@ -296,23 +323,8 @@ class _BinomialAmericanValuation(_BinomialValuationBase):
 
     def solve(self) -> np.ndarray:
         """Compute the option value lattice using a binomial tree with early exercise."""
-        num_steps = int(self.binom_params.num_steps)
-        logger.debug("Binomial American num_steps=%d", num_steps)
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
-
-        option_lattice = np.zeros_like(spot_lattice)
-        intrinsic = self._get_intrinsic_values(spot_lattice)
-        option_lattice[:, num_steps] = intrinsic[:, num_steps]
-
-        # Backward induction with early exercise decision
-        for t in range(num_steps - 1, -1, -1):
-            continuation = (
-                p[t] * option_lattice[: t + 1, t + 1]
-                + (1 - p[t]) * option_lattice[1 : t + 2, t + 1]
-            ) * discount_factors[t]
-            option_lattice[: t + 1, t] = np.maximum(intrinsic[: t + 1, t], continuation)
-
-        return option_lattice
+        logger.debug("Binomial American num_steps=%d", self.binom_params.num_steps)
+        return self._solve_backward(early_exercise=True)
 
     def present_value(self) -> float:
         """Return PV using binomial tree method with American early exercise."""
@@ -354,20 +366,20 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         # Vectorized simulation of binomial paths:
         # draw Bernoulli down-steps for each path and step
-        downs = rng.random((mc_paths, num_steps)) > p[None, :]  # (I,M)
+        downs = rng.random((mc_paths, num_steps)) > p[None, :]  # (I,N)
         # cumulative count of downs gives row index at each step
-        down_counts = np.cumsum(downs, axis=1)  # (I,M)
+        down_counts = np.cumsum(downs, axis=1)  # (I,N)
         # prepend time 0 (row=0)
         row_idx = np.concatenate(
             [np.zeros((mc_paths, 1), dtype=int), down_counts], axis=1
-        )  # (I,M+1)
-        col_idx: np.ndarray = np.arange(num_steps + 1, dtype=int)  # (M+1,)
+        )  # (I,N+1)
+        col_idx: np.ndarray = np.arange(num_steps + 1, dtype=int)  # (N+1,)
 
         # gather prices along each simulated path
-        # binomial_matrix is (M+1, M+1)
-        # Advanced indexing: col_idx broadcasts to (I, M+1), so each
+        # spot_lattice is (N+1, N+1)
+        # Advanced indexing: col_idx broadcasts to (I, N+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
-        prices = spot_lattice[row_idx, col_idx]  # (I, M+1)
+        prices = spot_lattice[row_idx, col_idx]  # (I, N+1)
         if self.spec.averaging is AsianAveraging.GEOMETRIC:
             if np.any(prices <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
@@ -412,7 +424,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         for t in range(num_steps + 1):
             time_idx = np.arange(t + 1)
-            row = np.arange(t + 1)[:, None]
+            row = time_idx[:, None]
             time = time_idx[None, :]
 
             downs_first_rows = np.minimum(time, row)
@@ -459,7 +471,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         averaging_start = self.spec.averaging_start
         if averaging_start is not None and averaging_start != self.parent.pricing_date:
-            raise ValidationError(
+            raise UnsupportedFeatureError(
                 "Hull binomial Asian valuation requires averaging_start=pricing_date."
             )
 
@@ -490,8 +502,8 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 maturity_avg = np.exp(maturity_avg)
             values[:, row, num_steps] = self._average_payoff(maturity_avg)
 
-        # values[0,:,:] is option values corresponding to S_avg,min.
-        # values[-1,:,:] is option values corresponding to S_avg,max.
+        # values[0,:,:] are option values corresponding to S_avg,min.
+        # values[-1,:,:] are option values corresponding to S_avg,max.
         is_american = self.parent.spec.exercise_type is ExerciseType.AMERICAN
 
         for t in range(num_steps - 1, -1, -1):
