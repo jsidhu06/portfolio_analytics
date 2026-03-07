@@ -414,6 +414,64 @@ class _MCEuropeanValuation:
         score = (Z**2 - 1) / sigma - Z * np.sqrt(ttm)
         return float(np.mean(df * payoff * score)) / 100
 
+    # --- theta estimators -------------------------------------------------
+
+    def _risk_free_and_div_rates(self, ttm: float) -> tuple[float, float]:
+        """Extract annualised risk-free rate *r* and dividend yield *q*."""
+        r = -np.log(float(self.parent.discount_curve.df(ttm))) / ttm
+        div_curve = self.underlying.dividend_curve
+        q = -np.log(float(div_curve.df(ttm))) / ttm if div_curve is not None else 0.0
+        return float(r), float(q)
+
+    def theta_pathwise(self) -> float:
+        r"""Pathwise (IPA) theta estimator (per calendar day).
+
+        .. math::
+            \Theta_{\text{PW}} = -e^{-rT}\,\mathbb{E}\!\left[
+            \Phi'(S_T)\,S_T\!\left(a + \frac{\sigma Z}{2\sqrt{T}}\right)
+            - r\,\Phi(S_T)\right]
+
+        where :math:`a = r - q - \tfrac12\sigma^2`.
+        """
+        ST, idx, ttm, df = self._simulate_terminal()
+        Z = self._effective_terminal_z(idx, ttm)
+        sigma = float(self.underlying.volatility)
+        K = self.parent.strike
+        r, q = self._risk_free_and_div_rates(ttm)
+        a = r - q - 0.5 * sigma**2
+
+        payoff = _vanilla_payoff(self.parent.option_type, K, ST)
+        if self.parent.option_type is OptionType.CALL:
+            indicator = (ST > K).astype(float)
+        else:
+            indicator = -(ST < K).astype(float)
+
+        sensitivity = indicator * ST * (a + sigma * Z / (2 * np.sqrt(ttm)))
+        per_year = -df * (sensitivity - r * payoff)
+        return float(np.mean(per_year)) / 365
+
+    def theta_lr(self) -> float:
+        r"""Likelihood-ratio (score-function) theta estimator (per calendar day).
+
+        .. math::
+            \Theta_{\text{LR}} = -e^{-rT}\,\mathbb{E}\!\left[
+            \Phi(S_T)\!\left(\frac{Z^2-1}{2T}
+            + \frac{aZ}{\sigma\sqrt{T}} - r\right)\right]
+
+        where :math:`a = r - q - \tfrac12\sigma^2`.
+        """
+        ST, idx, ttm, df = self._simulate_terminal()
+        Z = self._effective_terminal_z(idx, ttm)
+        sigma = float(self.underlying.volatility)
+        K = self.parent.strike
+        r, q = self._risk_free_and_div_rates(ttm)
+        a = r - q - 0.5 * sigma**2
+
+        payoff = _vanilla_payoff(self.parent.option_type, K, ST)
+        score = (Z**2 - 1) / (2 * ttm) + a * Z / (sigma * np.sqrt(ttm)) - r
+        per_year = -df * payoff * score
+        return float(np.mean(per_year)) / 365
+
     # --- finite-difference of pathwise delta ------------------------------
 
     def gamma_pathwise_fd(self, epsilon: float | None = None) -> float:

@@ -322,11 +322,6 @@ class TestMCGreekValidation(_MCGreekTestBase):
         with pytest.raises(ValidationError, match="likelihood_ratio"):
             mc_val.gamma(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
 
-    def test_lr_rejects_theta(self):
-        mc_val = self._make_val(OptionType.CALL)
-        with pytest.raises(ValidationError, match="likelihood_ratio"):
-            mc_val.theta(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
-
     def test_pathwise_rejects_rho(self):
         mc_val = self._make_val(OptionType.CALL)
         with pytest.raises(ValidationError, match="pathwise"):
@@ -423,6 +418,7 @@ _GREEKS = [
     pytest.param("delta", id="delta"),
     pytest.param("gamma", id="gamma"),
     pytest.param("vega", id="vega"),
+    pytest.param("theta", id="theta"),
 ]
 
 

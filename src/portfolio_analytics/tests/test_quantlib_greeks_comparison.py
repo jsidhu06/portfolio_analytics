@@ -413,6 +413,7 @@ def test_european_mc_pathwise_greeks_vs_quantlib(spot, strike, option_type):
         "delta": (ov.delta(), ql_opt.delta(), 0.03),
         "gamma": (ov.gamma(), ql_opt.gamma(), 0.10),
         "vega": (ov.vega(), ql_opt.vega() / 100, 0.05),
+        "theta": (ov.theta(), ql_opt.theta() / 365, 0.05),
     }
 
     for name, (pa_val, ql_val, tol) in pairs.items():
