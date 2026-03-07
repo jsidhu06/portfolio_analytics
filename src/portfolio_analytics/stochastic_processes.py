@@ -621,8 +621,24 @@ class PathSimulation(ABC):
 
     @staticmethod
     def _handle_grid_state_after_overrides(cloned: PathSimulation, kwargs: dict) -> None:
-        if PathSimulation._needs_grid_rebuild(kwargs):
+        # Direct grid-parameter overrides always trigger a rebuild.
+        # A wholesale market_data replacement also triggers a rebuild when
+        # the embedded pricing_date changes (the grid is anchored to it).
+        needs_rebuild = PathSimulation._needs_grid_rebuild(kwargs)
+        if not needs_rebuild and "market_data" in kwargs:
+            needs_rebuild = kwargs["market_data"].pricing_date != cloned._market_data.pricing_date
+
+        if needs_rebuild:
             cloned.time_grid = None
+            # When pricing_date moves forward, drop stale observation
+            # dates that now precede the new start so the rebuilt grid
+            # keeps the same step count (critical for seed-correlated
+            # bump-and-revalue Greeks).
+            new_pd = kwargs.get("pricing_date") or (
+                kwargs["market_data"].pricing_date if "market_data" in kwargs else None
+            )
+            if new_pd is not None:
+                cloned.observation_dates = {d for d in cloned.observation_dates if d >= new_pd}
             if (
                 cloned._sim_config.grid_start is not None
                 and not cloned._sim_config._can_rebuild_grid()

@@ -768,8 +768,13 @@ class OptionValuation:
         method = self._resolve_greek_method(
             greek_calc_method,
             tree_capable=True,
+            mc_analytic_capable=True,
             grid_capable=True,
         )
+        if method == GreekCalculationMethod.PATHWISE:
+            return float(self._impl.theta_pathwise())
+        if method == GreekCalculationMethod.LIKELIHOOD_RATIO:
+            return float(self._impl.theta_lr())
         if method != GreekCalculationMethod.NUMERICAL:
             return float(self._impl.theta())
 
@@ -779,12 +784,7 @@ class OptionValuation:
 
         value_now = self.present_value()
 
-        bumped_market = MarketData(
-            pricing_date=bumped_date,
-            discount_curve=self.discount_curve,
-            currency=self._underlying.currency,
-        )
-        underlying_bumped = self._underlying.replace(market_data=bumped_market)
+        underlying_bumped = self._underlying.replace(pricing_date=bumped_date)
 
         value_bumped = OptionValuation(
             underlying=underlying_bumped,
@@ -1339,8 +1339,8 @@ class OptionValuation:
         if not mc_analytic_capable:
             raise ValidationError(
                 f"{method.value} is not available for this greek. "
-                "Only delta, gamma, and vega support PATHWISE; "
-                "only delta and vega support LIKELIHOOD_RATIO."
+                "Only delta, gamma, theta, and vega support PATHWISE; "
+                "only delta, theta, and vega support LIKELIHOOD_RATIO."
             )
         if not isinstance(self.underlying, GBMProcess):
             raise ValidationError("MC greeks are only available for GBMProcess underlying.")
