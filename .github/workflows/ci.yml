@@ -160,6 +160,7 @@ jobs:
           pytest src/portfolio_analytics/tests/ -q -k "bsm or binomial"
 
       - name: Execute one notebook
+        shell: bash
         run: |
           jupyter nbconvert \
             --execute \
