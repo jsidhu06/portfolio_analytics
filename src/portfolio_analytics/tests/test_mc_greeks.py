@@ -1,6 +1,7 @@
 """Tests for pathwise and likelihood-ratio MC Greeks (European only)."""
 
 import datetime as dt
+import logging
 
 import numpy as np
 import pytest
@@ -29,6 +30,8 @@ from portfolio_analytics.valuation import (
 )
 
 _MISSING: object = object()  # sentinel to distinguish "not passed" from None
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -490,8 +493,19 @@ class TestMCGreekMethodAgreement:
         greek_fn = getattr(mc_val, greek)
         pw = greek_fn(greek_calc_method=GreekCalculationMethod.PATHWISE)
         num = greek_fn(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-        assert np.isclose(pw, num, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs NUM {num:.6f}"
-        # LR is available for delta/vega only, not gamma
+        lr = None
         if greek != "gamma":
             lr = greek_fn(greek_calc_method=GreekCalculationMethod.LIKELIHOOD_RATIO)
+        logger.info(
+            "%s %s K=%.0f vol=%.2f | PW=%.8f NUM=%.8f LR=%s",
+            greek,
+            option_type.value,
+            strike,
+            vol,
+            pw,
+            num,
+            f"{lr:.8f}" if lr is not None else "N/A",
+        )
+        assert np.isclose(pw, num, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs NUM {num:.6f}"
+        if lr is not None:
             assert np.isclose(pw, lr, rtol=0.01, atol=0.005), f"{greek} PW {pw:.6f} vs LR {lr:.6f}"

@@ -548,6 +548,104 @@ def test_geometric_asian_binomial_hull_close_to_mc(
 # American Asian MC (Longstaff-Schwartz) Tests
 # ---------------------------------------------------------------------------
 
+# Each scenario: (spot, strike, vol, option_type, averaging, rate_spec, div_spec)
+# rate_spec: float → flat rate; dict → DiscountCurve.from_forwards kwargs
+# div_spec: None, ("continuous", yield), or ("discrete", [(days_offset, amount), ...])
+_AMERICAN_ASIAN_SCENARIOS = [
+    # Baseline: flat rate, no divs — original option_type × averaging combos
+    pytest.param(
+        100, 100, 0.20, OptionType.CALL, AsianAveraging.ARITHMETIC, 0.03, None, id="atm_call_arith"
+    ),
+    pytest.param(
+        100, 100, 0.20, OptionType.PUT, AsianAveraging.ARITHMETIC, 0.03, None, id="atm_put_arith"
+    ),
+    pytest.param(
+        100, 100, 0.20, OptionType.CALL, AsianAveraging.GEOMETRIC, 0.03, None, id="atm_call_geom"
+    ),
+    pytest.param(
+        100, 100, 0.20, OptionType.PUT, AsianAveraging.GEOMETRIC, 0.03, None, id="atm_put_geom"
+    ),
+    # Continuous dividend yield
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        0.03,
+        ("continuous", 0.02),
+        id="call_arith_cont_div",
+    ),
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.GEOMETRIC,
+        0.03,
+        ("continuous", 0.03),
+        id="put_geom_cont_div",
+    ),
+    # Discrete dividends
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        0.03,
+        ("discrete", [(91, 2.0), (274, 2.0)]),
+        id="put_arith_disc_div",
+    ),
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.GEOMETRIC,
+        0.03,
+        ("discrete", [(182, 3.0)]),
+        id="call_geom_disc_div",
+    ),
+    # OTM, higher vol
+    pytest.param(
+        100,
+        110,
+        0.35,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        0.03,
+        None,
+        id="otm_call_high_vol",
+    ),
+    # ITM
+    pytest.param(
+        100, 90, 0.25, OptionType.PUT, AsianAveraging.GEOMETRIC, 0.03, None, id="itm_put_geom"
+    ),
+    # Non-flat rate curve
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        {"times": np.array([0.0, 0.5, 1.0]), "forwards": np.array([0.02, 0.05])},
+        None,
+        id="call_arith_non_flat_rate",
+    ),
+    # Non-flat rate + continuous div
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        {"times": np.array([0.0, 0.5, 1.0]), "forwards": np.array([0.03, 0.06])},
+        ("continuous", 0.02),
+        id="put_arith_non_flat_cont_div",
+    ),
+]
+
 
 class TestAmericanAsianMC:
     """Tests for Longstaff-Schwartz American Asian option pricing."""
@@ -564,6 +662,25 @@ class TestAmericanAsianMC:
     @property
     def maturity(self) -> dt.datetime:
         return PRICING_DATE + dt.timedelta(days=self.DAYS)
+
+    # --- scenario helpers ---
+
+    def _build_rate_curve(self, rate_spec) -> DiscountCurve:
+        if isinstance(rate_spec, (int, float)):
+            return flat_curve(PRICING_DATE, self.maturity, rate_spec)
+        return DiscountCurve.from_forwards(**rate_spec)
+
+    def _parse_div_spec(
+        self, div_spec
+    ) -> tuple[DiscountCurve | None, Sequence[tuple[dt.datetime, float]] | None]:
+        if div_spec is None:
+            return None, None
+        kind, val = div_spec
+        if kind == "continuous":
+            return _flat_dividend_curve(val, self.maturity), None
+        # "discrete": val is [(days_offset, amount), ...]
+        divs = [(PRICING_DATE + dt.timedelta(days=d), amt) for d, amt in val]
+        return None, divs
 
     def _mc_underlying(
         self,
@@ -663,27 +780,39 @@ class TestAmericanAsianMC:
     # -- MC American vs Binomial Hull American --
 
     @pytest.mark.parametrize(
-        "option_type,averaging",
-        [
-            (OptionType.CALL, AsianAveraging.ARITHMETIC),
-            (OptionType.PUT, AsianAveraging.ARITHMETIC),
-            (OptionType.CALL, AsianAveraging.GEOMETRIC),
-            (OptionType.PUT, AsianAveraging.GEOMETRIC),
-        ],
+        "spot,strike,vol,option_type,averaging,rate_spec,div_spec",
+        _AMERICAN_ASIAN_SCENARIOS,
     )
-    def test_mc_american_close_to_hull_american(self, option_type, averaging):
+    def test_mc_american_close_to_hull_american(
+        self, spot, strike, vol, option_type, averaging, rate_spec, div_spec
+    ):
         """MC LSM American Asian should be close to Hull binomial American Asian."""
         mat = self.maturity
+        rate_curve = self._build_rate_curve(rate_spec)
+        div_curve, disc_divs = self._parse_div_spec(div_spec)
+        md = MarketData(PRICING_DATE, rate_curve, currency=CURRENCY)
+
         spec = _asian_spec(
-            strike=self.STRIKE,
+            strike=strike,
             maturity=mat,
             option_type=option_type,
             exercise_type=ExerciseType.AMERICAN,
             averaging=averaging,
         )
 
-        # MC American
-        mc_underlying = self._mc_underlying()
+        # MC American (GBMProcess)
+        gbm_params = GBMParams(
+            initial_value=spot,
+            volatility=vol,
+            dividend_curve=div_curve,
+            discrete_dividends=disc_divs,
+        )
+        sim_config = SimulationConfig(
+            paths=self.PATHS,
+            num_steps=self.NUM_STEPS,
+            end_date=mat,
+        )
+        mc_underlying = GBMProcess(md, gbm_params, sim_config)
         mc_pv = OptionValuation(
             mc_underlying,
             spec,
@@ -691,12 +820,25 @@ class TestAmericanAsianMC:
             params=MonteCarloParams(random_seed=self.SEED),
         ).present_value()
 
-        # Hull binomial American
-        binom_underlying = _underlying(
-            spot=self.SPOT,
-            vol=self.VOL,
-            short_rate=self.SHORT_RATE,
-            maturity=mat,
+        # Hull binomial American (UnderlyingData)
+        # Escrowed-dividend trees diffuse S* = S - PV(divs) with flat vol σ,
+        # but the true lognormal vol of S* is higher: σ_adj = σ · S / S*.
+        binom_vol = vol
+        if disc_divs:
+            pv_divs = pv_discrete_dividends(
+                disc_divs,
+                curve_date=PRICING_DATE,
+                end_date=mat,
+                discount_curve=rate_curve,
+            )
+            binom_vol = vol * spot / (spot - pv_divs)
+
+        binom_underlying = UnderlyingData(
+            initial_value=spot,
+            volatility=binom_vol,
+            market_data=md,
+            dividend_curve=div_curve,
+            discrete_dividends=disc_divs,
         )
         hull_pv = OptionValuation(
             binom_underlying,
@@ -709,9 +851,12 @@ class TestAmericanAsianMC:
         ).present_value()
 
         logger.info(
-            "American Asian %s %s | MC=%.6f Hull=%.6f",
+            "American Asian %s %s K=%.0f vol=%.2f (binom_vol=%.4f) | MC=%.6f Hull=%.6f",
             averaging.value,
             option_type.value,
+            strike,
+            vol,
+            binom_vol,
             mc_pv,
             hull_pv,
         )
