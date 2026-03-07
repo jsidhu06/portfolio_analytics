@@ -597,7 +597,7 @@ class OptionValuation:
             )
         return pv_pathwise()
 
-    _MD_FIELDS = frozenset({"market_data", "pricing_date", "discount_curve", "currency"})
+    _MD_FIELDS = frozenset({"pricing_date", "discount_curve", "currency"})
 
     def _bump_underlying(
         self,
@@ -605,22 +605,27 @@ class OptionValuation:
     ) -> PathSimulation | UnderlyingData:
         """Return a new underlying with selected fields replaced.
 
-        For ``UnderlyingData`` (frozen dataclass), delegates to ``dc_replace``.
-        For ``PathSimulation``, separates MarketData-level overrides from
-        process-param overrides and constructs a fresh instance.
+        Callers pass attribute-level kwargs (``pricing_date=``,
+        ``discount_curve=``, ``initial_value=``, ``volatility=``, etc.).
+        Keys in ``_MD_FIELDS`` are routed into a bumped ``MarketData``;
+        remaining keys are applied as direct-field overrides
+        (``dc_replace`` for ``UnderlyingData``, ``process_params`` bump
+        for ``PathSimulation``).
         """
         u = self._underlying
-        if isinstance(u, UnderlyingData):
-            return dc_replace(u, **overrides)
 
-        # PathSimulation — anything not a MarketData field is a process-param bump.
+        # Split into MarketData-level vs direct-field overrides.
         md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
-        pp_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
+        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
 
-        bumped_pp = dc_replace(u._process_params, **pp_kw) if pp_kw else u._process_params
-        bumped_md = md_kw.pop("market_data", None)
-        if bumped_md is None:
-            bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
+        if isinstance(u, UnderlyingData):
+            if md_kw:
+                rest_kw["market_data"] = dc_replace(u.market_data, **md_kw)
+            return dc_replace(u, **rest_kw)
+
+        # PathSimulation — rest_kw are process-param bumps.
+        bumped_pp = dc_replace(u._process_params, **rest_kw) if rest_kw else u._process_params
+        bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
 
         return type(u)(  # type: ignore[arg-type]
             market_data=bumped_md,
@@ -813,8 +818,7 @@ class OptionValuation:
 
         value_now = self.present_value()
 
-        bumped_md = dc_replace(self._underlying.market_data, pricing_date=bumped_date)
-        underlying_bumped = self._bump_underlying(market_data=bumped_md)
+        underlying_bumped = self._bump_underlying(pricing_date=bumped_date)
 
         value_bumped = self._build_valuation(underlying=underlying_bumped).present_value()
 
@@ -858,11 +862,8 @@ class OptionValuation:
         curve_up = DiscountCurve.flat(rate_up, end_time=ttm)
         curve_down = DiscountCurve.flat(rate_down, end_time=ttm)
 
-        md_up = MarketData(self.pricing_date, curve_up, currency=self.currency)
-        md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
-
-        up = self._bump_underlying(market_data=md_up)
-        dn = self._bump_underlying(market_data=md_down)
+        up = self._bump_underlying(discount_curve=curve_up)
+        dn = self._bump_underlying(discount_curve=curve_down)
 
         return (
             (
