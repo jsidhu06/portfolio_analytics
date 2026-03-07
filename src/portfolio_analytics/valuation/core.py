@@ -13,7 +13,8 @@ Design notes
     `UnderlyingData`.
 - Monte Carlo methods operate on `PathSimulation` instances.
 - Greeks default to engine-native methods when available, otherwise
-    fall back to bump-and-revalue via immutable `replace(...)` calls.
+    fall back to bump-and-revalue via `_bump_underlying(...)` which
+    constructs a fresh underlying with the bumped parameter.
 """
 
 from __future__ import annotations
@@ -517,31 +518,30 @@ class OptionValuation:
         if self.maturity <= self.pricing_date:
             raise ValidationError("Option maturity must be after pricing_date.")
 
-        # Merge pricing_date + maturity into the simulation's
-        # observation_dates via replace() so the caller's PathSimulation
-        # is never mutated.
+        # Inject Asian fixing dates / grid_start into the simulation.
+        # We construct a new PathSimulation (via dc_replace on sim_config)
+        # so the caller's instance is never mutated.  pricing_date and
+        # maturity are already handled by _build_time_grid.
         if isinstance(underlying, PathSimulation):
-            key_dates = {self.pricing_date, self.maturity}
-            # When explicit fixing dates are given, inject them so the
-            # time grid contains exact nodes at each observation date.
-            if isinstance(spec, AsianSpec) and spec.fixing_dates is not None:
-                key_dates |= set(spec.fixing_dates)
-            merged = underlying.observation_dates | key_dates
-            replace_kw: dict = {}
-            if merged != underlying.observation_dates:
-                replace_kw["observation_dates"] = merged
-            # For forward-starting Asians, shift the dense grid region
-            # so num_steps points cover [averaging_start, maturity].
-            # averaging_start itself will land on the grid because
-            # _build_time_grid includes grid_start in all_dates.
-            if (
-                isinstance(spec, AsianSpec)
-                and spec.averaging_start is not None
-                and underlying.grid_start != spec.averaging_start
-            ):
-                replace_kw["grid_start"] = spec.averaging_start
-            if replace_kw:
-                underlying = underlying.replace(**replace_kw)
+            if isinstance(spec, AsianSpec):
+                sc_overrides: dict = {}  # SimulationConfig kwargs to override
+                if spec.fixing_dates is not None:
+                    extra = set(spec.fixing_dates) - underlying.observation_dates
+                    if extra:
+                        sc_overrides["observation_dates"] = underlying.observation_dates | extra
+                if (
+                    spec.averaging_start is not None
+                    and underlying.grid_start != spec.averaging_start
+                ):
+                    sc_overrides["grid_start"] = spec.averaging_start
+                if sc_overrides:
+                    underlying = type(underlying)(
+                        market_data=underlying.market_data,
+                        process_params=underlying._process_params,
+                        sim_config=dc_replace(underlying._sim_config, **sc_overrides),
+                        corr=underlying.correlation_context,
+                        name=underlying.name,
+                    )
             self._underlying = underlying
 
         # Validate that MC requires PathSimulation
@@ -597,6 +597,39 @@ class OptionValuation:
             )
         return pv_pathwise()
 
+    _MD_FIELDS = frozenset({"market_data", "pricing_date", "discount_curve", "currency"})
+
+    def _bump_underlying(
+        self,
+        **overrides: object,
+    ) -> PathSimulation | UnderlyingData:
+        """Return a new underlying with selected fields replaced.
+
+        For ``UnderlyingData`` (frozen dataclass), delegates to ``dc_replace``.
+        For ``PathSimulation``, separates MarketData-level overrides from
+        process-param overrides and constructs a fresh instance.
+        """
+        u = self._underlying
+        if isinstance(u, UnderlyingData):
+            return dc_replace(u, **overrides)
+
+        # PathSimulation — anything not a MarketData field is a process-param bump.
+        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
+        pp_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
+
+        bumped_pp = dc_replace(u._process_params, **pp_kw) if pp_kw else u._process_params
+        bumped_md = md_kw.pop("market_data", None)
+        if bumped_md is None:
+            bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
+
+        return type(u)(  # type: ignore[arg-type]
+            market_data=bumped_md,
+            process_params=bumped_pp,
+            sim_config=u._sim_config,
+            corr=u.correlation_context,
+            name=u.name,
+        )
+
     def delta(
         self,
         epsilon: float | None = None,
@@ -637,17 +670,14 @@ class OptionValuation:
         if epsilon is None:
             epsilon = self._underlying.initial_value / 100
 
-        underlying_down = self._underlying.replace(
-            initial_value=self._underlying.initial_value - epsilon
-        )
-        underlying_up = self._underlying.replace(
-            initial_value=self._underlying.initial_value + epsilon
-        )
+        s0 = self._underlying.initial_value
+        up = self._bump_underlying(initial_value=s0 + epsilon)
+        dn = self._bump_underlying(initial_value=s0 - epsilon)
 
-        val_down = self._build_valuation(underlying=underlying_down)
-        val_up = self._build_valuation(underlying=underlying_up)
-
-        return (val_up.present_value() - val_down.present_value()) / (2 * epsilon)
+        return (
+            self._build_valuation(underlying=up).present_value()
+            - self._build_valuation(underlying=dn).present_value()
+        ) / (2 * epsilon)
 
     def gamma(
         self,
@@ -691,18 +721,12 @@ class OptionValuation:
         if epsilon is None:
             epsilon = self._underlying.initial_value / 100
 
-        underlying_down = self._underlying.replace(
-            initial_value=self._underlying.initial_value - epsilon
-        )
-        underlying_up = self._underlying.replace(
-            initial_value=self._underlying.initial_value + epsilon
-        )
+        s0 = self._underlying.initial_value
+        up = self._bump_underlying(initial_value=s0 + epsilon)
+        dn = self._bump_underlying(initial_value=s0 - epsilon)
 
-        val_down = self._build_valuation(underlying=underlying_down)
-        val_up = self._build_valuation(underlying=underlying_up)
-
-        value_left = val_down.present_value()
-        value_right = val_up.present_value()
+        value_right = self._build_valuation(underlying=up).present_value()
+        value_left = self._build_valuation(underlying=dn).present_value()
         value_center = self.present_value()
 
         return (value_right - 2 * value_center + value_left) / (epsilon**2)
@@ -736,13 +760,18 @@ class OptionValuation:
         if method == GreekCalculationMethod.ANALYTICAL:
             return float(self._impl.vega())
 
-        underlying_down = self._underlying.replace(volatility=self._underlying.volatility - epsilon)
-        underlying_up = self._underlying.replace(volatility=self._underlying.volatility + epsilon)
+        vol = self._underlying.volatility
+        up = self._bump_underlying(volatility=vol + epsilon)
+        dn = self._bump_underlying(volatility=vol - epsilon)
 
-        val_down = self._build_valuation(underlying=underlying_down)
-        val_up = self._build_valuation(underlying=underlying_up)
-
-        vega = (val_up.present_value() - val_down.present_value()) / (2 * epsilon) / 100
+        vega = (
+            (
+                self._build_valuation(underlying=up).present_value()
+                - self._build_valuation(underlying=dn).present_value()
+            )
+            / (2 * epsilon)
+            / 100
+        )
         return vega
 
     def theta(
@@ -784,14 +813,10 @@ class OptionValuation:
 
         value_now = self.present_value()
 
-        underlying_bumped = self._underlying.replace(pricing_date=bumped_date)
+        bumped_md = dc_replace(self._underlying.market_data, pricing_date=bumped_date)
+        underlying_bumped = self._bump_underlying(market_data=bumped_md)
 
-        value_bumped = OptionValuation(
-            underlying=underlying_bumped,
-            spec=self._spec,
-            pricing_method=self._pricing_method,
-            params=self._params,
-        ).present_value()
+        value_bumped = self._build_valuation(underlying=underlying_bumped).present_value()
 
         return (value_bumped - value_now) / time_bump_days
 
@@ -836,13 +861,17 @@ class OptionValuation:
         md_up = MarketData(self.pricing_date, curve_up, currency=self.currency)
         md_down = MarketData(self.pricing_date, curve_down, currency=self.currency)
 
-        underlying_up = self._underlying.replace(market_data=md_up)
-        underlying_down = self._underlying.replace(market_data=md_down)
+        up = self._bump_underlying(market_data=md_up)
+        dn = self._bump_underlying(market_data=md_down)
 
-        val_up = self._build_valuation(underlying=underlying_up)
-        val_down = self._build_valuation(underlying=underlying_down)
-
-        return (val_up.present_value() - val_down.present_value()) / rate_bump * 0.01
+        return (
+            (
+                self._build_valuation(underlying=up).present_value()
+                - self._build_valuation(underlying=dn).present_value()
+            )
+            / rate_bump
+            * 0.01
+        )
 
     # ──────────────────────────────
     # Read-only properties (public)

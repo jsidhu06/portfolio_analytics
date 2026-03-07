@@ -475,7 +475,7 @@ class TestMCGreekMethodAgreement:
 
     # --- parameterised tests ---
 
-    @pytest.mark.parametrize("greek", _GREEKS[-1:])
+    @pytest.mark.parametrize("greek", _GREEKS)
     @pytest.mark.parametrize("option_type,strike,vol,rate_spec,div_spec", _SCENARIOS)
     def test_three_methods_agree(
         self,
