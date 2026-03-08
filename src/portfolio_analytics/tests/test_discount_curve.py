@@ -18,17 +18,17 @@ class TestDiscountCurveConstruction:
     def test_flat_curve_basic(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
         assert curve.flat_rate == 0.05
-        assert float(curve.df(0.0)) == pytest.approx(1.0)
-        assert float(curve.df(1.0)) == pytest.approx(np.exp(-0.05))
+        assert np.isclose(float(curve.df(0.0)), 1.0)
+        assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
 
     def test_flat_curve_multiple_steps(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=10)
         assert curve.times.size == 11
-        assert float(curve.df(1.0)) == pytest.approx(np.exp(-0.05))
+        assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
 
     def test_flat_curve_zero_rate(self):
         curve = DiscountCurve.flat(rate=0.0, end_time=1.0)
-        assert float(curve.df(0.5)) == pytest.approx(1.0)
+        assert np.isclose(float(curve.df(0.5)), 1.0)
 
     def test_flat_curve_negative_end_time_raises(self):
         with pytest.raises(ValidationError, match="end_time must be positive"):
@@ -98,30 +98,30 @@ class TestDiscountCurveDf:
         return DiscountCurve(times=times, dfs=dfs)
 
     def test_exact_node(self, curve: DiscountCurve):
-        assert float(curve.df(0.5)) == pytest.approx(0.975)
+        assert np.isclose(float(curve.df(0.5)), 0.975)
 
     def test_interpolated_value(self, curve: DiscountCurve):
         """Mid-point interpolation in log-space."""
         df_interp = float(curve.df(0.25))
         # Log-linear: log(df) at 0.25 should be midpoint of log(1.0) and log(0.975)
         expected = np.exp(0.5 * (np.log(1.0) + np.log(0.975)))
-        assert df_interp == pytest.approx(expected, rel=1e-10)
+        assert np.isclose(df_interp, expected, rtol=1e-10)
 
     def test_vectorized_input(self, curve: DiscountCurve):
         """df() should accept arrays and return arrays."""
         t = np.array([0.0, 0.5, 1.0])
         result = curve.df(t)
         assert result.shape == (3,)
-        assert float(result[0]) == pytest.approx(1.0)
-        assert float(result[1]) == pytest.approx(0.975)
-        assert float(result[2]) == pytest.approx(0.95)
+        assert np.isclose(float(result[0]), 1.0)
+        assert np.isclose(float(result[1]), 0.975)
+        assert np.isclose(float(result[2]), 0.95)
 
     def test_extrapolation_flat(self, curve: DiscountCurve):
         """Extrapolation beyond the curve should use flat log-df."""
         df_beyond = float(curve.df(3.0))
         df_end = float(curve.df(2.0))
         # np.interp uses right=log_df[-1] for extrapolation, so df stays at the last value
-        assert df_beyond == pytest.approx(df_end)
+        assert np.isclose(df_beyond, df_end)
 
     def test_scalar_input(self, curve: DiscountCurve):
         """df() called with a scalar should return a scalar-shaped array."""
@@ -134,15 +134,15 @@ class TestDiscountCurveDf:
         left = float(curve.df(0.5 - eps))
         node = float(curve.df(0.5))
         right = float(curve.df(0.5 + eps))
-        assert left == pytest.approx(node, rel=1e-5)
-        assert right == pytest.approx(node, rel=1e-5)
+        assert np.isclose(left, node, rtol=1e-5)
+        assert np.isclose(right, node, rtol=1e-5)
 
     @pytest.mark.parametrize("t_far", [10.0, 20.0, 100.0])
     def test_far_extrapolation_is_flat(self, curve: DiscountCurve, t_far: float):
         """Extrapolation should stay flat at the terminal discount factor."""
         df_far = float(curve.df(t_far))
         df_end = float(curve.df(2.0))
-        assert df_far == pytest.approx(df_end)
+        assert np.isclose(df_far, df_end)
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ class TestDiscountCurveForwardRate:
     def test_flat_curve_forward_rate_equals_flat_rate(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=4)
         fwd = curve.forward_rate(0.25, 0.75)
-        assert fwd == pytest.approx(0.05, rel=1e-10)
+        assert np.isclose(fwd, 0.05, rtol=1e-10)
 
     def test_forward_rate_t1_le_t0_raises(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
@@ -175,7 +175,7 @@ class TestDiscountCurveForwardRate:
         df_t1 = float(curve.df(t1))
         # Verify: df(t1) = df(t0) * exp(-f * (t1-t0))
         reconstructed = df_t0 * np.exp(-fwd * (t1 - t0))
-        assert reconstructed == pytest.approx(df_t1, rel=1e-10)
+        assert np.isclose(reconstructed, df_t1, rtol=1e-10)
 
     def test_step_forward_rates_flat(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=2.0, steps=4)
