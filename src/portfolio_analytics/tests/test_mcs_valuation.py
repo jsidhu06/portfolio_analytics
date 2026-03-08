@@ -15,7 +15,7 @@ from portfolio_analytics.tests.conftest import (
     SPOT,
     VOL,
 )
-from portfolio_analytics.tests.helpers import market_data, pv, spec
+from portfolio_analytics.tests.helpers import flat_market_data, pv, spec
 from portfolio_analytics.valuation import (
     MonteCarloParams,
     OptionValuation,
@@ -32,7 +32,7 @@ _BSM_ATM_PUT = 5.5735
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-_MD = market_data()
+_MD = flat_market_data()
 
 
 def _gbm(

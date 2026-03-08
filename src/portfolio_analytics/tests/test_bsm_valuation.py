@@ -12,7 +12,7 @@ from portfolio_analytics.tests.conftest import (
     SPOT,
     STRIKE,
 )
-from portfolio_analytics.tests.helpers import flat_curve, pv, underlying, spec
+from portfolio_analytics.tests.helpers import flat_curve, flat_underlying as underlying, pv, spec
 from portfolio_analytics.valuation import (
     VanillaSpec,
     OptionValuation,
@@ -62,14 +62,14 @@ class TestBSMValuation:
 
     def test_bsm_call_itm(self):
         """BSM ITM call: exceeds discounted intrinsic and matches reference."""
-        result = _bsm(underlying(spot=110.0), spec())
+        result = _bsm(underlying(initial_value=110.0), spec())
         intrinsic = (110.0 - STRIKE) * np.exp(-RATE * 1.0)
         assert result > intrinsic
         assert np.isclose(result, _BSM_ITM_CALL_110, rtol=1e-4)
 
     def test_bsm_put_otm(self):
         """BSM OTM put: positive time value, matches reference."""
-        result = _bsm(underlying(spot=110.0), spec(OptionType.PUT))
+        result = _bsm(underlying(initial_value=110.0), spec(OptionType.PUT))
         assert np.isclose(result, _BSM_OTM_PUT_110, rtol=1e-4)
 
     def test_bsm_with_dividend_curve(self):

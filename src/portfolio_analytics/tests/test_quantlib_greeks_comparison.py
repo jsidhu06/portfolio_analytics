@@ -24,7 +24,12 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    flat_market_data,
+    make_vanilla_spec,
+    underlying,
+)
 from portfolio_analytics.valuation import (
     VanillaSpec,
     OptionValuation,
@@ -64,9 +69,10 @@ MC_CFG = MonteCarloParams(random_seed=42)
 
 
 def _market_data() -> MarketData:
-    return MarketData(
-        PRICING_DATE,
-        flat_curve(PRICING_DATE, MATURITY, RISK_FREE),
+    return flat_market_data(
+        pricing_date=PRICING_DATE,
+        maturity=MATURITY,
+        rate=RISK_FREE,
         currency=CURRENCY,
     )
 
@@ -77,11 +83,11 @@ def _spec(
     option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
 ) -> VanillaSpec:
-    return VanillaSpec(
-        option_type=option_type,
-        exercise_type=exercise_type,
+    return make_vanilla_spec(
         strike=strike,
         maturity=MATURITY,
+        option_type=option_type,
+        exercise_type=exercise_type,
         currency=CURRENCY,
     )
 
@@ -91,7 +97,7 @@ def _underlying(
     spot: float,
     dividend_curve: DiscountCurve | None = None,
 ) -> UnderlyingData:
-    return UnderlyingData(
+    return underlying(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(),

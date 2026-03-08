@@ -16,11 +16,17 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.exceptions import (
+    ArbitrageViolationError,
     NumericalError,
     ValidationError,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.tests.helpers import flat_curve, pv as _pv
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    flat_market_data,
+    underlying,
+    make_vanilla_spec,
+    pv as _pv,
+)
 from portfolio_analytics.valuation import (
     BinomialParams,
     VanillaSpec,
@@ -40,14 +46,17 @@ def _underlying(
     q: float = 0.0,
     maturity: dt.datetime = MATURITY,
 ) -> UnderlyingData:
-    r_curve = flat_curve(PRICING_DATE, maturity, rate)
-    q_curve = flat_curve(PRICING_DATE, maturity, q) if q != 0.0 else None
-    md = MarketData(pricing_date=PRICING_DATE, discount_curve=r_curve, currency="USD")
-    return UnderlyingData(
+    dividend_curve = flat_curve(PRICING_DATE, maturity, q) if q != 0.0 else None
+    return underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=md,
-        dividend_curve=q_curve,
+        market_data=flat_market_data(
+            pricing_date=PRICING_DATE,
+            maturity=maturity,
+            rate=rate,
+            currency="USD",
+        ),
+        dividend_curve=dividend_curve,
     )
 
 
@@ -57,11 +66,11 @@ def _spec(
     exercise: ExerciseType = ExerciseType.EUROPEAN,
     maturity: dt.datetime = MATURITY,
 ) -> VanillaSpec:
-    return VanillaSpec(
-        option_type=option_type,
-        exercise_type=exercise,
+    return make_vanilla_spec(
         strike=strike,
         maturity=maturity,
+        option_type=option_type,
+        exercise_type=exercise,
         currency="USD",
     )
 
@@ -101,7 +110,7 @@ class TestZeroVolatility:
             else:
                 expected = strike * df_r - spot
             assert pv > 0
-            assert np.isclose(pv, expected, rtol=0.01), f"pv={pv}, expected≈{expected}"
+            assert np.isclose(pv, expected, rtol=0.01)
         else:
             assert np.isclose(pv, 0.0, atol=1e-10)
 
@@ -520,6 +529,50 @@ class TestAmericanEdgeCases:
         pv = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
         intrinsic = strike - spot
         assert pv >= intrinsic - 0.01
+
+    @pytest.mark.parametrize("spot,strike", [(40.0, 200.0), (25.0, 180.0), (10.0, 150.0)])
+    def test_deep_itm_american_put_exceeds_intrinsic(self, spot, strike):
+        """Deep ITM American put should be at least intrinsic value."""
+        ud = _underlying(spot=spot, vol=0.2)
+        spec = _spec(strike=strike, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
+        pv = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        intrinsic = strike - spot
+        assert pv >= intrinsic - 1e-8
+
+    @pytest.mark.parametrize("spot,strike", [(120.0, 80.0), (150.0, 90.0), (200.0, 100.0)])
+    def test_deep_itm_american_call_with_dividend_exceeds_european(self, spot, strike):
+        """With a positive dividend yield, American call should dominate European."""
+        ud = _underlying(spot=spot, vol=0.2, q=0.05)
+        spec_eu = _spec(strike=strike, option_type=OptionType.CALL, exercise=ExerciseType.EUROPEAN)
+        spec_am = _spec(strike=strike, option_type=OptionType.CALL, exercise=ExerciseType.AMERICAN)
+        eu_pv = _pv(ud, spec_eu, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        am_pv = _pv(ud, spec_am, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        assert am_pv >= eu_pv - 1e-8
+
+    @pytest.mark.parametrize("vol", [1.0e-4, 5.0e-4, 1.0e-3])
+    def test_american_put_near_zero_vol_rejects_arbitrage_violation(self, vol):
+        """Near-zero vol can violate CRR no-arbitrage bounds for fixed dt; raise cleanly."""
+        spot, strike = 50.0, 200.0
+        ud = _underlying(spot=spot, vol=vol)
+        spec = _spec(strike=strike, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
+        with pytest.raises(ArbitrageViolationError, match="No-arbitrage condition"):
+            _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+
+    @pytest.mark.parametrize("days", [1, 2, 3])
+    def test_american_put_near_expiry_converges_to_intrinsic(self, days):
+        """Near maturity, American put should be very close to intrinsic."""
+        maturity = PRICING_DATE + dt.timedelta(days=days)
+        spot, strike = 80.0, 100.0
+        ud = _underlying(spot=spot, vol=0.2, maturity=maturity)
+        spec = _spec(
+            strike=strike,
+            option_type=OptionType.PUT,
+            exercise=ExerciseType.AMERICAN,
+            maturity=maturity,
+        )
+        pv = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=100))
+        intrinsic = strike - spot
+        assert np.isclose(pv, intrinsic, atol=0.5)
 
     def test_american_deep_itm_put_pde(self):
         """PDE American deep ITM put should also be >= intrinsic."""

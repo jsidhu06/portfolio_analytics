@@ -128,6 +128,22 @@ class TestDiscountCurveDf:
         result = curve.df(0.5)
         assert result.ndim == 0  # 0-d array
 
+    @pytest.mark.parametrize("eps", [1.0e-12, 1.0e-10, 1.0e-8, 1.0e-6])
+    def test_node_continuity_around_exact_node(self, curve: DiscountCurve, eps: float):
+        """Values immediately around a node should be close to node df."""
+        left = float(curve.df(0.5 - eps))
+        node = float(curve.df(0.5))
+        right = float(curve.df(0.5 + eps))
+        assert left == pytest.approx(node, rel=1e-5)
+        assert right == pytest.approx(node, rel=1e-5)
+
+    @pytest.mark.parametrize("t_far", [10.0, 20.0, 100.0])
+    def test_far_extrapolation_is_flat(self, curve: DiscountCurve, t_far: float):
+        """Extrapolation should stay flat at the terminal discount factor."""
+        df_far = float(curve.df(t_far))
+        df_end = float(curve.df(2.0))
+        assert df_far == pytest.approx(df_end)
+
 
 # ---------------------------------------------------------------------------
 # Forward rates

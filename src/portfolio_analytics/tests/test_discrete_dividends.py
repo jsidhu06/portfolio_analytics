@@ -13,8 +13,8 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.tests.helpers import (
-    market_data,
-    underlying,
+    flat_market_data,
+    flat_underlying,
     spec,
     PRICING_DATE,
 )
@@ -35,9 +35,15 @@ _DIVS = [
 
 
 def _build_case():
-    md = market_data(rate=_RATE, maturity=_MATURITY)
+    md = flat_market_data(rate=_RATE, maturity=_MATURITY)
     sp = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=_STRIKE, maturity=_MATURITY)
-    ud = underlying(spot=_SPOT, vol=_VOL, rate=_RATE, discrete_dividends=_DIVS, maturity=_MATURITY)
+    ud = flat_underlying(
+        initial_value=_SPOT,
+        volatility=_VOL,
+        rate=_RATE,
+        discrete_dividends=_DIVS,
+        maturity=_MATURITY,
+    )
 
     sim_config = SimulationConfig(paths=200_000, frequency="W", end_date=_MATURITY)
     gbm_params = GBMParams(initial_value=_SPOT, volatility=_VOL, discrete_dividends=_DIVS)

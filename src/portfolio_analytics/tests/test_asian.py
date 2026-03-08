@@ -26,13 +26,17 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.exceptions import ValidationError
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    flat_market_data,
+    underlying,
+)
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
+from portfolio_analytics.utils import pv_discrete_dividends
 from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from portfolio_analytics.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
@@ -55,15 +59,18 @@ ASIAN_TREE_AVERAGES = 100
 
 
 def _market_data(short_rate: float, maturity: dt.datetime) -> MarketData:
-    curve = flat_curve(PRICING_DATE, maturity, short_rate)
-    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+    return flat_market_data(
+        pricing_date=PRICING_DATE,
+        maturity=maturity,
+        rate=short_rate,
+        currency=CURRENCY,
+    )
 
 
 def _flat_dividend_curve(dividend_yield: float, maturity: dt.datetime) -> DiscountCurve | None:
     if dividend_yield == 0.0:
         return None
-    ttm = calculate_year_fraction(PRICING_DATE, maturity)
-    return DiscountCurve.flat(dividend_yield, end_time=ttm)
+    return flat_curve(PRICING_DATE, maturity, dividend_yield)
 
 
 def _underlying(
@@ -75,7 +82,7 @@ def _underlying(
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingData:
-    return UnderlyingData(
+    return underlying(
         initial_value=spot,
         volatility=vol,
         market_data=_market_data(short_rate, maturity),

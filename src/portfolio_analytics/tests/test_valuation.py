@@ -157,7 +157,8 @@ class TestCondorSpec:
 class TestUnderlyingData:
     """Tests for UnderlyingData class."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
@@ -189,7 +190,8 @@ class TestUnderlyingData:
 class TestOptionValuation:
     """Tests for OptionValuation dispatcher class."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment and valuation specifications for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)

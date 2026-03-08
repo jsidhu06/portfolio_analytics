@@ -14,7 +14,7 @@ from portfolio_analytics.tests.conftest import (
     STRIKE,
     VOL,
 )
-from portfolio_analytics.tests.helpers import pv, underlying, spec
+from portfolio_analytics.tests.helpers import flat_underlying as underlying, pv, spec
 from portfolio_analytics.utils import calculate_year_fraction, expected_binomial_payoff
 from portfolio_analytics.valuation import (
     BinomialParams,
