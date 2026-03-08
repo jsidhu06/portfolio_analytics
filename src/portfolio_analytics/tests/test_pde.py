@@ -6,8 +6,6 @@ consistent prices.  These are internal engine tests — cross-method and
 QuantLib comparisons live in test_quantlib_comparison.py.
 """
 
-import datetime as dt
-
 import numpy as np
 import pytest
 
@@ -20,63 +18,25 @@ from portfolio_analytics.enums import (
     PDESpaceGrid,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    underlying,
+    spec,
+    PRICING_DATE,
+    MATURITY,
+)
+from portfolio_analytics.valuation import OptionValuation
 from portfolio_analytics.valuation.params import PDEParams
-
-
-PRICING_DATE = dt.datetime(2025, 1, 1)
-MATURITY = PRICING_DATE + dt.timedelta(days=365)
-RISK_FREE = 0.05
-VOL = 0.2
-CURRENCY = "USD"
-
-
-def _market_data() -> MarketData:
-    curve = flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
-    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
-
-
-def _underlying(
-    *,
-    spot: float,
-    dividend_curve: DiscountCurve | None = None,
-) -> UnderlyingData:
-    return UnderlyingData(
-        initial_value=spot,
-        volatility=VOL,
-        market_data=_market_data(),
-        dividend_curve=dividend_curve,
-    )
-
-
-def _spec(
-    *,
-    strike: float,
-    option_type: OptionType,
-    exercise_type: ExerciseType,
-) -> VanillaSpec:
-    return VanillaSpec(
-        option_type=option_type,
-        exercise_type=exercise_type,
-        strike=strike,
-        maturity=MATURITY,
-        currency=CURRENCY,
-    )
 
 
 def test_pde_fd_grid_method_equivalence_european():
     """PDE FD variants should be in the same neighborhood for European options."""
-    spot = 100.0
-    strike = 100.0
     q_curve = flat_curve(PRICING_DATE, MATURITY, 0.01)
-    ud = _underlying(spot=spot, dividend_curve=q_curve)
-    spec = _spec(strike=strike, option_type=OptionType.CALL, exercise_type=ExerciseType.EUROPEAN)
+    ud = underlying(spot=100.0, dividend_curve=q_curve)
+    sp = spec(strike=100.0, option_type=OptionType.CALL, exercise=ExerciseType.EUROPEAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
-    baseline = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=base_params).present_value()
+    baseline = OptionValuation(ud, sp, PricingMethod.PDE_FD, params=base_params).present_value()
 
     for method in (
         PDEMethod.IMPLICIT,
@@ -100,23 +60,21 @@ def test_pde_fd_grid_method_equivalence_european():
                 with pytest.raises(
                     StabilityError, match="Explicit spot-grid scheme likely unstable"
                 ):
-                    OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
+                    OptionValuation(ud, sp, PricingMethod.PDE_FD, params=params).present_value()
                 continue
 
-            pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
+            pv = OptionValuation(ud, sp, PricingMethod.PDE_FD, params=params).present_value()
             assert np.isclose(pv, baseline, rtol=0.005)
 
 
 def test_pde_fd_grid_method_equivalence_american():
     """PDE FD American variants should be in the same neighborhood."""
-    spot = 95.0
-    strike = 100.0
     q_curve = flat_curve(PRICING_DATE, MATURITY, 0.0)
-    ud = _underlying(spot=spot, dividend_curve=q_curve)
-    spec = _spec(strike=strike, option_type=OptionType.PUT, exercise_type=ExerciseType.AMERICAN)
+    ud = underlying(spot=95.0, dividend_curve=q_curve)
+    sp = spec(strike=100.0, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
-    baseline = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=base_params).present_value()
+    baseline = OptionValuation(ud, sp, PricingMethod.PDE_FD, params=base_params).present_value()
 
     for method in (
         PDEMethod.IMPLICIT,
@@ -142,9 +100,7 @@ def test_pde_fd_grid_method_equivalence_american():
                     with pytest.raises(
                         UnsupportedFeatureError, match="GAUSS_SEIDEL is not supported"
                     ):
-                        OptionValuation(
-                            ud, spec, PricingMethod.PDE_FD, params=params
-                        ).present_value()
+                        OptionValuation(ud, sp, PricingMethod.PDE_FD, params=params).present_value()
                     continue
 
                 if (
@@ -154,10 +110,8 @@ def test_pde_fd_grid_method_equivalence_american():
                     with pytest.raises(
                         StabilityError, match="Explicit spot-grid scheme likely unstable"
                     ):
-                        OptionValuation(
-                            ud, spec, PricingMethod.PDE_FD, params=params
-                        ).present_value()
+                        OptionValuation(ud, sp, PricingMethod.PDE_FD, params=params).present_value()
                     continue
 
-                pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=params).present_value()
+                pv = OptionValuation(ud, sp, PricingMethod.PDE_FD, params=params).present_value()
                 assert np.isclose(pv, baseline, rtol=0.005)

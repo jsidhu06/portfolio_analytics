@@ -23,6 +23,11 @@ from portfolio_analytics.valuation import (
 )
 
 # ---------------------------------------------------------------------------
+# BSM reference (S=100, K=100, r=0.05, σ=0.20, T=1)
+# ---------------------------------------------------------------------------
+_BSM_ATM_CALL = 10.4506
+
+# ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
@@ -35,10 +40,9 @@ class TestBinomialValuation:
     """Tests for Binomial tree option valuation."""
 
     def test_binomial_european_call_atm(self):
-        """Test binomial European call option."""
+        """Binomial European ATM call converges to BSM (500 steps)."""
         result = _binom(underlying(), spec())
-        assert result > 0
-        assert np.isclose(result, 10.45, rtol=0.01)
+        assert np.isclose(result, _BSM_ATM_CALL, rtol=0.005)
 
     def test_binomial_american_call_no_div_equal_to_european(self):
         """Test that American call >= European call (same parameters)."""
@@ -67,11 +71,16 @@ class TestBinomialValuation:
         assert am_price > eu_price
 
     def test_binomial_convergence(self):
-        """Test that binomial prices converge with more steps."""
+        """More steps brings binomial price closer to BSM reference."""
         sp = spec()
-        price_100 = _binom(underlying(), sp, params=BinomialParams(num_steps=100))
-        price_200 = _binom(underlying(), sp, params=BinomialParams(num_steps=200))
-        assert abs(price_200 - price_100) < 1.0
+        ud = underlying()
+        price_100 = _binom(ud, sp, params=BinomialParams(num_steps=100))
+        price_200 = _binom(ud, sp, params=BinomialParams(num_steps=200))
+        # 200-step closer to BSM than 100-step
+        assert abs(price_200 - _BSM_ATM_CALL) < abs(price_100 - _BSM_ATM_CALL)
+        # both within 1% of BSM
+        assert np.isclose(price_100, _BSM_ATM_CALL, rtol=0.01)
+        assert np.isclose(price_200, _BSM_ATM_CALL, rtol=0.005)
 
     def test_binomial_pv_matches_expected_binomial_payoff(self):
         n_steps = 250

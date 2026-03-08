@@ -24,6 +24,15 @@ from portfolio_analytics.valuation import (
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# BSM reference values (S=100, K=100, r=0.05, σ=0.20, T=1, no divs)
+# ---------------------------------------------------------------------------
+_BSM_ATM_CALL = 10.4506
+_BSM_ATM_PUT = 5.5735
+_BSM_ITM_CALL_110 = 17.6630  # S=110
+_BSM_OTM_PUT_110 = 2.7859  # S=110
+
+
 def _bsm(ud: UnderlyingData, sp: VanillaSpec) -> float:
     return pv(ud, sp, PricingMethod.BSM)
 
@@ -32,10 +41,9 @@ class TestBSMValuation:
     """Tests for Black-Scholes-Merton valuation implementation."""
 
     def test_bsm_call_option_atm(self):
-        """Test BSM pricing for ATM call option (basic sanity check)."""
+        """BSM ATM call price matches closed-form Black-Scholes."""
         result = _bsm(underlying(), spec())
-        assert result > 0
-        assert np.isclose(result, 10.45, rtol=0.01)
+        assert np.isclose(result, _BSM_ATM_CALL, rtol=1e-4)
 
     def test_bsm_discrete_dividends_reduce_call_price(self):
         """Discrete dividends should reduce European call price (all else equal)."""
@@ -48,22 +56,21 @@ class TestBSMValuation:
         assert pv_div < pv_no_div
 
     def test_bsm_put_option_atm(self):
-        """Test BSM pricing for ATM put option."""
+        """BSM ATM put price matches closed-form Black-Scholes."""
         result = _bsm(underlying(), spec(OptionType.PUT))
-        assert result > 0
-        assert np.isclose(result, 5.57, rtol=0.01)
+        assert np.isclose(result, _BSM_ATM_PUT, rtol=1e-4)
 
     def test_bsm_call_itm(self):
-        """Test BSM call option in-the-money."""
+        """BSM ITM call: exceeds discounted intrinsic and matches reference."""
         result = _bsm(underlying(spot=110.0), spec())
         intrinsic = (110.0 - STRIKE) * np.exp(-RATE * 1.0)
-        assert result >= intrinsic * 0.95
+        assert result > intrinsic
+        assert np.isclose(result, _BSM_ITM_CALL_110, rtol=1e-4)
 
     def test_bsm_put_otm(self):
-        """Test BSM put option out-of-the-money."""
+        """BSM OTM put: positive time value, matches reference."""
         result = _bsm(underlying(spot=110.0), spec(OptionType.PUT))
-        assert result > 0
-        assert result < 5.0
+        assert np.isclose(result, _BSM_OTM_PUT_110, rtol=1e-4)
 
     def test_bsm_with_dividend_curve(self):
         """Test BSM pricing with dividend curve."""

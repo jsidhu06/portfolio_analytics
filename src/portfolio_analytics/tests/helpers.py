@@ -34,25 +34,36 @@ def flat_curve(
 
 
 _CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
+_MD = MarketData(PRICING_DATE, _CURVE, currency=CURRENCY)
 
 
-def market_data() -> MarketData:
-    return MarketData(PRICING_DATE, _CURVE, currency=CURRENCY)
-
-
-_MD = market_data()
+def market_data(
+    rate: float = RATE,
+    maturity: dt.datetime = MATURITY,
+    currency: str = CURRENCY,
+) -> MarketData:
+    if rate == RATE and maturity == MATURITY and currency == CURRENCY:
+        return _MD
+    curve = flat_curve(PRICING_DATE, maturity, rate)
+    return MarketData(PRICING_DATE, curve, currency=currency)
 
 
 def underlying(
     spot: float = SPOT,
     vol: float = VOL,
-    dividend_curve=None,
+    rate: float = RATE,
+    dividend_rate: float = 0.0,
+    dividend_curve: DiscountCurve | None = None,
     discrete_dividends=None,
+    maturity: dt.datetime = MATURITY,
 ) -> UnderlyingData:
+    md = market_data(rate=rate, maturity=maturity)
+    if dividend_curve is None and dividend_rate != 0.0:
+        dividend_curve = flat_curve(PRICING_DATE, maturity, dividend_rate)
     return UnderlyingData(
         initial_value=spot,
         volatility=vol,
-        market_data=_MD,
+        market_data=md,
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
@@ -62,13 +73,15 @@ def spec(
     option_type: OptionType = OptionType.CALL,
     exercise: ExerciseType = ExerciseType.EUROPEAN,
     strike: float = STRIKE,
+    maturity: dt.datetime = MATURITY,
+    currency: str = CURRENCY,
 ) -> VanillaSpec:
     return VanillaSpec(
         option_type=option_type,
         exercise_type=exercise,
         strike=strike,
-        maturity=MATURITY,
-        currency=CURRENCY,
+        maturity=maturity,
+        currency=currency,
     )
 
 

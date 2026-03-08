@@ -23,6 +23,12 @@ from portfolio_analytics.valuation import (
 )
 
 # ---------------------------------------------------------------------------
+# BSM reference (S=100, K=100, r=0.05, σ=0.20, T=1)
+# ---------------------------------------------------------------------------
+_BSM_ATM_CALL = 10.4506
+_BSM_ATM_PUT = 5.5735
+
+# ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
@@ -44,15 +50,14 @@ class TestMCSValuation:
     """Tests for Monte Carlo Simulation valuation."""
 
     def test_mcs_european_call_atm(self):
-        """Test MCS European call option pricing."""
+        """MCS European ATM call matches BSM reference within MC noise."""
         result = pv(_gbm(), spec(), PricingMethod.MONTE_CARLO, params=MC_PARAMS)
-        assert result > 0
-        assert np.isclose(result, 10.45, rtol=0.02)
+        assert np.isclose(result, _BSM_ATM_CALL, rtol=0.02)
 
     def test_mcs_european_put_atm(self):
-        """Test MCS European put option pricing."""
+        """MCS European ATM put matches BSM reference within MC noise."""
         result = pv(_gbm(), spec(OptionType.PUT), PricingMethod.MONTE_CARLO, params=MC_PARAMS)
-        assert result > 0
+        assert np.isclose(result, _BSM_ATM_PUT, rtol=0.02)
 
     def test_mcs_reproducibility_with_seed(self):
         """Test that MCS with same seed produces identical results."""
