@@ -93,12 +93,6 @@ class SimulationConfig:
             if steps <= 0:
                 raise ValidationError("SimulationConfig.num_steps must be a positive integer")
 
-    def _can_rebuild_grid(self) -> bool:
-        """True when the config has end_date + a discretisation method."""
-        return self.end_date is not None and (
-            self.num_steps is not None or self.frequency is not None
-        )
-
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GBMParams:
