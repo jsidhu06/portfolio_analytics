@@ -1,8 +1,10 @@
 import datetime as dt
 import warnings
+from typing import Any
 
 import numpy as np
 
+from portfolio_analytics.valuation import OptionValuation
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.utils import calculate_year_fraction
 
@@ -14,6 +16,12 @@ def flat_curve(
 ) -> DiscountCurve:
     ttm = calculate_year_fraction(pricing_date, maturity)
     return DiscountCurve.flat(rate, end_time=ttm)
+
+
+def pv(underlying: Any, spec: Any, method: Any, **kw: Any) -> float:
+    """Shortcut: build an OptionValuation and return its present value."""
+
+    return OptionValuation(underlying, spec, method, **kw).present_value()
 
 
 def build_curve_from_forwards(

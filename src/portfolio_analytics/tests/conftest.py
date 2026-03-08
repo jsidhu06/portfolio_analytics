@@ -11,6 +11,9 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.valuation import (
+    BinomialParams,
+    MonteCarloParams,
+    PDEParams,
     VanillaSpec,
     UnderlyingData,
 )
@@ -29,6 +32,15 @@ SPOT = 100.0
 STRIKE = 100.0
 RATE = 0.05
 VOL = 0.20
+
+
+# ---------------------------------------------------------------------------
+# Standard pricing-method parameters
+# ---------------------------------------------------------------------------
+
+BINOM_PARAMS = BinomialParams(num_steps=500)
+MC_PARAMS = MonteCarloParams(random_seed=42)
+PDE_PARAMS = PDEParams(spot_steps=200, time_steps=200, max_iter=20_000)
 
 
 @pytest.fixture()
