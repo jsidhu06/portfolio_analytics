@@ -354,7 +354,7 @@ class TestThetaBasicProperties(TestGreeksSetup):
         # Both negative, values differ due to dividend
         assert theta_no_div < 0
         assert theta_with_div < 0
-        assert theta_no_div != pytest.approx(theta_with_div)
+        assert not np.isclose(theta_no_div, theta_with_div)
 
     def test_theta_near_expiry_large_magnitude(self):
         """Theta magnitude should be very large for near-expiry ATM options."""

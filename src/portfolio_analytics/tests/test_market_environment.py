@@ -86,6 +86,35 @@ class TestCorrelationContextValid:
         ctx = _valid_corr_context(correlation_matrix=C)
         np.testing.assert_allclose(ctx.cholesky_matrix @ ctx.cholesky_matrix.T, C)
 
+    def test_four_asset_context_with_zero_entries(self):
+        C = np.array(
+            [
+                [1.0, 0.0, 0.3, -0.2],
+                [0.0, 1.0, -0.1, 0.25],
+                [0.3, -0.1, 1.0, 0.0],
+                [-0.2, 0.25, 0.0, 1.0],
+            ]
+        )
+        rn = np.random.default_rng(0).standard_normal((4, 8, 64))
+        ctx = CorrelationContext(
+            correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C", "D"]
+        )
+        np.testing.assert_allclose(
+            ctx.cholesky_matrix @ ctx.cholesky_matrix.T, C, rtol=1e-10, atol=1e-10
+        )
+
+    def test_near_singular_matrix_still_constructs(self):
+        """Matrix that is very close to singular but SPD should still be accepted."""
+        rho = 0.999
+        C = np.array([[1.0, rho, rho], [rho, 1.0, rho], [rho, rho, 1.0]])
+        rn = np.random.default_rng(1).standard_normal((3, 6, 32))
+        ctx = CorrelationContext(
+            correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C"]
+        )
+        np.testing.assert_allclose(
+            ctx.cholesky_matrix @ ctx.cholesky_matrix.T, C, rtol=1e-8, atol=1e-8
+        )
+
 
 class TestCorrelationContextValidation:
     def test_rejects_non_square_matrix(self):
@@ -134,3 +163,9 @@ class TestCorrelationContextValidation:
         ctx = _valid_corr_context()
         with pytest.raises(ValidationError, match="not found in asset_names"):
             ctx.asset_index("C")
+
+    def test_rejects_singular_correlation_matrix(self):
+        C = np.array([[1.0, 1.0, 0.0], [1.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        rn = np.random.default_rng(0).standard_normal((3, 6, 64))
+        with pytest.raises(ValidationError, match="not positive-definite"):
+            CorrelationContext(correlation_matrix=C, random_numbers=rn, asset_names=["A", "B", "C"])

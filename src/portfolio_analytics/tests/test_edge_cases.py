@@ -16,15 +16,20 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.exceptions import (
+    ArbitrageViolationError,
     NumericalError,
     ValidationError,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    market_data,
+    underlying,
+    make_vanilla_spec,
+    pv as _pv,
+)
 from portfolio_analytics.valuation import (
     BinomialParams,
     VanillaSpec,
-    OptionValuation,
     PDEParams,
     UnderlyingData,
 )
@@ -32,23 +37,25 @@ from portfolio_analytics.valuation import (
 PRICING_DATE = dt.datetime(2025, 1, 1)
 MATURITY = dt.datetime(2025, 7, 1)  # ~0.5y
 RATE = 0.05
+_DEFAULT_RATE_CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
 
 
 def _underlying(
     spot: float = 100.0,
     vol: float = 0.20,
-    rate: float = RATE,
-    q: float = 0.0,
-    maturity: dt.datetime = MATURITY,
+    discount_curve=None,
+    dividend_curve=None,
 ) -> UnderlyingData:
-    r_curve = flat_curve(PRICING_DATE, maturity, rate)
-    q_curve = flat_curve(PRICING_DATE, maturity, q) if q != 0.0 else None
-    md = MarketData(pricing_date=PRICING_DATE, discount_curve=r_curve, currency="USD")
-    return UnderlyingData(
+    rate_curve = discount_curve if discount_curve is not None else _DEFAULT_RATE_CURVE
+    return underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=md,
-        dividend_curve=q_curve,
+        market_data=market_data(
+            pricing_date=PRICING_DATE,
+            discount_curve=rate_curve,
+            currency="USD",
+        ),
+        dividend_curve=dividend_curve,
     )
 
 
@@ -58,22 +65,13 @@ def _spec(
     exercise: ExerciseType = ExerciseType.EUROPEAN,
     maturity: dt.datetime = MATURITY,
 ) -> VanillaSpec:
-    return VanillaSpec(
-        option_type=option_type,
-        exercise_type=exercise,
+    return make_vanilla_spec(
         strike=strike,
         maturity=maturity,
+        option_type=option_type,
+        exercise_type=exercise,
         currency="USD",
     )
-
-
-def _pv(
-    ud: UnderlyingData,
-    spec: VanillaSpec,
-    method: PricingMethod,
-    **kw,
-) -> float:
-    return OptionValuation(ud, spec, method, **kw).present_value()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -111,7 +109,7 @@ class TestZeroVolatility:
             else:
                 expected = strike * df_r - spot
             assert pv > 0
-            assert np.isclose(pv, expected, rtol=0.01), f"pv={pv}, expected≈{expected}"
+            assert np.isclose(pv, expected, rtol=0.01)
         else:
             assert np.isclose(pv, 0.0, atol=1e-10)
 
@@ -212,7 +210,7 @@ class TestNearZeroExpiry:
     )
     def test_bsm_near_expiry(self, option_type, strike, expected_intrinsic):
         """BSM with 1-day expiry should be very close to intrinsic."""
-        ud = _underlying(maturity=self.SHORT_MATURITY)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
         pv = _pv(ud, spec, PricingMethod.BSM)
         assert np.isclose(pv, expected_intrinsic, atol=0.50)
@@ -228,7 +226,7 @@ class TestNearZeroExpiry:
     )
     def test_binomial_near_expiry(self, option_type, strike, expected_intrinsic):
         """Binomial with 1-day expiry should be very close to intrinsic."""
-        ud = _underlying(maturity=self.SHORT_MATURITY)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
         pv = _pv(
             ud,
@@ -249,7 +247,7 @@ class TestNearZeroExpiry:
     )
     def test_pde_near_expiry(self, option_type, strike, expected_intrinsic):
         """PDE with 1-day expiry should be very close to intrinsic."""
-        ud = _underlying(maturity=self.SHORT_MATURITY)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, self.SHORT_MATURITY, RATE))
         spec = _spec(strike=strike, option_type=option_type, maturity=self.SHORT_MATURITY)
         pv = _pv(
             ud,
@@ -368,8 +366,8 @@ class TestExtremeRates:
     def test_high_rate_call_value_increases(self, method):
         """Higher r increases call value (forward price is higher)."""
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
-        ud_low = _underlying(rate=0.01)
-        ud_high = _underlying(rate=0.30)
+        ud_low = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.01))
+        ud_high = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.30))
 
         pv_low = _pv(ud_low, spec, method, **self._params(method))
         pv_high = _pv(ud_high, spec, method, **self._params(method))
@@ -379,8 +377,8 @@ class TestExtremeRates:
     def test_high_rate_put_value_decreases(self, method):
         """Higher r decreases put value (forward price is higher)."""
         spec = _spec(strike=100.0, option_type=OptionType.PUT)
-        ud_low = _underlying(rate=0.01)
-        ud_high = _underlying(rate=0.30)
+        ud_low = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.01))
+        ud_high = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.30))
 
         pv_low = _pv(ud_low, spec, method, **self._params(method))
         pv_high = _pv(ud_high, spec, method, **self._params(method))
@@ -388,7 +386,7 @@ class TestExtremeRates:
 
     def test_negative_rate_bsm(self):
         """Negative rates should produce valid (positive) option prices."""
-        ud = _underlying(rate=-0.02)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
             pv = _pv(ud, spec, PricingMethod.BSM)
@@ -397,7 +395,7 @@ class TestExtremeRates:
 
     def test_negative_rate_binomial(self):
         """Negative rates should produce valid prices in binomial model."""
-        ud = _underlying(rate=-0.02)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
             pv = _pv(
@@ -411,7 +409,7 @@ class TestExtremeRates:
 
     def test_negative_rate_pde(self):
         """Negative rates should produce valid prices in PDE solver."""
-        ud = _underlying(rate=-0.02)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, -0.02))
         for opt in (OptionType.CALL, OptionType.PUT):
             spec = _spec(strike=100.0, option_type=opt)
             pv = _pv(
@@ -425,7 +423,7 @@ class TestExtremeRates:
 
     def test_very_high_rate_bsm_convergence(self):
         """r = 50% should still produce finite BSM prices."""
-        ud = _underlying(rate=0.50)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.50))
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
         pv = _pv(ud, spec, PricingMethod.BSM)
         assert np.isfinite(pv)
@@ -433,7 +431,7 @@ class TestExtremeRates:
 
     def test_bsm_and_binomial_agree_at_extreme_rate(self):
         """BSM and binomial should agree even at r = 25%."""
-        ud = _underlying(rate=0.25)
+        ud = _underlying(discount_curve=flat_curve(PRICING_DATE, MATURITY, 0.25))
         spec = _spec(strike=100.0, option_type=OptionType.CALL)
         bsm_pv = _pv(ud, spec, PricingMethod.BSM)
         bin_pv = _pv(
@@ -530,6 +528,58 @@ class TestAmericanEdgeCases:
         pv = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
         intrinsic = strike - spot
         assert pv >= intrinsic - 0.01
+
+    @pytest.mark.parametrize("spot,strike", [(40.0, 200.0), (25.0, 180.0), (10.0, 150.0)])
+    def test_deep_itm_american_put_exceeds_intrinsic(self, spot, strike):
+        """Deep ITM American put should be at least intrinsic value."""
+        ud = _underlying(spot=spot, vol=0.2)
+        spec = _spec(strike=strike, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
+        pv = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        intrinsic = strike - spot
+        assert pv >= intrinsic - 1e-8
+
+    @pytest.mark.parametrize("spot,strike", [(120.0, 80.0), (150.0, 90.0), (200.0, 100.0)])
+    def test_deep_itm_american_call_with_dividend_exceeds_european(self, spot, strike):
+        """With a positive dividend yield, American call should dominate European."""
+        ud = _underlying(
+            spot=spot,
+            vol=0.2,
+            dividend_curve=flat_curve(PRICING_DATE, MATURITY, 0.05),
+        )
+        spec_eu = _spec(strike=strike, option_type=OptionType.CALL, exercise=ExerciseType.EUROPEAN)
+        spec_am = _spec(strike=strike, option_type=OptionType.CALL, exercise=ExerciseType.AMERICAN)
+        eu_pv = _pv(ud, spec_eu, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        am_pv = _pv(ud, spec_am, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+        assert am_pv >= eu_pv - 1e-8
+
+    @pytest.mark.parametrize("vol", [1.0e-4, 5.0e-4, 1.0e-3])
+    def test_american_put_near_zero_vol_rejects_arbitrage_violation(self, vol):
+        """Near-zero vol can violate CRR no-arbitrage bounds for fixed dt; raise cleanly."""
+        spot, strike = 50.0, 200.0
+        ud = _underlying(spot=spot, vol=vol)
+        spec = _spec(strike=strike, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
+        with pytest.raises(ArbitrageViolationError, match="No-arbitrage condition"):
+            _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=500))
+
+    @pytest.mark.parametrize("days", [1, 2, 3])
+    def test_american_put_near_expiry_converges_to_intrinsic(self, days):
+        """Near maturity, American put should be very close to intrinsic."""
+        maturity = PRICING_DATE + dt.timedelta(days=days)
+        spot, strike = 80.0, 100.0
+        ud = _underlying(
+            spot=spot,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, RATE),
+        )
+        spec = _spec(
+            strike=strike,
+            option_type=OptionType.PUT,
+            exercise=ExerciseType.AMERICAN,
+            maturity=maturity,
+        )
+        pv = _pv(ud, spec, PricingMethod.BINOMIAL, params=BinomialParams(num_steps=100))
+        intrinsic = strike - spot
+        assert np.isclose(pv, intrinsic, atol=0.5)
 
     def test_american_deep_itm_put_pde(self):
         """PDE American deep ITM put should also be >= intrinsic."""

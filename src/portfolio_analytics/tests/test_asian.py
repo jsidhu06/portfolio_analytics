@@ -26,13 +26,17 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.exceptions import ValidationError
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    market_data,
+    underlying,
+)
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
+from portfolio_analytics.utils import pv_discrete_dividends
 from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
 from portfolio_analytics.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
@@ -52,33 +56,49 @@ MC_SEED = 42
 NUM_STEPS = 60
 BINOM_STEPS = 100
 ASIAN_TREE_AVERAGES = 100
+DEFAULT_SHORT_RATE = 0.03
 
 
-def _market_data(short_rate: float, maturity: dt.datetime) -> MarketData:
-    curve = flat_curve(PRICING_DATE, maturity, short_rate)
-    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+def _market_data(
+    maturity: dt.datetime,
+    discount_curve: DiscountCurve | None = None,
+) -> MarketData:
+    curve = (
+        discount_curve
+        if discount_curve is not None
+        else flat_curve(PRICING_DATE, maturity, DEFAULT_SHORT_RATE)
+    )
+    return market_data(
+        pricing_date=PRICING_DATE,
+        discount_curve=curve,
+        currency=CURRENCY,
+    )
 
 
 def _flat_dividend_curve(dividend_yield: float, maturity: dt.datetime) -> DiscountCurve | None:
     if dividend_yield == 0.0:
         return None
-    ttm = calculate_year_fraction(PRICING_DATE, maturity)
-    return DiscountCurve.flat(dividend_yield, end_time=ttm)
+    return flat_curve(PRICING_DATE, maturity, dividend_yield)
 
 
 def _underlying(
     *,
     spot: float,
     vol: float,
-    short_rate: float,
     maturity: dt.datetime,
+    discount_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingData:
-    return UnderlyingData(
+    rate_curve = (
+        discount_curve
+        if discount_curve is not None
+        else flat_curve(PRICING_DATE, maturity, DEFAULT_SHORT_RATE)
+    )
+    return underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=_market_data(short_rate, maturity),
+        market_data=_market_data(maturity, discount_curve=rate_curve),
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
@@ -88,13 +108,18 @@ def _gbm_underlying(
     *,
     spot: float,
     vol: float,
-    short_rate: float,
     maturity: dt.datetime,
     paths: int,
     num_steps: int,
+    discount_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> GBMProcess:
+    rate_curve = (
+        discount_curve
+        if discount_curve is not None
+        else flat_curve(PRICING_DATE, maturity, DEFAULT_SHORT_RATE)
+    )
     sim_config = SimulationConfig(
         paths=paths,
         num_steps=num_steps,
@@ -107,7 +132,7 @@ def _gbm_underlying(
         discrete_dividends=discrete_dividends,
     )
     return GBMProcess(
-        _market_data(short_rate, maturity),
+        _market_data(maturity, discount_curve=rate_curve),
         gbm_params,
         sim_config,
     )
@@ -158,7 +183,7 @@ def test_asian_binomial_hull_close_to_mc(
     mc_underlying = _gbm_underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         dividend_curve=q_curve,
         maturity=maturity,
         paths=MC_PATHS,
@@ -174,7 +199,7 @@ def test_asian_binomial_hull_close_to_mc(
     binom_underlying = _underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         dividend_curve=q_curve,
         maturity=maturity,
     )
@@ -241,7 +266,7 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
     mc_underlying = _gbm_underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         discrete_dividends=divs,
         maturity=maturity,
         paths=mc_paths,
@@ -257,7 +282,7 @@ def test_asian_discrete_dividends_binomial_hull_vs_mc(div_days, div_amt, rtol_mc
     binom_underlying = _underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         discrete_dividends=divs,
         maturity=maturity,
     )
@@ -348,7 +373,7 @@ def test_asian_american_at_least_european_hull(spot, strike, vol, short_rate, da
     binom_underlying = _underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         dividend_curve=None,
         maturity=maturity,
     )
@@ -404,7 +429,7 @@ def test_geometric_asian_mc_positive_value(spot, strike, vol, short_rate, days, 
     mc_underlying = _gbm_underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
@@ -454,7 +479,7 @@ def test_geometric_leq_arithmetic_asian(spot, strike, vol, short_rate, days, opt
     mc_underlying = _gbm_underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
@@ -505,7 +530,7 @@ def test_geometric_asian_binomial_hull_close_to_mc(
     mc_underlying = _gbm_underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
@@ -520,7 +545,7 @@ def test_geometric_asian_binomial_hull_close_to_mc(
     binom_underlying = _underlying(
         spot=spot,
         vol=vol,
-        short_rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         maturity=maturity,
     )
     hull_pv = OptionValuation(
@@ -548,6 +573,104 @@ def test_geometric_asian_binomial_hull_close_to_mc(
 # American Asian MC (Longstaff-Schwartz) Tests
 # ---------------------------------------------------------------------------
 
+# Each scenario: (spot, strike, vol, option_type, averaging, rate_spec, div_spec)
+# rate_spec: float → flat rate; dict → DiscountCurve.from_forwards kwargs
+# div_spec: None, ("continuous", yield), or ("discrete", [(days_offset, amount), ...])
+_AMERICAN_ASIAN_SCENARIOS = [
+    # Baseline: flat rate, no divs — original option_type × averaging combos
+    pytest.param(
+        100, 100, 0.20, OptionType.CALL, AsianAveraging.ARITHMETIC, 0.03, None, id="atm_call_arith"
+    ),
+    pytest.param(
+        100, 100, 0.20, OptionType.PUT, AsianAveraging.ARITHMETIC, 0.03, None, id="atm_put_arith"
+    ),
+    pytest.param(
+        100, 100, 0.20, OptionType.CALL, AsianAveraging.GEOMETRIC, 0.03, None, id="atm_call_geom"
+    ),
+    pytest.param(
+        100, 100, 0.20, OptionType.PUT, AsianAveraging.GEOMETRIC, 0.03, None, id="atm_put_geom"
+    ),
+    # Continuous dividend yield
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        0.03,
+        ("continuous", 0.02),
+        id="call_arith_cont_div",
+    ),
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.GEOMETRIC,
+        0.03,
+        ("continuous", 0.03),
+        id="put_geom_cont_div",
+    ),
+    # Discrete dividends
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        0.03,
+        ("discrete", [(91, 2.0), (274, 2.0)]),
+        id="put_arith_disc_div",
+    ),
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.GEOMETRIC,
+        0.03,
+        ("discrete", [(182, 3.0)]),
+        id="call_geom_disc_div",
+    ),
+    # OTM, higher vol
+    pytest.param(
+        100,
+        110,
+        0.35,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        0.03,
+        None,
+        id="otm_call_high_vol",
+    ),
+    # ITM
+    pytest.param(
+        100, 90, 0.25, OptionType.PUT, AsianAveraging.GEOMETRIC, 0.03, None, id="itm_put_geom"
+    ),
+    # Non-flat rate curve
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        {"times": np.array([0.0, 0.5, 1.0]), "forwards": np.array([0.02, 0.05])},
+        None,
+        id="call_arith_non_flat_rate",
+    ),
+    # Non-flat rate + continuous div
+    pytest.param(
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        {"times": np.array([0.0, 0.5, 1.0]), "forwards": np.array([0.03, 0.06])},
+        ("continuous", 0.02),
+        id="put_arith_non_flat_cont_div",
+    ),
+]
+
 
 class TestAmericanAsianMC:
     """Tests for Longstaff-Schwartz American Asian option pricing."""
@@ -565,12 +688,31 @@ class TestAmericanAsianMC:
     def maturity(self) -> dt.datetime:
         return PRICING_DATE + dt.timedelta(days=self.DAYS)
 
+    # --- scenario helpers ---
+
+    def _build_rate_curve(self, rate_spec) -> DiscountCurve:
+        if isinstance(rate_spec, (int, float)):
+            return flat_curve(PRICING_DATE, self.maturity, rate_spec)
+        return DiscountCurve.from_forwards(**rate_spec)
+
+    def _parse_div_spec(
+        self, div_spec
+    ) -> tuple[DiscountCurve | None, Sequence[tuple[dt.datetime, float]] | None]:
+        if div_spec is None:
+            return None, None
+        kind, val = div_spec
+        if kind == "continuous":
+            return _flat_dividend_curve(val, self.maturity), None
+        # "discrete": val is [(days_offset, amount), ...]
+        divs = [(PRICING_DATE + dt.timedelta(days=d), amt) for d, amt in val]
+        return None, divs
+
     def _mc_underlying(
         self,
         *,
         spot: float | None = None,
         vol: float | None = None,
-        short_rate: float | None = None,
+        discount_curve: DiscountCurve | None = None,
         maturity: dt.datetime | None = None,
         paths: int | None = None,
         dividend_curve: DiscountCurve | None = None,
@@ -578,7 +720,7 @@ class TestAmericanAsianMC:
         return _gbm_underlying(
             spot=spot or self.SPOT,
             vol=vol or self.VOL,
-            short_rate=short_rate or self.SHORT_RATE,
+            discount_curve=discount_curve,
             maturity=maturity or self.maturity,
             paths=paths or self.PATHS,
             num_steps=self.NUM_STEPS,
@@ -594,7 +736,7 @@ class TestAmericanAsianMC:
         spot: float | None = None,
         strike: float | None = None,
         vol: float | None = None,
-        short_rate: float | None = None,
+        discount_curve: DiscountCurve | None = None,
         maturity: dt.datetime | None = None,
         paths: int | None = None,
         seed: int | None = None,
@@ -611,7 +753,7 @@ class TestAmericanAsianMC:
         underlying = self._mc_underlying(
             spot=spot,
             vol=vol,
-            short_rate=short_rate,
+            discount_curve=discount_curve,
             maturity=mat,
             paths=paths,
             dividend_curve=dividend_curve,
@@ -663,27 +805,39 @@ class TestAmericanAsianMC:
     # -- MC American vs Binomial Hull American --
 
     @pytest.mark.parametrize(
-        "option_type,averaging",
-        [
-            (OptionType.CALL, AsianAveraging.ARITHMETIC),
-            (OptionType.PUT, AsianAveraging.ARITHMETIC),
-            (OptionType.CALL, AsianAveraging.GEOMETRIC),
-            (OptionType.PUT, AsianAveraging.GEOMETRIC),
-        ],
+        "spot,strike,vol,option_type,averaging,rate_spec,div_spec",
+        _AMERICAN_ASIAN_SCENARIOS,
     )
-    def test_mc_american_close_to_hull_american(self, option_type, averaging):
+    def test_mc_american_close_to_hull_american(
+        self, spot, strike, vol, option_type, averaging, rate_spec, div_spec
+    ):
         """MC LSM American Asian should be close to Hull binomial American Asian."""
         mat = self.maturity
+        rate_curve = self._build_rate_curve(rate_spec)
+        div_curve, disc_divs = self._parse_div_spec(div_spec)
+        md = MarketData(PRICING_DATE, rate_curve, currency=CURRENCY)
+
         spec = _asian_spec(
-            strike=self.STRIKE,
+            strike=strike,
             maturity=mat,
             option_type=option_type,
             exercise_type=ExerciseType.AMERICAN,
             averaging=averaging,
         )
 
-        # MC American
-        mc_underlying = self._mc_underlying()
+        # MC American (GBMProcess)
+        gbm_params = GBMParams(
+            initial_value=spot,
+            volatility=vol,
+            dividend_curve=div_curve,
+            discrete_dividends=disc_divs,
+        )
+        sim_config = SimulationConfig(
+            paths=self.PATHS,
+            num_steps=self.NUM_STEPS,
+            end_date=mat,
+        )
+        mc_underlying = GBMProcess(md, gbm_params, sim_config)
         mc_pv = OptionValuation(
             mc_underlying,
             spec,
@@ -691,12 +845,25 @@ class TestAmericanAsianMC:
             params=MonteCarloParams(random_seed=self.SEED),
         ).present_value()
 
-        # Hull binomial American
-        binom_underlying = _underlying(
-            spot=self.SPOT,
-            vol=self.VOL,
-            short_rate=self.SHORT_RATE,
-            maturity=mat,
+        # Hull binomial American (UnderlyingData)
+        # Escrowed-dividend trees diffuse S* = S - PV(divs) with flat vol σ,
+        # but the true lognormal vol of S* is higher: σ_adj = σ · S / S*.
+        binom_vol = vol
+        if disc_divs:
+            pv_divs = pv_discrete_dividends(
+                disc_divs,
+                curve_date=PRICING_DATE,
+                end_date=mat,
+                discount_curve=rate_curve,
+            )
+            binom_vol = vol * spot / (spot - pv_divs)
+
+        binom_underlying = UnderlyingData(
+            initial_value=spot,
+            volatility=binom_vol,
+            market_data=md,
+            dividend_curve=div_curve,
+            discrete_dividends=disc_divs,
         )
         hull_pv = OptionValuation(
             binom_underlying,
@@ -709,9 +876,12 @@ class TestAmericanAsianMC:
         ).present_value()
 
         logger.info(
-            "American Asian %s %s | MC=%.6f Hull=%.6f",
+            "American Asian %s %s K=%.0f vol=%.2f (binom_vol=%.4f) | MC=%.6f Hull=%.6f",
             averaging.value,
             option_type.value,
+            strike,
+            vol,
+            binom_vol,
             mc_pv,
             hull_pv,
         )
@@ -734,7 +904,7 @@ class TestAmericanAsianMC:
         underlying = _gbm_underlying(
             spot=self.SPOT,
             vol=self.VOL,
-            short_rate=self.SHORT_RATE,
+            discount_curve=flat_curve(PRICING_DATE, self.maturity, self.SHORT_RATE),
             maturity=mat,
             paths=n_paths,
             num_steps=self.NUM_STEPS,
@@ -764,7 +934,7 @@ class TestAmericanAsianMC:
         binom_underlying = _underlying(
             spot=self.SPOT,
             vol=self.VOL,
-            short_rate=self.SHORT_RATE,
+            discount_curve=flat_curve(PRICING_DATE, self.maturity, self.SHORT_RATE),
             maturity=self.maturity,
         )
         with pytest.raises(ValidationError, match="AMERICAN.*BSM|BSM.*AMERICAN"):
@@ -992,7 +1162,7 @@ class TestSmallObservationCounts:
         und = _underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
@@ -1048,7 +1218,7 @@ class TestGeometricAsianPutCallParity:
         und = _underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
@@ -1120,7 +1290,7 @@ class TestAnalyticalVsMC:
         und = _underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
@@ -1140,7 +1310,7 @@ class TestAnalyticalVsMC:
         mc_und = _gbm_underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             paths=300_000,
             num_steps=num_steps,
@@ -1183,7 +1353,12 @@ class TestGeometricAsianProperties:
 
     def test_positive_price(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
         pv = OptionValuation(
             und,
             _asian_spec(
@@ -1201,7 +1376,12 @@ class TestGeometricAsianProperties:
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pvs = []
         for spot in (90, 100, 110):
-            und = _underlying(spot=spot, vol=0.2, short_rate=0.05, maturity=maturity)
+            und = _underlying(
+                spot=spot,
+                vol=0.2,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+                maturity=maturity,
+            )
             pv = OptionValuation(
                 und,
                 _asian_spec(
@@ -1220,7 +1400,12 @@ class TestGeometricAsianProperties:
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pvs = []
         for spot in (90, 100, 110):
-            und = _underlying(spot=spot, vol=0.2, short_rate=0.05, maturity=maturity)
+            und = _underlying(
+                spot=spot,
+                vol=0.2,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+                maturity=maturity,
+            )
             pv = OptionValuation(
                 und,
                 _asian_spec(
@@ -1244,7 +1429,12 @@ class TestGeometricAsianProperties:
         increases with the number of steps.
         """
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.3, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.3,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
         pv_4 = OptionValuation(
             und,
             _asian_spec(
@@ -1272,7 +1462,12 @@ class TestGeometricAsianProperties:
     def test_geometric_call_leq_vanilla_bsm(self):
         """Geometric average call ≤ vanilla European call (averaging reduces variance)."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.25,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         geom_pv = OptionValuation(
             und,
@@ -1304,7 +1499,12 @@ class TestGeometricAsianProperties:
     def test_geometric_put_leq_vanilla_bsm(self):
         """Geometric average put ≤ vanilla European put (averaging reduces variance)."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.25,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         geom_pv = OptionValuation(
             und,
@@ -1381,7 +1581,12 @@ class TestDividendYield:
     def test_dividend_reduces_call(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity),
+            _underlying(
+                spot=100,
+                vol=0.2,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+                maturity=maturity,
+            ),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -1396,7 +1601,7 @@ class TestDividendYield:
             _underlying(
                 spot=100,
                 vol=0.2,
-                short_rate=0.05,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
                 maturity=maturity,
                 dividend_curve=_flat_dividend_curve(0.03, maturity),
             ),
@@ -1441,7 +1646,7 @@ class TestSeasonedAsian:
         return _underlying(
             spot=self.SPOT,
             vol=self.VOL,
-            short_rate=self.RATE,
+            discount_curve=flat_curve(PRICING_DATE, self.MATURITY, self.RATE),
             maturity=self.MATURITY,
         )
 
@@ -1793,7 +1998,7 @@ class TestSeasonedAsian:
         gbm = _gbm_underlying(
             spot=self.SPOT,
             vol=self.VOL,
-            short_rate=self.RATE,
+            discount_curve=flat_curve(PRICING_DATE, self.MATURITY, self.RATE),
             maturity=self.MATURITY,
             paths=200_000,
             num_steps=n2_steps,
@@ -1810,7 +2015,12 @@ class TestSeasonedAsian:
     def test_dividend_increases_put(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity),
+            _underlying(
+                spot=100,
+                vol=0.2,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+                maturity=maturity,
+            ),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -1825,7 +2035,7 @@ class TestSeasonedAsian:
             _underlying(
                 spot=100,
                 vol=0.2,
-                short_rate=0.05,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
                 maturity=maturity,
                 dividend_curve=_flat_dividend_curve(0.03, maturity),
             ),
@@ -1853,7 +2063,12 @@ class TestValidation:
     def test_arithmetic_bsm_returns_positive_price(self):
         """Arithmetic averaging is now supported via Turnbull-Wakeman."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
         pv = OptionValuation(
             und,
             _asian_spec(
@@ -1869,7 +2084,12 @@ class TestValidation:
 
     def test_missing_num_steps_raises(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
         with pytest.raises(Exception, match="num_steps"):
             OptionValuation(
                 und,
@@ -1942,7 +2162,12 @@ class TestAveragingStart:
         """Pushing the averaging window forward should change the price."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
         avg_start = PRICING_DATE + dt.timedelta(days=90)
-        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         pv_full = OptionValuation(
             und,
@@ -1976,7 +2201,12 @@ class TestAveragingStart:
         """Put-call parity holds even with a deferred averaging start."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
         avg_start = PRICING_DATE + dt.timedelta(days=60)
-        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         call_pv = OptionValuation(
             und,
@@ -2065,7 +2295,7 @@ def test_geometric_asian_four_method_comparison(
     und_determ = _underlying(
         spot=spot,
         vol=vol,
-        short_rate=r,
+        discount_curve=flat_curve(PRICING_DATE, maturity, r),
         maturity=maturity,
         dividend_curve=_flat_dividend_curve(q, maturity),
     )
@@ -2118,7 +2348,7 @@ def test_geometric_asian_four_method_comparison(
     mc_und = _gbm_underlying(
         spot=spot,
         vol=vol,
-        short_rate=r,
+        discount_curve=flat_curve(PRICING_DATE, maturity, r),
         maturity=maturity,
         paths=MC_PATHS,
         num_steps=NUM_STEPS,
@@ -2286,7 +2516,7 @@ class TestArithmeticPutCallParity:
         und = _underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
@@ -2357,7 +2587,7 @@ class TestArithmeticVsMC:
         und = _underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
@@ -2377,7 +2607,7 @@ class TestArithmeticVsMC:
         mc_und = _gbm_underlying(
             spot=spot,
             vol=vol,
-            short_rate=r,
+            discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             paths=300_000,
             num_steps=num_steps,
@@ -2420,7 +2650,12 @@ class TestArithmeticProperties:
     def test_arithmetic_geq_geometric_call(self):
         """Arithmetic call ≥ geometric call (AM-GM: E[arith avg] ≥ E[geom avg])."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.25,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         arith_pv = OptionValuation(
             und,
@@ -2451,7 +2686,12 @@ class TestArithmeticProperties:
     def test_arithmetic_leq_geometric_put(self):
         """Arithmetic put ≤ geometric put (AM-GM: higher avg lowers put value)."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.25,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         arith_pv = OptionValuation(
             und,
@@ -2482,7 +2722,12 @@ class TestArithmeticProperties:
     def test_arithmetic_less_than_vanilla(self):
         """Arithmetic Asian call < vanilla European call (averaging effect)."""
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.25, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.25,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
 
         arith_pv = OptionValuation(
             und,
@@ -2512,7 +2757,12 @@ class TestArithmeticProperties:
 
     def test_positive_price(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        und = _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity)
+        und = _underlying(
+            spot=100,
+            vol=0.2,
+            discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+            maturity=maturity,
+        )
         for option_type in (OptionType.CALL, OptionType.PUT):
             pv = OptionValuation(
                 und,
@@ -2530,7 +2780,12 @@ class TestArithmeticProperties:
     def test_dividend_reduces_call(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         pv_no_q = OptionValuation(
-            _underlying(spot=100, vol=0.2, short_rate=0.05, maturity=maturity),
+            _underlying(
+                spot=100,
+                vol=0.2,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
+                maturity=maturity,
+            ),
             _asian_spec(
                 strike=100,
                 maturity=maturity,
@@ -2545,7 +2800,7 @@ class TestArithmeticProperties:
             _underlying(
                 spot=100,
                 vol=0.2,
-                short_rate=0.05,
+                discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
                 maturity=maturity,
                 dividend_curve=_flat_dividend_curve(0.03, maturity),
             ),

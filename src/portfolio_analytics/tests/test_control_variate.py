@@ -12,82 +12,65 @@ from portfolio_analytics.enums import (
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
+from portfolio_analytics.tests.helpers import (
+    PRICING_DATE,
+    MATURITY,
+    CURRENCY,
+    flat_curve,
+    market_data,
+    underlying,
+    spec,
+)
+from portfolio_analytics.valuation import OptionValuation
 from portfolio_analytics.valuation.core import AsianSpec
 from portfolio_analytics.valuation.params import BinomialParams, PDEParams
 
 logger = logging.getLogger(__name__)
 
 
-PRICING_DATE = dt.datetime(2025, 1, 1)
-MATURITY = dt.datetime(2026, 1, 1)
-CURRENCY = "USD"
-
-
-def _build_underlying(spot: float, vol: float, rate: float, dividend_rate: float = 0.0):
-    curve = flat_curve(PRICING_DATE, MATURITY, rate)
-    dividend_curve = (
-        None if dividend_rate == 0.0 else flat_curve(PRICING_DATE, MATURITY, dividend_rate)
-    )
-    market_data = MarketData(PRICING_DATE, curve, currency=CURRENCY)
-    return UnderlyingData(
-        initial_value=spot,
-        volatility=vol,
-        market_data=market_data,
-        dividend_curve=dividend_curve,
-    )
-
-
-def _build_spec(option_type: OptionType, exercise_type: ExerciseType, strike: float) -> VanillaSpec:
-    return VanillaSpec(
-        option_type=option_type,
-        exercise_type=exercise_type,
-        strike=strike,
-        maturity=MATURITY,
+def _underlying(
+    *,
+    initial_value: float,
+    volatility: float,
+    rate: float,
+    maturity: dt.datetime = MATURITY,
+    dividend_curve=None,
+    discrete_dividends=None,
+):
+    md = market_data(
+        pricing_date=PRICING_DATE,
+        discount_curve=flat_curve(PRICING_DATE, maturity, rate),
         currency=CURRENCY,
+    )
+    return underlying(
+        initial_value=initial_value,
+        volatility=volatility,
+        market_data=md,
+        dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
     )
 
 
 def test_control_variate_binomial_matches_adjustment():
-    spot = 100.0
-    strike = 110.0
-    vol = 0.25
-    rate = 0.03
-
-    underlying = _build_underlying(spot, vol, rate)
-    amer_spec = _build_spec(OptionType.PUT, ExerciseType.AMERICAN, strike)
-    euro_spec = _build_spec(OptionType.PUT, ExerciseType.EUROPEAN, strike)
+    ud = _underlying(initial_value=100.0, volatility=0.25, rate=0.03)
+    amer_spec = spec(OptionType.PUT, ExerciseType.AMERICAN, strike=110.0)
+    euro_spec = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=110.0)
 
     base_params = BinomialParams(num_steps=300)
     cv_params = BinomialParams(num_steps=300, control_variate_european=True)
 
     american_raw = OptionValuation(
-        underlying,
-        amer_spec,
-        PricingMethod.BINOMIAL,
-        params=base_params,
+        ud, amer_spec, PricingMethod.BINOMIAL, params=base_params
     ).present_value()
 
     european_num = OptionValuation(
-        underlying,
-        euro_spec,
-        PricingMethod.BINOMIAL,
-        params=base_params,
+        ud, euro_spec, PricingMethod.BINOMIAL, params=base_params
     ).present_value()
 
-    european_bsm = OptionValuation(
-        underlying,
-        euro_spec,
-        PricingMethod.BSM,
-    ).present_value()
+    european_bsm = OptionValuation(ud, euro_spec, PricingMethod.BSM).present_value()
 
     american_cv = OptionValuation(
-        underlying,
-        amer_spec,
-        PricingMethod.BINOMIAL,
-        params=cv_params,
+        ud, amer_spec, PricingMethod.BINOMIAL, params=cv_params
     ).present_value()
 
     expected = american_raw + (european_bsm - european_num)
@@ -95,43 +78,25 @@ def test_control_variate_binomial_matches_adjustment():
 
 
 def test_control_variate_pde_matches_adjustment():
-    spot = 100.0
-    strike = 95.0
-    vol = 0.2
-    rate = 0.04
-
-    underlying = _build_underlying(spot, vol, rate)
-    amer_spec = _build_spec(OptionType.PUT, ExerciseType.AMERICAN, strike)
-    euro_spec = _build_spec(OptionType.PUT, ExerciseType.EUROPEAN, strike)
+    ud = _underlying(initial_value=100.0, volatility=0.2, rate=0.04)
+    amer_spec = spec(OptionType.PUT, ExerciseType.AMERICAN, strike=95.0)
+    euro_spec = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=95.0)
 
     base_params = PDEParams(spot_steps=60, time_steps=60)
     cv_params = PDEParams(spot_steps=60, time_steps=60, control_variate_european=True)
 
     american_raw = OptionValuation(
-        underlying,
-        amer_spec,
-        PricingMethod.PDE_FD,
-        params=base_params,
+        ud, amer_spec, PricingMethod.PDE_FD, params=base_params
     ).present_value()
 
     european_num = OptionValuation(
-        underlying,
-        euro_spec,
-        PricingMethod.PDE_FD,
-        params=base_params,
+        ud, euro_spec, PricingMethod.PDE_FD, params=base_params
     ).present_value()
 
-    european_bsm = OptionValuation(
-        underlying,
-        euro_spec,
-        PricingMethod.BSM,
-    ).present_value()
+    european_bsm = OptionValuation(ud, euro_spec, PricingMethod.BSM).present_value()
 
     american_cv = OptionValuation(
-        underlying,
-        amer_spec,
-        PricingMethod.PDE_FD,
-        params=cv_params,
+        ud, amer_spec, PricingMethod.PDE_FD, params=cv_params
     ).present_value()
 
     expected = american_raw + (european_bsm - european_num)
@@ -168,7 +133,13 @@ class TestAsianControlVariate:
 
     def test_cv_matches_manual_adjustment(self):
         """CV-adjusted price = raw_american + (analytical_european − hull_european)."""
-        underlying = _build_underlying(100, 0.25, 0.05, dividend_rate=0.02)
+        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
+        ud = _underlying(
+            initial_value=100,
+            volatility=0.25,
+            rate=0.05,
+            dividend_curve=q_curve,
+        )
         base_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
         cv_params = BinomialParams(
             num_steps=STEPS,
@@ -180,7 +151,7 @@ class TestAsianControlVariate:
 
         # Raw American Hull tree
         american_raw = OptionValuation(
-            underlying,
+            ud,
             amer_spec,
             PricingMethod.BINOMIAL,
             params=base_params,
@@ -193,10 +164,7 @@ class TestAsianControlVariate:
             exercise_type=ExerciseType.EUROPEAN,
         )
         european_hull = OptionValuation(
-            underlying,
-            euro_spec,
-            PricingMethod.BINOMIAL,
-            params=base_params,
+            ud, euro_spec, PricingMethod.BINOMIAL, params=base_params
         ).present_value()
 
         # European analytical (Kemna-Vorst)
@@ -208,18 +176,11 @@ class TestAsianControlVariate:
             currency=CURRENCY,
             num_steps=STEPS,
         )
-        european_analytical = OptionValuation(
-            underlying,
-            bsm_spec,
-            PricingMethod.BSM,
-        ).present_value()
+        european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
         # CV-adjusted
         american_cv = OptionValuation(
-            underlying,
-            amer_spec,
-            PricingMethod.BINOMIAL,
-            params=cv_params,
+            ud, amer_spec, PricingMethod.BINOMIAL, params=cv_params
         ).present_value()
 
         expected = american_raw + (european_analytical - european_hull)
@@ -235,7 +196,13 @@ class TestAsianControlVariate:
 
     def test_cv_geq_european_analytical(self):
         """CV-adjusted American Asian ≥ European analytical (early exercise premium ≥ 0)."""
-        underlying = _build_underlying(100, 0.25, 0.05, dividend_rate=0.02)
+        q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
+        ud = _underlying(
+            initial_value=100,
+            volatility=0.25,
+            rate=0.05,
+            dividend_curve=q_curve,
+        )
         cv_params = BinomialParams(
             num_steps=STEPS,
             asian_tree_averages=TREE_AVERAGES,
@@ -250,10 +217,7 @@ class TestAsianControlVariate:
         ]:
             amer_spec = _asian_spec(option_type=option_type, strike=strike)
             american_cv = OptionValuation(
-                underlying,
-                amer_spec,
-                PricingMethod.BINOMIAL,
-                params=cv_params,
+                ud, amer_spec, PricingMethod.BINOMIAL, params=cv_params
             ).present_value()
 
             bsm_spec = AsianSpec(
@@ -264,11 +228,7 @@ class TestAsianControlVariate:
                 currency=CURRENCY,
                 num_steps=STEPS,
             )
-            european_analytical = OptionValuation(
-                underlying,
-                bsm_spec,
-                PricingMethod.BSM,
-            ).present_value()
+            european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
             assert american_cv >= european_analytical - 1e-8, (
                 f"{option_type.value} K={strike}: "
@@ -286,7 +246,14 @@ class TestAsianControlVariate:
     def test_cv_reduces_european_bias(self, spot, strike, vol, r, q, days, option_type):
         """For European exercise, CV should eliminate the Hull tree bias entirely."""
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        underlying = _build_underlying(spot, vol, r, dividend_rate=q)
+        q_curve = flat_curve(PRICING_DATE, maturity, q) if q else None
+        ud = _underlying(
+            initial_value=spot,
+            volatility=vol,
+            maturity=maturity,
+            rate=r,
+            dividend_curve=q_curve,
+        )
 
         hull_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
 
@@ -300,10 +267,7 @@ class TestAsianControlVariate:
             exercise_type=ExerciseType.EUROPEAN,
         )
         euro_hull = OptionValuation(
-            underlying,
-            euro_spec,
-            PricingMethod.BINOMIAL,
-            params=hull_params,
+            ud, euro_spec, PricingMethod.BINOMIAL, params=hull_params
         ).present_value()
 
         # European analytical
@@ -315,11 +279,7 @@ class TestAsianControlVariate:
             currency=CURRENCY,
             num_steps=STEPS,
         )
-        euro_analytical = OptionValuation(
-            underlying,
-            bsm_spec,
-            PricingMethod.BSM,
-        ).present_value()
+        euro_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
         # Hull tree bias
         hull_bias = abs(euro_hull - euro_analytical) / euro_analytical
@@ -336,7 +296,7 @@ class TestAsianControlVariate:
 
     def test_cv_arithmetic_matches_manual_adjustment(self):
         """CV with arithmetic averaging uses Turnbull-Wakeman analytical formula."""
-        underlying = _build_underlying(100, 0.25, 0.05)
+        ud = _underlying(initial_value=100, volatility=0.25, rate=0.05)
         base_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
         cv_params = BinomialParams(
             num_steps=STEPS,
@@ -351,10 +311,7 @@ class TestAsianControlVariate:
 
         # Raw American Hull tree
         american_raw = OptionValuation(
-            underlying,
-            amer_spec,
-            PricingMethod.BINOMIAL,
-            params=base_params,
+            ud, amer_spec, PricingMethod.BINOMIAL, params=base_params
         ).present_value()
 
         # European Hull tree (same lattice)
@@ -367,10 +324,7 @@ class TestAsianControlVariate:
             exercise_type=ExerciseType.EUROPEAN,
         )
         european_hull = OptionValuation(
-            underlying,
-            euro_spec,
-            PricingMethod.BINOMIAL,
-            params=base_params,
+            ud, euro_spec, PricingMethod.BINOMIAL, params=base_params
         ).present_value()
 
         # European analytical (Turnbull-Wakeman)
@@ -382,18 +336,11 @@ class TestAsianControlVariate:
             currency=CURRENCY,
             num_steps=STEPS,
         )
-        european_analytical = OptionValuation(
-            underlying,
-            bsm_spec,
-            PricingMethod.BSM,
-        ).present_value()
+        european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
         # CV-adjusted
         american_cv = OptionValuation(
-            underlying,
-            amer_spec,
-            PricingMethod.BINOMIAL,
-            params=cv_params,
+            ud, amer_spec, PricingMethod.BINOMIAL, params=cv_params
         ).present_value()
 
         expected = american_raw + (european_analytical - european_hull)

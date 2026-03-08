@@ -42,7 +42,8 @@ class TestPathSimulation:
 class TestGBMProcess:
     """Tests for the GBMProcess class"""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment for GBM tests"""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
@@ -181,7 +182,8 @@ class TestGBMProcess:
 class TestSRDProcess:
     """Tests for the SRDProcess (CIR) class."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment for SRD tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
@@ -267,11 +269,26 @@ class TestSRDProcess:
 
         np.testing.assert_array_equal(paths1, paths2)
 
+    def test_srd_low_mean_reversion_stays_near_start(self):
+        """With very low kappa, long-run pull should be weak."""
+        params = SRDParams(initial_value=0.03, volatility=0.01, kappa=1.0e-4, theta=0.20)
+        proc = SRDProcess(self.market_data, params, self.sim_config)
+        paths = proc.simulate(random_seed=7)
+        assert abs(np.mean(paths[-1]) - 0.03) < 0.03
+
+    def test_srd_high_mean_reversion_moves_towards_theta(self):
+        """With very high kappa, process should quickly revert toward theta."""
+        params = SRDParams(initial_value=0.03, volatility=0.01, kappa=20.0, theta=0.08)
+        proc = SRDProcess(self.market_data, params, self.sim_config)
+        paths = proc.simulate(random_seed=8)
+        assert abs(np.mean(paths[-1]) - 0.08) < 0.03
+
 
 class TestJDProcess:
     """Tests for the JDProcess (Merton) class."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment for Jump Diffusion tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
@@ -376,6 +393,34 @@ class TestJDProcess:
         # Without jumps, all values should be positive and continuous
         assert np.all(paths_jd > 0)
 
+    def test_jd_zero_jump_size_reduces_to_gbm_moments(self):
+        """mu=delta=0 removes jump-size effect even if intensity is non-zero."""
+        jd_params = JDParams(initial_value=100.0, volatility=0.2, lambd=2.0, mu=0.0, delta=0.0)
+        jd = JDProcess(self.market_data, jd_params, self.sim_config)
+        gbm = GBMProcess(
+            self.market_data, GBMParams(initial_value=100.0, volatility=0.2), self.sim_config
+        )
+        jd_paths = jd.simulate(random_seed=123)
+        gbm_paths = gbm.simulate(random_seed=123)
+        assert np.isclose(np.mean(jd_paths[-1]), np.mean(gbm_paths[-1]), rtol=0.02)
+        assert np.isclose(np.std(jd_paths[-1]), np.std(gbm_paths[-1]), rtol=0.03)
+
+    def test_jd_high_intensity_increases_tail_dispersion(self):
+        """Higher jump intensity should widen terminal distribution tails."""
+        low = JDProcess(
+            self.market_data,
+            JDParams(initial_value=100.0, volatility=0.2, lambd=0.1, mu=-0.1, delta=0.3),
+            self.sim_config,
+        )
+        high = JDProcess(
+            self.market_data,
+            JDParams(initial_value=100.0, volatility=0.2, lambd=3.0, mu=-0.1, delta=0.3),
+            self.sim_config,
+        )
+        low_paths = low.simulate(random_seed=42)
+        high_paths = high.simulate(random_seed=42)
+        assert np.std(high_paths[-1]) > np.std(low_paths[-1])
+
 
 class TestSimulationConfig:
     """Tests for SimulationConfig dataclass."""
@@ -466,7 +511,8 @@ class TestSimulationConfig:
 class TestVarianceReduction:
     """Tests for configurable antithetic variates and moment matching."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.end_date = dt.datetime(2026, 1, 1)
         self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)

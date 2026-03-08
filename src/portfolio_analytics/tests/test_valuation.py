@@ -157,7 +157,8 @@ class TestCondorSpec:
 class TestUnderlyingData:
     """Tests for UnderlyingData class."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
@@ -189,7 +190,8 @@ class TestUnderlyingData:
 class TestOptionValuation:
     """Tests for OptionValuation dispatcher class."""
 
-    def setup_method(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         """Set up market environment and valuation specifications for tests."""
         self.pricing_date = dt.datetime(2025, 1, 1)
         self.maturity = dt.datetime(2026, 1, 1)
@@ -881,7 +883,7 @@ class TestOptionValuation:
             ud,
             spec,
             PricingMethod.PDE_FD,
-            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000),
+            params=PDEParams(spot_steps=200, time_steps=200, max_iter=20_000),
         )
         fd_pv = fd_val.present_value()
 
@@ -912,7 +914,7 @@ class TestOptionValuation:
             ud,
             spec,
             PricingMethod.PDE_FD,
-            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000),
+            params=PDEParams(spot_steps=200, time_steps=200, max_iter=20_000),
         )
         fd_pv = fd_val.present_value()
 
@@ -951,7 +953,7 @@ class TestOptionValuation:
             currency="USD",
         )
 
-        params = PDEParams(spot_steps=90, time_steps=90, max_iter=20_000)
+        params = PDEParams(spot_steps=200, time_steps=200, max_iter=20_000)
 
         am_val = OptionValuation(ud, spec_am, PricingMethod.PDE_FD, params=params)
         eu_val = OptionValuation(ud, spec_eu, PricingMethod.PDE_FD, params=params)
@@ -987,7 +989,7 @@ class TestOptionValuation:
             ud,
             spec_am,
             PricingMethod.PDE_FD,
-            params=PDEParams(spot_steps=90, time_steps=90, max_iter=20_000),
+            params=PDEParams(spot_steps=200, time_steps=200, max_iter=20_000),
         )
         fd_pv = fd_val.present_value()
 
@@ -1032,3 +1034,138 @@ class TestOptionValuation:
         bsm_pv = bsm_val.present_value()
 
         assert np.isclose(binom_pv, bsm_pv, rtol=0.02)
+
+
+class TestCrossMethodGridAndParamCombos:
+    """Cross-method comparison grid and interaction-style parameter coverage."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.maturity = dt.datetime(2026, 1, 1)
+        self.currency = "USD"
+        self.spot = 100.0
+        self.strike = 100.0
+        self.vol = 0.2
+
+    def _curve(self, kind: str) -> DiscountCurve | None:
+        if kind == "none":
+            return None
+        if kind == "flat":
+            return flat_curve(self.pricing_date, self.maturity, 0.04)
+        if kind == "nonflat":
+            return DiscountCurve.from_forwards(
+                times=np.array([0.0, 0.5, 1.0]),
+                forwards=np.array([0.02, 0.06]),
+            )
+        raise ValueError(f"unknown curve kind: {kind}")
+
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize("r_curve_kind", ["flat", "nonflat"])
+    @pytest.mark.parametrize("div_curve_kind", ["none", "flat", "nonflat"])
+    def test_european_cross_method_grid(self, option_type, r_curve_kind, div_curve_kind):
+        r_curve = self._curve(r_curve_kind)
+        assert r_curve is not None
+        div_curve = self._curve(div_curve_kind)
+
+        md = MarketData(self.pricing_date, r_curve, currency=self.currency)
+        ud = UnderlyingData(
+            initial_value=self.spot,
+            volatility=self.vol,
+            market_data=md,
+            dividend_curve=div_curve,
+        )
+        spec = VanillaSpec(
+            option_type=option_type,
+            exercise_type=ExerciseType.EUROPEAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+        )
+
+        pv_bsm = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
+        pv_binom = OptionValuation(
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=900),
+        ).present_value()
+        pv_pde = OptionValuation(
+            ud,
+            spec,
+            PricingMethod.PDE_FD,
+            params=PDEParams(spot_steps=200, time_steps=200, max_iter=20_000),
+        ).present_value()
+
+        assert np.isfinite(pv_bsm) and pv_bsm > 0.0
+        assert np.isfinite(pv_binom) and pv_binom > 0.0
+        assert np.isfinite(pv_pde) and pv_pde > 0.0
+        assert np.isclose(pv_binom, pv_bsm, rtol=0.03)
+        assert np.isclose(pv_pde, pv_bsm, rtol=0.03)
+
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize("div_curve_kind", ["none", "flat"])
+    def test_american_cross_method_grid(self, option_type, div_curve_kind):
+        r_curve = flat_curve(self.pricing_date, self.maturity, 0.04)
+        md = MarketData(self.pricing_date, r_curve, currency=self.currency)
+        ud = UnderlyingData(
+            initial_value=self.spot,
+            volatility=self.vol,
+            market_data=md,
+            dividend_curve=self._curve(div_curve_kind),
+        )
+        spec = VanillaSpec(
+            option_type=option_type,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+        )
+
+        pv_binom = OptionValuation(
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=1200),
+        ).present_value()
+        pv_pde = OptionValuation(
+            ud,
+            spec,
+            PricingMethod.PDE_FD,
+            params=PDEParams(spot_steps=200, time_steps=200, max_iter=20_000),
+        ).present_value()
+
+        assert np.isfinite(pv_binom) and pv_binom > 0.0
+        assert np.isfinite(pv_pde) and pv_pde > 0.0
+        assert np.isclose(pv_pde, pv_binom, rtol=0.03)
+
+    @pytest.mark.parametrize(
+        "mc_params",
+        [
+            MonteCarloParams(random_seed=42, deg=2, ridge_lambda=0.0, min_itm=10),
+            MonteCarloParams(random_seed=42, deg=3, ridge_lambda=1e-8, min_itm=25),
+            MonteCarloParams(random_seed=42, deg=5, ridge_lambda=1e-6, min_itm=50),
+        ],
+    )
+    def test_monte_carlo_parameter_interactions(self, mc_params: MonteCarloParams):
+        """Regression degrees and regularization combos should produce finite PVs."""
+        md = MarketData(
+            self.pricing_date,
+            flat_curve(self.pricing_date, self.maturity, 0.04),
+            currency=self.currency,
+        )
+        gbm = GBMProcess(
+            md,
+            GBMParams(initial_value=self.spot, volatility=self.vol),
+            SimulationConfig(paths=30_000, frequency="W", end_date=self.maturity),
+        )
+        spec = VanillaSpec(
+            option_type=OptionType.PUT,
+            exercise_type=ExerciseType.AMERICAN,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+        )
+        pv = OptionValuation(gbm, spec, PricingMethod.MONTE_CARLO, params=mc_params).present_value()
+        assert np.isfinite(pv)
+        assert pv > 0.0
