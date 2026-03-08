@@ -317,6 +317,14 @@ class PathSimulation(ABC):
 
         self._last_normals: np.ndarray | None = None
         self.time_grid = sim_config.time_grid
+        if self.time_grid is not None and len(self.time_grid) > 0:
+            grid_start = min(self.time_grid)
+            if grid_start < market_data.pricing_date:
+                raise ValidationError(
+                    f"Explicit time_grid starts at {grid_start}, which is before "
+                    f"pricing_date ({market_data.pricing_date}). "
+                    "All grid dates must be >= pricing_date."
+                )
         self.observation_dates = set(sim_config.observation_dates)
         if self.discrete_dividends:
             for ex_date, _ in self.discrete_dividends:
@@ -431,9 +439,19 @@ class PathSimulation(ABC):
         else:
             dates = pd.date_range(start=dense_start, end=end, freq=self.frequency).to_pydatetime()
 
-        # Merge generated dates with required boundary + special dates
-        all_dates = set(dates) | {self.pricing_date, dense_start, end} | self.observation_dates
-        return np.array(sorted(all_dates))
+        # Merge generated dates with required boundary + special dates.
+        # Observation dates before pricing_date are excluded — the diffusion
+        # cannot start before the valuation date, and stale dates would
+        # produce negative year-fractions that corrupt forward-rate lookups.
+        valid_obs = {d for d in self.observation_dates if d >= self.pricing_date}
+        all_dates = set(dates) | {self.pricing_date, dense_start, end} | valid_obs
+        sorted_dates = np.array(sorted(all_dates))
+        if sorted_dates[0] != self.pricing_date:
+            raise ValidationError(
+                f"Time grid must start at pricing_date ({self.pricing_date}), "
+                f"but starts at {sorted_dates[0]}. Check grid_start / observation_dates."
+            )
+        return sorted_dates
 
     def _ensure_time_grid(self) -> None:
         """Populate ``time_grid`` lazily when not explicitly provided."""

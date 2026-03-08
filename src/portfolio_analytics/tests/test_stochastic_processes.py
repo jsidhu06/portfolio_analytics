@@ -603,3 +603,64 @@ class TestVarianceReduction:
             paths = gbm.simulate(random_seed=42)
         assert paths.shape[1] == 999
         assert np.all(paths > 0)
+
+
+class TestObservationDateFiltering:
+    """Observation dates before pricing_date must not enter the time grid."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.pricing_date = dt.datetime(2025, 1, 1)
+        self.end_date = dt.datetime(2026, 1, 1)
+        self.curve = flat_curve(self.pricing_date, self.end_date, 0.05)
+        self.md = MarketData(self.pricing_date, self.curve, currency="USD")
+        self.params = GBMParams(initial_value=100.0, volatility=0.20)
+
+    def test_past_observation_date_excluded_from_grid(self):
+        """An observation date before pricing_date must not appear in the time grid."""
+        past = dt.datetime(2024, 6, 1)
+        sc = SimulationConfig(
+            paths=100, frequency="ME", end_date=self.end_date, observation_dates={past}
+        )
+        gbm = GBMProcess(self.md, self.params, sc)
+        gbm._ensure_time_grid()
+        assert gbm.time_grid[0] == self.pricing_date
+        assert past not in set(gbm.time_grid)
+
+    def test_past_obs_date_does_not_corrupt_simulation(self):
+        """Simulation with a past observation date must match the clean baseline."""
+        sc_clean = SimulationConfig(paths=5000, frequency="ME", end_date=self.end_date)
+        sc_past = SimulationConfig(
+            paths=5000,
+            frequency="ME",
+            end_date=self.end_date,
+            observation_dates={dt.datetime(2024, 6, 1)},
+        )
+        clean = GBMProcess(self.md, self.params, sc_clean).simulate(random_seed=42)
+        dirty = GBMProcess(self.md, self.params, sc_past).simulate(random_seed=42)
+        np.testing.assert_array_equal(clean, dirty)
+
+    def test_explicit_time_grid_before_pricing_date_raises(self):
+        """An explicit time_grid starting before pricing_date must be rejected at construction."""
+        bad_grid = np.array(
+            [
+                dt.datetime(2024, 6, 1),
+                self.pricing_date,
+                self.end_date,
+            ]
+        )
+        sc = SimulationConfig(paths=100, time_grid=bad_grid)
+        with pytest.raises(ValidationError, match=r"before pricing_date"):
+            GBMProcess(self.md, self.params, sc)
+
+    def test_grid_start_before_pricing_date_raises(self):
+        """grid_start earlier than pricing_date must be caught by the assertion."""
+        sc = SimulationConfig(
+            paths=100,
+            num_steps=10,
+            end_date=self.end_date,
+            grid_start=dt.datetime(2024, 6, 1),
+        )
+        gbm = GBMProcess(self.md, self.params, sc)
+        with pytest.raises(ValidationError, match=r"Time grid must start at pricing_date"):
+            gbm._ensure_time_grid()
