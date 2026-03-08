@@ -68,10 +68,15 @@ MC_CFG = MonteCarloParams(random_seed=42)
 # ── Portfolio-analytics helpers ─────────────────────────────────────────
 
 
-def _market_data() -> MarketData:
+def _market_data(discount_curve: DiscountCurve | None = None) -> MarketData:
+    curve = (
+        discount_curve
+        if discount_curve is not None
+        else flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
+    )
     return market_data(
         pricing_date=PRICING_DATE,
-        discount_curve=flat_curve(PRICING_DATE, MATURITY, RISK_FREE),
+        discount_curve=curve,
         currency=CURRENCY,
     )
 
@@ -94,12 +99,13 @@ def _spec(
 def _underlying(
     *,
     spot: float,
+    risk_free_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
 ) -> UnderlyingData:
     return underlying(
         initial_value=spot,
         volatility=VOL,
-        market_data=_market_data(),
+        market_data=_market_data(discount_curve=risk_free_curve),
         dividend_curve=dividend_curve,
     )
 
@@ -107,11 +113,12 @@ def _underlying(
 def _gbm(
     *,
     spot: float,
+    risk_free_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     paths: int = 500_000,
 ) -> GBMProcess:
     return GBMProcess(
-        _market_data(),
+        _market_data(discount_curve=risk_free_curve),
         GBMParams(
             initial_value=spot,
             volatility=VOL,

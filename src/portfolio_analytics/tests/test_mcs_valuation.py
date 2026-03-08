@@ -3,6 +3,7 @@
 import numpy as np
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     GBMProcess,
@@ -30,14 +31,15 @@ from portfolio_analytics.valuation import (
 _BSM_ATM_CALL = 10.4506
 _BSM_ATM_PUT = 5.5735
 
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
 
-_MD = market_data(
-    pricing_date=PRICING_DATE,
-    discount_curve=flat_curve(PRICING_DATE, MATURITY, RATE),
-)
+def _market_data(discount_curve: DiscountCurve | None = None):
+    curve = (
+        discount_curve if discount_curve is not None else flat_curve(PRICING_DATE, MATURITY, RATE)
+    )
+    return market_data(
+        pricing_date=PRICING_DATE,
+        discount_curve=curve,
+    )
 
 
 def _gbm(
@@ -45,10 +47,11 @@ def _gbm(
     frequency: str = "D",
     spot: float = SPOT,
     vol: float = VOL,
+    discount_curve: DiscountCurve | None = None,
 ) -> GBMProcess:
     params = GBMParams(initial_value=spot, volatility=vol)
     sim_config = SimulationConfig(paths=paths, frequency=frequency, end_date=MATURITY)
-    return GBMProcess(_MD, params, sim_config)
+    return GBMProcess(_market_data(discount_curve), params, sim_config)
 
 
 class TestMCSValuation:
@@ -88,7 +91,7 @@ class TestMCSValuation:
         assert np.isclose(pv_deg5, pv_deg2, rtol=0.02)
 
         # binomial should also be close
-        ud_bin = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_MD)
+        ud_bin = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_market_data())
         pv_binom = pv(ud_bin, am_spec, PricingMethod.BINOMIAL, params=BINOM_PARAMS)
         assert np.isclose(pv_deg2, pv_binom, rtol=0.02)
 

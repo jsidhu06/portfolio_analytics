@@ -35,21 +35,36 @@ _DIVS = [
 ]
 
 
-def _build_case():
+def _build_case(
+    *,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
+):
+    divs = _DIVS if discrete_dividends is None else discrete_dividends
+    rate_curve = (
+        discount_curve if discount_curve is not None else flat_curve(PRICING_DATE, _MATURITY, _RATE)
+    )
     md = market_data(
         pricing_date=PRICING_DATE,
-        discount_curve=flat_curve(PRICING_DATE, _MATURITY, _RATE),
+        discount_curve=rate_curve,
     )
     sp = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=_STRIKE, maturity=_MATURITY)
     ud = underlying(
         initial_value=_SPOT,
         volatility=_VOL,
         market_data=md,
-        discrete_dividends=_DIVS,
+        dividend_curve=dividend_curve,
+        discrete_dividends=divs,
     )
 
     sim_config = SimulationConfig(paths=200_000, frequency="W", end_date=_MATURITY)
-    gbm_params = GBMParams(initial_value=_SPOT, volatility=_VOL, discrete_dividends=_DIVS)
+    gbm_params = GBMParams(
+        initial_value=_SPOT,
+        volatility=_VOL,
+        dividend_curve=dividend_curve,
+        discrete_dividends=divs,
+    )
     gbm = GBMProcess(md, gbm_params, sim_config)
 
     return md, sp, ud, gbm

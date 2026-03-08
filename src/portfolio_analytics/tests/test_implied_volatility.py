@@ -13,6 +13,7 @@ from portfolio_analytics.enums import (
     PricingMethod,
 )
 from portfolio_analytics.market_environment import MarketData
+from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.tests.helpers import (
     market_data,
@@ -33,22 +34,26 @@ from portfolio_analytics.valuation import (
 from portfolio_analytics.valuation.params import BinomialParams
 
 
+PRICING_DATE = dt.datetime(2025, 1, 1)
+MATURITY = dt.datetime(2026, 1, 1)
+RATE = 0.05
+_DEFAULT_RATE_CURVE = flat_curve(PRICING_DATE, MATURITY, RATE)
+
+
 def _build_valuation(
     *,
     option_type: OptionType,
     spot: float = 100.0,
     strike: float = 100.0,
     vol: float = 0.2,
-    rate: float = 0.05,
-    dividend_rate: float = 0.0,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
 ) -> OptionValuation:
-    pricing_date = dt.datetime(2025, 1, 1)
-    maturity = dt.datetime(2026, 1, 1)
+    rate_curve = discount_curve if discount_curve is not None else _DEFAULT_RATE_CURVE
     market_data_obj = market_data(
-        pricing_date=pricing_date,
-        discount_curve=flat_curve(pricing_date, maturity, rate),
+        pricing_date=PRICING_DATE,
+        discount_curve=rate_curve,
     )
-    dividend_curve = flat_curve(pricing_date, maturity, dividend_rate) if dividend_rate else None
     underlying_data = underlying(
         initial_value=spot,
         volatility=vol,
@@ -57,7 +62,7 @@ def _build_valuation(
     )
     spec = make_vanilla_spec(
         strike=strike,
-        maturity=maturity,
+        maturity=MATURITY,
         option_type=option_type,
         exercise_type=ExerciseType.EUROPEAN,
     )
@@ -72,24 +77,32 @@ def _build_discrete_dividend_valuation(
     *,
     option_type: OptionType,
     vol: float,
-    rate: float = 0.1,
     spot: float = 52.0,
     strike: float = 50.0,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None = None,
 ) -> OptionValuation:
-    pricing_date = dt.datetime(2025, 1, 1)
-    maturity = pricing_date + dt.timedelta(days=365)
-    divs = [
-        (pricing_date + dt.timedelta(days=90), 0.5),
-        (pricing_date + dt.timedelta(days=270), 0.5),
-    ]
+    pricing_date = PRICING_DATE
+    maturity = MATURITY
+    divs = (
+        [
+            (pricing_date + dt.timedelta(days=90), 0.5),
+            (pricing_date + dt.timedelta(days=270), 0.5),
+        ]
+        if discrete_dividends is None
+        else discrete_dividends
+    )
+    rate_curve = discount_curve if discount_curve is not None else _DEFAULT_RATE_CURVE
     market_data_obj = market_data(
         pricing_date=pricing_date,
-        discount_curve=flat_curve(pricing_date, maturity, rate),
+        discount_curve=rate_curve,
     )
     underlying_data = underlying(
         initial_value=spot,
         volatility=vol,
         market_data=market_data_obj,
+        dividend_curve=dividend_curve,
         discrete_dividends=divs,
     )
     spec = make_vanilla_spec(
@@ -112,17 +125,15 @@ def _build_binomial_valuation(
     spot: float = 100.0,
     strike: float = 100.0,
     vol: float = 0.2,
-    rate: float = 0.05,
-    dividend_rate: float = 0.0,
     num_steps: int = 400,
+    discount_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
 ) -> OptionValuation:
-    pricing_date = dt.datetime(2025, 1, 1)
-    maturity = dt.datetime(2026, 1, 1)
+    rate_curve = discount_curve if discount_curve is not None else _DEFAULT_RATE_CURVE
     market_data_obj = market_data(
-        pricing_date=pricing_date,
-        discount_curve=flat_curve(pricing_date, maturity, rate),
+        pricing_date=PRICING_DATE,
+        discount_curve=rate_curve,
     )
-    dividend_curve = flat_curve(pricing_date, maturity, dividend_rate) if dividend_rate else None
     underlying_data = underlying(
         initial_value=spot,
         volatility=vol,
@@ -131,7 +142,7 @@ def _build_binomial_valuation(
     )
     spec = make_vanilla_spec(
         strike=strike,
-        maturity=maturity,
+        maturity=MATURITY,
         option_type=option_type,
         exercise_type=exercise_type,
     )
@@ -215,13 +226,14 @@ def test_implied_volatility_rejects_monte_carlo():
 def test_implied_volatility_with_dividend_curve():
     true_vol = 0.3
     initial_vol = 0.1
+    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
     pricing_valuation = _build_valuation(
-        option_type=OptionType.CALL, vol=true_vol, dividend_rate=0.02
+        option_type=OptionType.CALL, vol=true_vol, dividend_curve=q_curve
     )
     target_price = pricing_valuation.present_value()
 
     solver_valuation = _build_valuation(
-        option_type=OptionType.CALL, vol=initial_vol, dividend_rate=0.02
+        option_type=OptionType.CALL, vol=initial_vol, dividend_curve=q_curve
     )
     result = implied_volatility(target_price, solver_valuation)
 
@@ -248,13 +260,15 @@ def test_implied_volatility_with_discrete_dividends():
 def test_implied_volatility_recovers_american_binomial(option_type: OptionType):
     true_vol = 0.3
     initial_vol = 0.12
-    dividend_rate = 0.02 if option_type is OptionType.CALL else 0.0
+    dividend_curve = (
+        flat_curve(PRICING_DATE, MATURITY, 0.02) if option_type is OptionType.CALL else None
+    )
 
     pricing_valuation = _build_binomial_valuation(
         option_type=option_type,
         exercise_type=ExerciseType.AMERICAN,
         vol=true_vol,
-        dividend_rate=dividend_rate,
+        dividend_curve=dividend_curve,
     )
     target_price = pricing_valuation.present_value()
 
@@ -262,7 +276,7 @@ def test_implied_volatility_recovers_american_binomial(option_type: OptionType):
         option_type=option_type,
         exercise_type=ExerciseType.AMERICAN,
         vol=initial_vol,
-        dividend_rate=dividend_rate,
+        dividend_curve=dividend_curve,
     )
     result = implied_volatility(
         target_price,
