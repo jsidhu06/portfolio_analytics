@@ -1,8 +1,6 @@
 import datetime as dt
-import warnings
 from typing import Any, Sequence
 
-import numpy as np
 
 from portfolio_analytics.enums import DayCountConvention, ExerciseType, OptionType
 from portfolio_analytics.market_environment import MarketData
@@ -96,20 +94,6 @@ def pv(underlying: Any, spec: Any, method: Any, **kw: Any) -> float:
     """Shortcut: build an OptionValuation and return its present value."""
 
     return OptionValuation(underlying, spec, method, **kw).present_value()
-
-
-def build_curve_from_forwards(
-    *,
-    times: np.ndarray,
-    forwards: np.ndarray,
-) -> DiscountCurve:
-    """Deprecated — use ``DiscountCurve.from_forwards()`` instead."""
-    warnings.warn(
-        "build_curve_from_forwards is deprecated; use DiscountCurve.from_forwards()",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return DiscountCurve.from_forwards(times=times, forwards=forwards)
 
 
 def gbm(
