@@ -26,7 +26,7 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import (
     flat_curve,
-    flat_market_data,
+    market_data,
     make_vanilla_spec,
     underlying,
 )
@@ -69,10 +69,9 @@ MC_CFG = MonteCarloParams(random_seed=42)
 
 
 def _market_data() -> MarketData:
-    return flat_market_data(
+    return market_data(
         pricing_date=PRICING_DATE,
-        maturity=MATURITY,
-        rate=RISK_FREE,
+        discount_curve=flat_curve(PRICING_DATE, MATURITY, RISK_FREE),
         currency=CURRENCY,
     )
 

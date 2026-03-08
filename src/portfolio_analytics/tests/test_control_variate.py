@@ -17,7 +17,8 @@ from portfolio_analytics.tests.helpers import (
     MATURITY,
     CURRENCY,
     flat_curve,
-    flat_underlying,
+    market_data,
+    underlying,
     spec,
 )
 from portfolio_analytics.valuation import OptionValuation
@@ -27,8 +28,31 @@ from portfolio_analytics.valuation.params import BinomialParams, PDEParams
 logger = logging.getLogger(__name__)
 
 
+def _underlying(
+    *,
+    initial_value: float,
+    volatility: float,
+    rate: float,
+    maturity: dt.datetime = MATURITY,
+    dividend_curve=None,
+    discrete_dividends=None,
+):
+    md = market_data(
+        pricing_date=PRICING_DATE,
+        discount_curve=flat_curve(PRICING_DATE, maturity, rate),
+        currency=CURRENCY,
+    )
+    return underlying(
+        initial_value=initial_value,
+        volatility=volatility,
+        market_data=md,
+        dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
+    )
+
+
 def test_control_variate_binomial_matches_adjustment():
-    ud = flat_underlying(initial_value=100.0, volatility=0.25, rate=0.03)
+    ud = _underlying(initial_value=100.0, volatility=0.25, rate=0.03)
     amer_spec = spec(OptionType.PUT, ExerciseType.AMERICAN, strike=110.0)
     euro_spec = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=110.0)
 
@@ -54,7 +78,7 @@ def test_control_variate_binomial_matches_adjustment():
 
 
 def test_control_variate_pde_matches_adjustment():
-    ud = flat_underlying(initial_value=100.0, volatility=0.2, rate=0.04)
+    ud = _underlying(initial_value=100.0, volatility=0.2, rate=0.04)
     amer_spec = spec(OptionType.PUT, ExerciseType.AMERICAN, strike=95.0)
     euro_spec = spec(OptionType.PUT, ExerciseType.EUROPEAN, strike=95.0)
 
@@ -110,7 +134,7 @@ class TestAsianControlVariate:
     def test_cv_matches_manual_adjustment(self):
         """CV-adjusted price = raw_american + (analytical_european − hull_european)."""
         q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
-        ud = flat_underlying(
+        ud = _underlying(
             initial_value=100,
             volatility=0.25,
             rate=0.05,
@@ -173,7 +197,7 @@ class TestAsianControlVariate:
     def test_cv_geq_european_analytical(self):
         """CV-adjusted American Asian ≥ European analytical (early exercise premium ≥ 0)."""
         q_curve = flat_curve(PRICING_DATE, MATURITY, 0.02)
-        ud = flat_underlying(
+        ud = _underlying(
             initial_value=100,
             volatility=0.25,
             rate=0.05,
@@ -223,7 +247,7 @@ class TestAsianControlVariate:
         """For European exercise, CV should eliminate the Hull tree bias entirely."""
         maturity = PRICING_DATE + dt.timedelta(days=days)
         q_curve = flat_curve(PRICING_DATE, maturity, q) if q else None
-        ud = flat_underlying(
+        ud = _underlying(
             initial_value=spot,
             volatility=vol,
             maturity=maturity,
@@ -272,7 +296,7 @@ class TestAsianControlVariate:
 
     def test_cv_arithmetic_matches_manual_adjustment(self):
         """CV with arithmetic averaging uses Turnbull-Wakeman analytical formula."""
-        ud = flat_underlying(initial_value=100, volatility=0.25, rate=0.05)
+        ud = _underlying(initial_value=100, volatility=0.25, rate=0.05)
         base_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
         cv_params = BinomialParams(
             num_steps=STEPS,

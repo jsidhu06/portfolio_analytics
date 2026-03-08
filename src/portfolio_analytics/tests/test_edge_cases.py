@@ -22,7 +22,7 @@ from portfolio_analytics.exceptions import (
 )
 from portfolio_analytics.tests.helpers import (
     flat_curve,
-    flat_market_data,
+    market_data,
     underlying,
     make_vanilla_spec,
     pv as _pv,
@@ -50,10 +50,9 @@ def _underlying(
     return underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=flat_market_data(
+        market_data=market_data(
             pricing_date=PRICING_DATE,
-            maturity=maturity,
-            rate=rate,
+            discount_curve=flat_curve(PRICING_DATE, maturity, rate),
             currency="USD",
         ),
         dividend_curve=dividend_curve,

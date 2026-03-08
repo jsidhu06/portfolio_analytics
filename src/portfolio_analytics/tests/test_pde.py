@@ -32,7 +32,7 @@ from portfolio_analytics.valuation.params import PDEParams
 def test_pde_fd_grid_method_equivalence_european():
     """PDE FD variants should be in the same neighborhood for European options."""
     q_curve = flat_curve(PRICING_DATE, MATURITY, 0.01)
-    ud = underlying(spot=100.0, dividend_curve=q_curve)
+    ud = underlying(initial_value=100.0, dividend_curve=q_curve)
     sp = spec(strike=100.0, option_type=OptionType.CALL, exercise=ExerciseType.EUROPEAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)
@@ -70,7 +70,7 @@ def test_pde_fd_grid_method_equivalence_european():
 def test_pde_fd_grid_method_equivalence_american():
     """PDE FD American variants should be in the same neighborhood."""
     q_curve = flat_curve(PRICING_DATE, MATURITY, 0.0)
-    ud = underlying(spot=95.0, dividend_curve=q_curve)
+    ud = underlying(initial_value=95.0, dividend_curve=q_curve)
     sp = spec(strike=100.0, option_type=OptionType.PUT, exercise=ExerciseType.AMERICAN)
 
     base_params = PDEParams(spot_steps=160, time_steps=240)

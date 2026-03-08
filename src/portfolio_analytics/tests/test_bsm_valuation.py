@@ -12,7 +12,7 @@ from portfolio_analytics.tests.conftest import (
     SPOT,
     STRIKE,
 )
-from portfolio_analytics.tests.helpers import flat_curve, flat_underlying as underlying, pv, spec
+from portfolio_analytics.tests.helpers import flat_curve, underlying, pv, spec
 from portfolio_analytics.valuation import (
     VanillaSpec,
     OptionValuation,

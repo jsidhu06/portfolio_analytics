@@ -11,11 +11,13 @@ from portfolio_analytics.stochastic_processes import (
 from portfolio_analytics.tests.conftest import (
     BINOM_PARAMS,
     MC_PARAMS,
+    PRICING_DATE,
     MATURITY,
+    RATE,
     SPOT,
     VOL,
 )
-from portfolio_analytics.tests.helpers import flat_market_data, pv, spec
+from portfolio_analytics.tests.helpers import flat_curve, market_data, pv, spec
 from portfolio_analytics.valuation import (
     MonteCarloParams,
     OptionValuation,
@@ -32,7 +34,10 @@ _BSM_ATM_PUT = 5.5735
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-_MD = flat_market_data()
+_MD = market_data(
+    pricing_date=PRICING_DATE,
+    discount_curve=flat_curve(PRICING_DATE, MATURITY, RATE),
+)
 
 
 def _gbm(

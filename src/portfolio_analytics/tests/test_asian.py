@@ -28,7 +28,7 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import (
     flat_curve,
-    flat_market_data,
+    market_data,
     underlying,
 )
 from portfolio_analytics.stochastic_processes import (
@@ -59,10 +59,9 @@ ASIAN_TREE_AVERAGES = 100
 
 
 def _market_data(short_rate: float, maturity: dt.datetime) -> MarketData:
-    return flat_market_data(
+    return market_data(
         pricing_date=PRICING_DATE,
-        maturity=maturity,
-        rate=short_rate,
+        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
         currency=CURRENCY,
     )
 

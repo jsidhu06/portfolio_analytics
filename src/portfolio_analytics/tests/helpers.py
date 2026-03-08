@@ -58,23 +58,6 @@ def market_data(
     )
 
 
-def flat_market_data(
-    *,
-    pricing_date: dt.datetime = PRICING_DATE,
-    maturity: dt.datetime = MATURITY,
-    rate: float = RATE,
-    currency: str = CURRENCY,
-    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
-) -> MarketData:
-    """Build MarketData using a flat risk-free curve for convenience."""
-    return market_data(
-        pricing_date=pricing_date,
-        discount_curve=flat_curve(pricing_date, maturity, rate),
-        currency=currency,
-        day_count_convention=day_count_convention,
-    )
-
-
 def underlying(
     *,
     initial_value: float = SPOT,
@@ -90,35 +73,6 @@ def underlying(
         market_data=market_data,
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
-    )
-
-
-def flat_underlying(
-    *,
-    initial_value: float = SPOT,
-    volatility: float = VOL,
-    pricing_date: dt.datetime = PRICING_DATE,
-    maturity: dt.datetime = MATURITY,
-    rate: float = RATE,
-    currency: str = CURRENCY,
-    day_count_convention: DayCountConvention = DayCountConvention.ACT_365F,
-    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
-    dividend_curve: DiscountCurve | None = None,
-) -> UnderlyingData:
-    """Convenience wrapper: build UnderlyingData with a flat risk-free curve."""
-    md = flat_market_data(
-        pricing_date=pricing_date,
-        maturity=maturity,
-        rate=rate,
-        currency=currency,
-        day_count_convention=day_count_convention,
-    )
-    return underlying(
-        initial_value=initial_value,
-        volatility=volatility,
-        market_data=md,
-        discrete_dividends=discrete_dividends,
-        dividend_curve=dividend_curve,
     )
 
 
@@ -170,42 +124,6 @@ def gbm(
     if random_seed is not None:
         process.simulate(random_seed=random_seed)
     return process
-
-
-def flat_gbm(
-    *,
-    initial_value: float,
-    volatility: float,
-    pricing_date: dt.datetime,
-    maturity: dt.datetime,
-    rate: float,
-    paths: int,
-    num_steps: int,
-    currency: str = CURRENCY,
-    dividend_curve: DiscountCurve | None = None,
-    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
-    random_seed: int | None = None,
-) -> GBMProcess:
-    """Convenience wrapper: build GBMProcess under flat risk-free assumptions."""
-    md = flat_market_data(
-        pricing_date=pricing_date,
-        maturity=maturity,
-        rate=rate,
-        currency=currency,
-    )
-    params = GBMParams(
-        initial_value=initial_value,
-        volatility=volatility,
-        dividend_curve=dividend_curve,
-        discrete_dividends=discrete_dividends,
-    )
-    sim_config = SimulationConfig(paths=paths, num_steps=num_steps, end_date=maturity)
-    return gbm(
-        market_data=md,
-        process_params=params,
-        sim_config=sim_config,
-        random_seed=random_seed,
-    )
 
 
 def make_vanilla_spec(

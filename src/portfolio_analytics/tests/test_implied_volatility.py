@@ -15,7 +15,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.tests.helpers import flat_curve
 from portfolio_analytics.tests.helpers import (
-    flat_market_data,
+    market_data,
     underlying,
     make_vanilla_spec,
 )
@@ -44,16 +44,15 @@ def _build_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    market_data = flat_market_data(
+    market_data_obj = market_data(
         pricing_date=pricing_date,
-        maturity=maturity,
-        rate=rate,
+        discount_curve=flat_curve(pricing_date, maturity, rate),
     )
     dividend_curve = flat_curve(pricing_date, maturity, dividend_rate) if dividend_rate else None
     underlying_data = underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=market_data,
+        market_data=market_data_obj,
         dividend_curve=dividend_curve,
     )
     spec = make_vanilla_spec(
@@ -83,15 +82,14 @@ def _build_discrete_dividend_valuation(
         (pricing_date + dt.timedelta(days=90), 0.5),
         (pricing_date + dt.timedelta(days=270), 0.5),
     ]
-    market_data = flat_market_data(
+    market_data_obj = market_data(
         pricing_date=pricing_date,
-        maturity=maturity,
-        rate=rate,
+        discount_curve=flat_curve(pricing_date, maturity, rate),
     )
     underlying_data = underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=market_data,
+        market_data=market_data_obj,
         discrete_dividends=divs,
     )
     spec = make_vanilla_spec(
@@ -120,16 +118,15 @@ def _build_binomial_valuation(
 ) -> OptionValuation:
     pricing_date = dt.datetime(2025, 1, 1)
     maturity = dt.datetime(2026, 1, 1)
-    market_data = flat_market_data(
+    market_data_obj = market_data(
         pricing_date=pricing_date,
-        maturity=maturity,
-        rate=rate,
+        discount_curve=flat_curve(pricing_date, maturity, rate),
     )
     dividend_curve = flat_curve(pricing_date, maturity, dividend_rate) if dividend_rate else None
     underlying_data = underlying(
         initial_value=spot,
         volatility=vol,
-        market_data=market_data,
+        market_data=market_data_obj,
         dividend_curve=dividend_curve,
     )
     spec = make_vanilla_spec(
