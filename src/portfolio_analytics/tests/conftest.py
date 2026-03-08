@@ -18,20 +18,16 @@ from portfolio_analytics.valuation import (
     UnderlyingData,
 )
 
-from portfolio_analytics.tests.helpers import flat_curve
-
-
-# ---------------------------------------------------------------------------
-# Scalar constants
-# ---------------------------------------------------------------------------
-
-PRICING_DATE = dt.datetime(2025, 1, 1)
-MATURITY = dt.datetime(2026, 1, 1)
-CURRENCY = "USD"
-SPOT = 100.0
-STRIKE = 100.0
-RATE = 0.05
-VOL = 0.20
+from portfolio_analytics.tests.helpers import (
+    flat_curve,
+    PRICING_DATE,
+    MATURITY,
+    CURRENCY,
+    SPOT,
+    STRIKE,
+    RATE,
+    VOL,
+)
 
 
 # ---------------------------------------------------------------------------

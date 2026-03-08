@@ -20,11 +20,10 @@ from portfolio_analytics.exceptions import (
     ValidationError,
 )
 from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import flat_curve, pv as _pv
 from portfolio_analytics.valuation import (
     BinomialParams,
     VanillaSpec,
-    OptionValuation,
     PDEParams,
     UnderlyingData,
 )
@@ -65,15 +64,6 @@ def _spec(
         maturity=maturity,
         currency="USD",
     )
-
-
-def _pv(
-    ud: UnderlyingData,
-    spec: VanillaSpec,
-    method: PricingMethod,
-    **kw,
-) -> float:
-    return OptionValuation(ud, spec, method, **kw).present_value()
 
 
 # ═══════════════════════════════════════════════════════════════════════
