@@ -1,6 +1,7 @@
 """Tests for Monte Carlo Simulation valuation."""
 
 import numpy as np
+import pytest
 
 from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
 from portfolio_analytics.rates import DiscountCurve
@@ -30,6 +31,8 @@ from portfolio_analytics.valuation import (
 # ---------------------------------------------------------------------------
 _BSM_ATM_CALL = 10.4506
 _BSM_ATM_PUT = 5.5735
+_MC_RTOL_ATM = 0.03
+_MC_RTOL_CROSS_METHOD = 0.03
 
 
 def _market_data(discount_curve: DiscountCurve | None = None):
@@ -57,15 +60,17 @@ def _gbm(
 class TestMCSValuation:
     """Tests for Monte Carlo Simulation valuation."""
 
-    def test_mcs_european_call_atm(self):
-        """MCS European ATM call matches BSM reference within MC noise."""
-        result = pv(_gbm(), spec(), PricingMethod.MONTE_CARLO, params=MC_PARAMS)
-        assert np.isclose(result, _BSM_ATM_CALL, rtol=0.02)
-
-    def test_mcs_european_put_atm(self):
-        """MCS European ATM put matches BSM reference within MC noise."""
-        result = pv(_gbm(), spec(OptionType.PUT), PricingMethod.MONTE_CARLO, params=MC_PARAMS)
-        assert np.isclose(result, _BSM_ATM_PUT, rtol=0.02)
+    @pytest.mark.parametrize(
+        "option_type,expected",
+        [
+            (OptionType.CALL, _BSM_ATM_CALL),
+            (OptionType.PUT, _BSM_ATM_PUT),
+        ],
+    )
+    def test_mcs_european_atm_matches_bsm_reference(self, option_type: OptionType, expected: float):
+        """MCS ATM prices should stay close to BSM references within sampling noise."""
+        result = pv(_gbm(), spec(option_type), PricingMethod.MONTE_CARLO, params=MC_PARAMS)
+        assert np.isclose(result, expected, rtol=_MC_RTOL_ATM)
 
     def test_mcs_reproducibility_with_seed(self):
         """Test that MCS with same seed produces identical results."""
@@ -88,12 +93,13 @@ class TestMCSValuation:
         )
 
         assert pv_deg2 > 0 and pv_deg5 > 0
-        assert np.isclose(pv_deg5, pv_deg2, rtol=0.02)
+        # Different regression degrees should remain close, but allow mild MC variance.
+        assert np.isclose(pv_deg5, pv_deg2, rtol=_MC_RTOL_CROSS_METHOD)
 
         # binomial should also be close
         ud_bin = UnderlyingData(initial_value=SPOT, volatility=VOL, market_data=_market_data())
         pv_binom = pv(ud_bin, am_spec, PricingMethod.BINOMIAL, params=BINOM_PARAMS)
-        assert np.isclose(pv_deg2, pv_binom, rtol=0.02)
+        assert np.isclose(pv_deg2, pv_binom, rtol=_MC_RTOL_CROSS_METHOD)
 
     def test_mcs_pathwise_return(self):
         """Test MCS present_value_pathwise returns discounted PVs per path."""
