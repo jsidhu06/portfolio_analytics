@@ -665,7 +665,7 @@ class _MCAsianBase:
                 _resolve_time_index(
                     time_grid,
                     d,
-                    "fixing_date",
+                    f"fixing_date: {d.strftime('%Y-%m-%d')}",
                     day_count_convention=self.underlying.day_count_convention,
                 )
                 for d in self.spec.fixing_dates

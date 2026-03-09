@@ -869,21 +869,23 @@ _BIMONTHLY_FIXINGS = tuple(
 )  # Feb, Apr, Jun, Aug, Oct, Dec — 6 dates
 
 
-def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
-    """Arithmetic Asian put with non-flat rate/div curves: our MC vs QuantLib TW."""
+def _nonflat_asian_curves() -> tuple[DiscountCurve, DiscountCurve]:
+    """Build the non-flat rate and dividend curves for Asian non-flat tests."""
     ttm = calculate_year_fraction(PRICING_DATE, _ASIAN_MATURITY)
-
-    # Non-flat rate curve: 3% → 5% → 4%
     r_times = np.array([0.0, 0.25, 0.5, ttm])
     r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
-
-    # Non-flat dividend curve: 1% → 2% → 0%
     q_times = np.array([0.0, 0.25, 0.5, ttm])
     q_forwards = np.array([0.01, 0.02, 0.00])
-    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
+    return (
+        DiscountCurve.from_forwards(times=r_times, forwards=r_forwards),
+        DiscountCurve.from_forwards(times=q_times, forwards=q_forwards),
+    )
 
-    # QuantLib handles from discount factors
+
+def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
+    """Arithmetic Asian put with non-flat rate/div curves: our MC vs QuantLib TW."""
+    r_curve, q_curve = _nonflat_asian_curves()
+
     rf_handle = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
     div_handle = _ql_curve_from_times(times=q_curve.times, dfs=q_curve.dfs)
 
@@ -924,6 +926,59 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         pa_mc,
     )
     assert np.isclose(pa_mc, ql_tw, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_tw:.6f}"
+
+
+def test_asian_geometric_put_nonflat_curves_vs_quantlib():
+    """Geometric Asian put with non-flat rate/div curves: our MC vs QuantLib MC.
+
+    QL's AnalyticDiscreteGeometricAveragePriceAsianEngine appears to single
+    flat-equivalent rates internally, so prices diverge with non-flat curves.
+    Benchmark against QL's own MC engine instead.
+    """
+    r_curve, q_curve = _nonflat_asian_curves()
+
+    rf_handle = _ql_curve_from_times(times=r_curve.times, dfs=r_curve.dfs)
+    div_handle = _ql_curve_from_times(times=q_curve.times, dfs=q_curve.dfs)
+
+    ql_fixings = [_dt_to_ql(d) for d in _BIMONTHLY_FIXINGS]
+
+    ql_mc = _ql_discrete_asian_price(
+        fixing_dates_ql=ql_fixings,
+        option_type_ql=ql.Option.Put,
+        averaging_ql=ql.Average.Geometric,
+        engine_factory=lambda p: ql.MCDiscreteGeometricAPEngine(
+            p, "pseudorandom", requiredSamples=500_000, seed=42
+        ),
+        rf_handle=rf_handle,
+        div_handle=div_handle,
+    )
+
+    spec = AsianSpec(
+        averaging=AsianAveraging.GEOMETRIC,
+        option_type=OptionType.PUT,
+        strike=_ASIAN_STRIKE,
+        maturity=_ASIAN_MATURITY,
+        currency=CURRENCY,
+        fixing_dates=_BIMONTHLY_FIXINGS,
+    )
+    gbm = _pa_asian_gbm(
+        fixing_dates=_BIMONTHLY_FIXINGS,
+        r_curve=r_curve,
+        dividend_curve=q_curve,
+    )
+    pa_mc = OptionValuation(
+        gbm,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=_ASIAN_MC_SEED),
+    ).present_value()
+
+    logger.info(
+        "Asian geom put nonflat curves | QL_MC=%.6f PA_MC=%.6f",
+        ql_mc,
+        pa_mc,
+    )
+    assert np.isclose(pa_mc, ql_mc, rtol=0.015), f"PA {pa_mc:.6f} vs QL {ql_mc:.6f}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
