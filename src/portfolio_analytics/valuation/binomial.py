@@ -380,12 +380,25 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         # Advanced indexing: col_idx broadcasts to (I, N+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
         prices = spot_lattice[row_idx, col_idx]  # (I, N+1)
+
+        # Seasoned state: fold past observations into path averages
+        n1 = self.spec.observed_count or 0
+        s_bar = self.spec.observed_average
+
         if self.spec.averaging is AsianAveraging.GEOMETRIC:
             if np.any(prices <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
-            avg_s = np.exp(np.mean(np.log(prices), axis=1))  # (I,)
+            if n1 > 0 and s_bar is not None:
+                log_sum_future = np.sum(np.log(prices), axis=1)
+                avg_s = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + num_steps + 1))
+            else:
+                avg_s = np.exp(np.mean(np.log(prices), axis=1))  # (I,)
         else:
-            avg_s = prices.mean(axis=1)  # (I,)
+            if n1 > 0 and s_bar is not None:
+                sum_future = np.sum(prices, axis=1)
+                avg_s = (n1 * s_bar + sum_future) / (n1 + num_steps + 1)
+            else:
+                avg_s = prices.mean(axis=1)  # (I,)
 
         if self.spec.option_type is OptionType.CALL:
             payoffs = np.maximum(avg_s - K, 0.0)
@@ -446,6 +459,12 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         continuation values from the child nodes' grids. For geometric
         averaging, all state variables are stored in log space.
 
+        For seasoned Asians (``spec.observed_average`` and
+        ``spec.observed_count`` set), past observations are folded into the
+        running average at every node.  At tree step *t* the denominator
+        becomes ``n₁ + t + 1`` (total observations so far) instead of
+        ``t + 1``.
+
         Returns
         -------
         tuple of (values, avg_grid)
@@ -475,6 +494,10 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 "Hull binomial Asian valuation requires averaging_start=pricing_date."
             )
 
+        # Seasoned state: n₁ past observations with average S̄
+        n1 = self.spec.observed_count or 0
+        s_bar = self.spec.observed_average
+
         k = int(self.binom_params.asian_tree_averages)
         if averaging is AsianAveraging.GEOMETRIC:
             if np.any(spot_lattice <= 0.0):
@@ -483,8 +506,19 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 )
             log_spot_lattice = np.log(spot_lattice)
             avg_min, avg_max = self._compute_ordering_bounds(log_spot_lattice, num_steps)
+            s_bar_state = np.log(s_bar) if s_bar is not None else 0.0
         else:
             avg_min, avg_max = self._compute_ordering_bounds(spot_lattice, num_steps)
+            s_bar_state = s_bar if s_bar is not None else 0.0
+
+        # Fold past observations into the bounds.
+        # Fresh bounds are averages over t+1 future prices; seasoned bounds
+        # are averages over n₁ + t + 1 total observations.
+        if n1 > 0 and s_bar is not None:
+            n_future = np.arange(1, num_steps + 2, dtype=float)  # [1, 2, ..., N+1]
+            n_total = n1 + n_future
+            avg_min = (n1 * s_bar_state + n_future * avg_min) / n_total
+            avg_max = (n1 * s_bar_state + n_future * avg_max) / n_total
 
         avg_grid: np.ndarray = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):
@@ -516,8 +550,9 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 s_down = spot_lattice[rows + 1, t + 1]
             grid_here = avg_grid[:, rows, t]  # shape (k,t+1)
 
-            avg_up = ((t + 1) * grid_here + s_up) / (t + 2)
-            avg_down = ((t + 1) * grid_here + s_down) / (t + 2)
+            obs_so_far = n1 + t + 1  # total observations up to step t
+            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)
+            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)
 
             v_up = np.empty_like(avg_up)
             v_down = np.empty_like(avg_down)

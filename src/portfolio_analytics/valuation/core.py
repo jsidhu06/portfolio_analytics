@@ -65,9 +65,18 @@ _PV_INTERCEPTORS: dict[str, str] = {
 
 def _resolve_interceptor(
     spec: VanillaSpec | PayoffSpec | AsianSpec,
+    pricing_method: PricingMethod,
 ) -> str | None:
-    """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation."""
+    """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation.
+
+    Monte Carlo and binomial engines handle seasoned Asians directly
+    (running-average folding), so the K* interceptor is skipped for them.
+    BSM cannot price seasoned Asians natively and relies on the Hull K*
+    strike-adjustment interceptor.
+    """
     if isinstance(spec, AsianSpec) and spec.observed_average is not None:
+        if pricing_method in (PricingMethod.MONTE_CARLO, PricingMethod.BINOMIAL):
+            return None
         return "SEASONED_ASIAN"
     return None
 
@@ -567,12 +576,8 @@ class OptionValuation:
         self._impl = self._build_impl()
 
         # Resolve optional PV interceptor (e.g. seasoned Asian K* adjustment).
-        # MC engine handles seasoned Asian directly in solve() with the correct
-        # log-sum decomposition for geometric averaging; the arithmetic K*
-        # interceptor is only needed for non-MC engines (BSM, binomial, PDE).
-        tag = _resolve_interceptor(self._spec)
-        if tag == "SEASONED_ASIAN" and self._pricing_method is PricingMethod.MONTE_CARLO:
-            tag = None
+        # MC engines handle seasoned Asians directly; BSM/binomial use K*.
+        tag = _resolve_interceptor(self._spec, self._pricing_method)
         method_name = _PV_INTERCEPTORS.get(tag) if tag else None  # type: ignore[arg-type]
         self._pv_interceptor: Callable[[], float] | None = (
             getattr(self, method_name) if method_name else None
@@ -1262,10 +1267,21 @@ class OptionValuation:
         n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised and
         its value is that of a forward contract on the remaining average.
 
+        .. note::
+           This decomposition is only valid for **arithmetic** averaging.
+           Geometric seasoned Asians require Monte Carlo with log-sum
+           folding (handled directly by the MC engine).
+
         See Hull, *Options, Futures, and Other Derivatives*, Section 26.13."""
         spec = self._spec
         assert isinstance(spec, AsianSpec)
         assert spec.observed_average is not None and spec.observed_count is not None
+
+        if spec.averaging is AsianAveraging.GEOMETRIC:
+            raise UnsupportedFeatureError(
+                "Hull's K* strike-adjustment is only valid for arithmetic averaging. "
+                "Use PricingMethod BINOMIAL or MONTE_CARLO for seasoned geometric Asians."
+            )
 
         n1 = spec.observed_count
         n2 = self._seasoned_asian_future_obs()

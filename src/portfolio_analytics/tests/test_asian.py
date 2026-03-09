@@ -1704,10 +1704,14 @@ class TestSeasonedAsian:
 
     # ── K* > 0: reduces to fresh Asian ───────────────────────────────────
 
-    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
     @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
-    def test_seasoned_matches_manual_k_star(self, averaging, option_type):
-        """Seasoned PV should equal scale * fresh_PV(K=K*) when K* > 0."""
+    def test_seasoned_matches_manual_k_star(self, option_type):
+        """Seasoned PV should equal scale * fresh_PV(K=K*) when K* > 0.
+
+        Only arithmetic averaging: Hull's K* decomposition is invalid for
+        geometric averaging (see test_geometric_seasoned_raises_on_bsm).
+        """
+        averaging = AsianAveraging.ARITHMETIC
         n1, S_bar, K = 6, 52.0, 50.0
         n2_steps = 5  # n₂ = 6 future observations
         n2 = n2_steps + 1
@@ -1750,6 +1754,25 @@ class TestSeasonedAsian:
         ).present_value()
 
         assert np.isclose(seasoned_pv, scale * fresh_pv, rtol=1e-12)
+
+    def test_geometric_seasoned_raises_on_bsm(self):
+        """Geometric seasoned on BSM raises (K* decomposition is arithmetic-only)."""
+        seasoned_spec = AsianSpec(
+            averaging=AsianAveraging.GEOMETRIC,
+            option_type=OptionType.CALL,
+            strike=50.0,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=5,
+            observed_average=52.0,
+            observed_count=6,
+        )
+        with pytest.raises(UnsupportedFeatureError, match="arithmetic averaging"):
+            OptionValuation(
+                self._ud(),
+                seasoned_spec,
+                PricingMethod.BSM,
+            ).present_value()
 
     # ── K* <= 0: certain exercise (call → forward, put → 0) ─────────────
 
@@ -2050,6 +2073,195 @@ class TestSeasonedAsian:
         ).present_value()
 
         assert pv_with_q > pv_no_q
+
+
+class TestSeasonedBinomialVsMC:
+    """Seasoned Asian: Hull binomial tree (running-average folding) vs MC.
+
+    The Hull tree folds n₁ past observations directly into node running
+    averages, so American exercise decisions use the correct full-period
+    average at each node — no K* decomposition.
+
+    Arithmetic tests also cross-check against BSM (K*) for European
+    exercise, where the decomposition IS exact.
+    """
+
+    SPOT = 100.0
+    VOL = 0.20
+    RATE = 0.05
+    MATURITY = PRICING_DATE + dt.timedelta(days=365)
+    N1 = 6
+    S_BAR = 102.0
+    STRIKE = 100.0
+    NUM_STEPS = 60
+    MC_PATHS = 200_000
+    SEED = 42
+    TREE_AVERAGES = 100
+
+    def _ud(self, *, vol: float | None = None) -> UnderlyingData:
+        return _underlying(
+            spot=self.SPOT,
+            vol=vol or self.VOL,
+            discount_curve=flat_curve(PRICING_DATE, self.MATURITY, self.RATE),
+            maturity=self.MATURITY,
+        )
+
+    def _gbm(self, *, vol: float | None = None) -> GBMProcess:
+        return _gbm_underlying(
+            spot=self.SPOT,
+            vol=vol or self.VOL,
+            discount_curve=flat_curve(PRICING_DATE, self.MATURITY, self.RATE),
+            maturity=self.MATURITY,
+            paths=self.MC_PATHS,
+            num_steps=self.NUM_STEPS,
+        )
+
+    def _seasoned_spec(
+        self,
+        option_type: OptionType,
+        averaging: AsianAveraging,
+        exercise_type: ExerciseType = ExerciseType.EUROPEAN,
+    ) -> AsianSpec:
+        return AsianSpec(
+            averaging=averaging,
+            option_type=option_type,
+            strike=self.STRIKE,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=self.NUM_STEPS,
+            exercise_type=exercise_type,
+            observed_average=self.S_BAR,
+            observed_count=self.N1,
+        )
+
+    # ── European: binomial vs MC ─────────────────────────────────────────
+
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_european_binomial_vs_mc(self, averaging, option_type):
+        """Seasoned European binomial should match MC within noise."""
+        spec = self._seasoned_spec(option_type, averaging)
+
+        binom_pv = OptionValuation(
+            self._ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(
+                num_steps=self.NUM_STEPS,
+                asian_tree_averages=self.TREE_AVERAGES,
+            ),
+        ).present_value()
+
+        mc_pv = OptionValuation(
+            self._gbm(),
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=self.SEED),
+        ).present_value()
+
+        logger.info(
+            "Seasoned European %s %s | Binom=%.6f MC=%.6f",
+            averaging.value,
+            option_type.value,
+            binom_pv,
+            mc_pv,
+        )
+        assert np.isclose(binom_pv, mc_pv, rtol=0.02), f"Binom={binom_pv:.6f} vs MC={mc_pv:.6f}"
+
+    # ── European arithmetic: binomial vs BSM (K* is exact for European) ──
+
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_european_arithmetic_binomial_vs_bsm(self, option_type):
+        """Seasoned arithmetic European: binomial ≈ BSM K* (both exact for European)."""
+        spec = self._seasoned_spec(option_type, AsianAveraging.ARITHMETIC)
+
+        bsm_pv = OptionValuation(
+            self._ud(),
+            spec,
+            PricingMethod.BSM,
+        ).present_value()
+
+        binom_pv = OptionValuation(
+            self._ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(
+                num_steps=self.NUM_STEPS,
+                asian_tree_averages=self.TREE_AVERAGES,
+            ),
+        ).present_value()
+
+        logger.info(
+            "Seasoned European Arithmetic %s | BSM=%.6f Binom=%.6f",
+            option_type.value,
+            bsm_pv,
+            binom_pv,
+        )
+        assert np.isclose(binom_pv, bsm_pv, rtol=0.01), f"BSM={bsm_pv:.6f} vs Binom={binom_pv:.6f}"
+
+    # ── American: binomial vs MC ─────────────────────────────────────────
+
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    def test_american_binomial_vs_mc(self, averaging, option_type):
+        """Seasoned American binomial should match MC LSM within noise."""
+        spec = self._seasoned_spec(option_type, averaging, ExerciseType.AMERICAN)
+
+        binom_pv = OptionValuation(
+            self._ud(),
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(
+                num_steps=self.NUM_STEPS,
+                asian_tree_averages=self.TREE_AVERAGES,
+            ),
+        ).present_value()
+
+        mc_pv = OptionValuation(
+            self._gbm(),
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=self.SEED),
+        ).present_value()
+
+        logger.info(
+            "Seasoned American %s %s | Binom=%.6f MC=%.6f",
+            averaging.value,
+            option_type.value,
+            binom_pv,
+            mc_pv,
+        )
+        assert np.isclose(binom_pv, mc_pv, rtol=0.03), f"Binom={binom_pv:.6f} vs MC={mc_pv:.6f}"
+
+    # ── American >= European (early exercise premium) ────────────────────
+
+    @pytest.mark.parametrize("averaging", [AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC])
+    def test_american_geq_european_seasoned_put(self, averaging):
+        """American seasoned Asian put >= European (early exercise premium)."""
+        euro_spec = self._seasoned_spec(OptionType.PUT, averaging, ExerciseType.EUROPEAN)
+        amer_spec = self._seasoned_spec(OptionType.PUT, averaging, ExerciseType.AMERICAN)
+
+        euro_pv = OptionValuation(
+            self._ud(),
+            euro_spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(
+                num_steps=self.NUM_STEPS,
+                asian_tree_averages=self.TREE_AVERAGES,
+            ),
+        ).present_value()
+
+        amer_pv = OptionValuation(
+            self._ud(),
+            amer_spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(
+                num_steps=self.NUM_STEPS,
+                asian_tree_averages=self.TREE_AVERAGES,
+            ),
+        ).present_value()
+
+        assert amer_pv >= euro_pv - 1e-6, f"American ({amer_pv:.6f}) < European ({euro_pv:.6f})"
 
 
 # ---------------------------------------------------------------------------
@@ -3044,6 +3256,8 @@ class TestMCSeasonedAsian:
             params=MonteCarloParams(random_seed=MC_SEED),
         ).present_value()
 
-        # Both should agree within MC noise (the simulated S₀ in the full
-        # version is sampled at t=0 → always equals SPOT).
-        assert np.isclose(full_pv, seasoned_pv, rtol=0.02)
+        # Both should agree to machine precision: same seed → same time_grid
+        # (PRICING_DATE is already grid[0]) → same paths → same fixing
+        # indices → identical averaging data.  The only difference is
+        # floating-point ordering of log-sums, giving ~1 ULP of drift.
+        assert np.isclose(full_pv, seasoned_pv, rtol=1e-12)
