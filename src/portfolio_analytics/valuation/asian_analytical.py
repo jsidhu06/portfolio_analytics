@@ -46,7 +46,7 @@ from ..exceptions import (
 from ..utils import calculate_year_fraction
 
 if TYPE_CHECKING:
-    from .core import OptionValuation, AsianSpec
+    from .core import AsianSpec, OptionValuation
 
 
 logger = logging.getLogger(__name__)
@@ -351,8 +351,24 @@ class _AnalyticalAsianValuation:
 
         Dispatches to the Kemna-Vorst formula (geometric) or the
         Turnbull-Wakeman moment-matching approximation (arithmetic).
+
+        For seasoned Asians (``observed_average`` set), applies Hull's K*
+        strike-adjustment reduction before calling the fresh-Asian formula.
+        This decomposition is only valid for arithmetic averaging;
+        geometric seasoned Asians must use BINOMIAL or MONTE_CARLO.
         """
         spec = self.spec
+
+        # ── Seasoned Asian: Hull K* strike-adjustment ────────────────────
+        if spec.observed_average is not None and spec.observed_count is not None:
+            return self._seasoned_pv()
+
+        return self._fresh_pv()
+
+    def _fresh_pv(self, spec: AsianSpec | None = None) -> float:
+        """Price a fresh (non-seasoned) Asian analytically."""
+        if spec is None:
+            spec = self.spec
         spot = float(self.parent.underlying.initial_value)
         strike = float(spec.strike)
         volatility = float(self.parent.underlying.volatility)
@@ -397,3 +413,89 @@ class _AnalyticalAsianValuation:
             num_steps=spec.num_steps,
             averaging_start=averaging_start_frac,
         )
+
+    def _seasoned_pv(self) -> float:
+        """Price a seasoned Asian using Hull's adjusted-strike reduction.
+
+        When n₁ fixings have already been observed with average S̄, the
+        payoff of an average-price call is::
+
+            max((n₁·S̄ + n₂·S_avg_future) / (n₁+n₂) − K, 0)
+
+        which equals ``(n₂/(n₁+n₂)) · max(S_avg_future − K*, 0)`` where::
+
+            K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
+
+        When K* > 0 this is a newly-issued Asian with strike K* scaled by
+        n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised
+        and its value is that of a forward contract on the remaining average.
+
+        .. note::
+           This decomposition is only valid for **arithmetic** averaging.
+           Geometric seasoned Asians require BINOMIAL or MONTE_CARLO
+           engines which fold past observations directly into running
+           averages.
+
+        See Hull, *Options, Futures, and Other Derivatives*, Section 26.13.
+        """
+        from dataclasses import replace as dc_replace
+
+        spec = self.spec
+        assert spec.observed_average is not None and spec.observed_count is not None
+
+        if spec.averaging is AsianAveraging.GEOMETRIC:
+            raise UnsupportedFeatureError(
+                "Hull's K* strike-adjustment is only valid for arithmetic averaging. "
+                "Use PricingMethod BINOMIAL or MONTE_CARLO for seasoned geometric Asians."
+            )
+
+        if spec.num_steps is None:
+            raise ValidationError(
+                "num_steps is required on AsianSpec for analytical (BSM) pricing."
+            )
+
+        n1 = spec.observed_count
+        n2 = spec.num_steps + 1  # future observations
+        n_total = n1 + n2
+        S_bar = spec.observed_average
+        K = spec.strike
+
+        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
+        scale = n2 / n_total
+
+        logger.debug(
+            "Seasoned Asian: n1=%d n2=%d S_bar=%.4f K=%.4f K*=%.4f scale=%.4f",
+            n1,
+            n2,
+            S_bar,
+            K,
+            K_star,
+            scale,
+        )
+
+        if K_star > 0.0:
+            fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
+            return scale * self._fresh_pv(fresh_spec)
+
+        # K* <= 0: option is certain to be exercised → value as forward.
+        time_to_maturity = calculate_year_fraction(
+            self.parent.pricing_date,
+            self.parent.maturity,
+            day_count_convention=self.parent.day_count_convention,
+        )
+        df = float(self.parent.discount_curve.df(time_to_maturity))
+
+        # Zero-strike call = discounted E[S_avg] = discounted M₁
+        zero_spec = dc_replace(
+            spec,
+            strike=0.0,
+            option_type=OptionType.CALL,
+            observed_average=None,
+            observed_count=None,
+        )
+        disc_M1 = self._fresh_pv(zero_spec)
+
+        if spec.option_type is OptionType.CALL:
+            return scale * (disc_M1 - K_star * df)
+        # Put with K*<=0: max(K* - S_avg, 0) = 0 when K*<=0 and S_avg>0
+        return 0.0

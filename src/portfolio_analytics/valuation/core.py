@@ -54,32 +54,6 @@ from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
 logger = logging.getLogger(__name__)
 
-# ── PV interceptors ─────────────────────────────────────────────────
-# Maps a tag → OptionValuation method name that completely replaces the
-# normal present_value() flow.  Resolved once during __init__ via
-# _resolve_interceptor(); at most one interceptor per instance.
-_PV_INTERCEPTORS: dict[str, str] = {
-    "SEASONED_ASIAN": "_seasoned_asian_pv",
-}
-
-
-def _resolve_interceptor(
-    spec: VanillaSpec | PayoffSpec | AsianSpec,
-    pricing_method: PricingMethod,
-) -> str | None:
-    """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation.
-
-    Monte Carlo and binomial engines handle seasoned Asians directly
-    (running-average folding), so the K* interceptor is skipped for them.
-    BSM cannot price seasoned Asians natively and relies on the Hull K*
-    strike-adjustment interceptor.
-    """
-    if isinstance(spec, AsianSpec) and spec.observed_average is not None:
-        if pricing_method in (PricingMethod.MONTE_CARLO, PricingMethod.BINOMIAL):
-            return None
-        return "SEASONED_ASIAN"
-    return None
-
 
 # ── Implementation registries ───────────────────────────────────────
 # Maps (PricingMethod, ExerciseType) → implementation class for vanilla specs.
@@ -575,23 +549,12 @@ class OptionValuation:
         # Dispatch to appropriate pricing method implementation
         self._impl = self._build_impl()
 
-        # Resolve optional PV interceptor (e.g. seasoned Asian K* adjustment).
-        # MC engines handle seasoned Asians directly; BSM/binomial use K*.
-        tag = _resolve_interceptor(self._spec, self._pricing_method)
-        method_name = _PV_INTERCEPTORS.get(tag) if tag else None  # type: ignore[arg-type]
-        self._pv_interceptor: Callable[[], float] | None = (
-            getattr(self, method_name) if method_name else None
-        )
-
     # ──────────────────────────────
     # Public API (methods)
     # ──────────────────────────────
 
     def present_value(self) -> float:
         """Calculate present value of the derivative."""
-        if self._pv_interceptor is not None:
-            return float(self._pv_interceptor())
-
         base_pv = float(self._impl.present_value())
         if self._params is None or not getattr(self._params, "control_variate_european", False):
             return base_pv
@@ -1220,131 +1183,6 @@ class OptionValuation:
             observed_average=new_avg,
             observed_count=new_n1,
         )
-
-    # ── Seasoned Asian ───────────────────────────────────────────────────
-
-    def _seasoned_asian_future_obs(self) -> int:
-        """Return the number of *future* averaging observations (n₂)."""
-        spec = self._spec
-        assert isinstance(spec, AsianSpec)
-
-        if self._pricing_method is PricingMethod.BSM:
-            if spec.num_steps is None:
-                raise ValidationError(
-                    "num_steps is required on AsianSpec for analytical (BSM) pricing."
-                )
-            return spec.num_steps + 1
-
-        if self._pricing_method is PricingMethod.BINOMIAL:
-            assert isinstance(self._params, BinomialParams)
-            return self._params.num_steps + 1
-
-        if self._pricing_method is PricingMethod.MONTE_CARLO:
-            if spec.fixing_dates is not None:
-                # Only count fixings that are on or after the pricing date
-                n_future = sum(1 for d in spec.fixing_dates if d >= self.pricing_date)
-                return n_future if n_future > 0 else len(spec.fixing_dates)
-            assert isinstance(self._underlying, PathSimulation)
-            self._underlying._ensure_time_grid()
-            return len(self._underlying.time_grid)
-
-        raise UnsupportedFeatureError(
-            f"Seasoned Asian pricing is not supported for {self._pricing_method.name}."
-        )
-
-    def _seasoned_asian_pv(self) -> float:
-        """Price a seasoned Asian using Hull's adjusted-strike reduction.
-        When part of the averaging window has elapsed, the payoff of an
-        average-price call is::
-
-            max((n₁·S̄ + n₂·S_avg_future) / (n₁+n₂) − K, 0)
-
-        which equals ``(n₂/(n₁+n₂)) · max(S_avg_future − K*, 0)`` where::
-
-            K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
-
-        When K* > 0 this is a newly-issued Asian with strike K* scaled by
-        n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised and
-        its value is that of a forward contract on the remaining average.
-
-        .. note::
-           This decomposition is only valid for **arithmetic** averaging.
-           Geometric seasoned Asians require Monte Carlo with log-sum
-           folding (handled directly by the MC engine).
-
-        See Hull, *Options, Futures, and Other Derivatives*, Section 26.13."""
-        spec = self._spec
-        assert isinstance(spec, AsianSpec)
-        assert spec.observed_average is not None and spec.observed_count is not None
-
-        if spec.averaging is AsianAveraging.GEOMETRIC:
-            raise UnsupportedFeatureError(
-                "Hull's K* strike-adjustment is only valid for arithmetic averaging. "
-                "Use PricingMethod BINOMIAL or MONTE_CARLO for seasoned geometric Asians."
-            )
-
-        n1 = spec.observed_count
-        n2 = self._seasoned_asian_future_obs()
-        n_total = n1 + n2
-        S_bar = spec.observed_average
-        K = spec.strike
-
-        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
-        scale = n2 / n_total
-
-        logger.debug(
-            "Seasoned Asian: n1=%d n2=%d S_bar=%.4f K=%.4f K*=%.4f scale=%.4f",
-            n1,
-            n2,
-            S_bar,
-            K,
-            K_star,
-            scale,
-        )
-
-        if K_star > 0.0:
-            fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
-            fresh_pv = OptionValuation(
-                underlying=self._underlying,
-                spec=fresh_spec,
-                pricing_method=self._pricing_method,
-                params=self._params,
-            ).present_value()
-            return scale * fresh_pv
-
-        # K* <= 0: option is certain to be exercised → value as forward contract.
-        # For a call:  scale · [M₁·e^{-rT} − K*·e^{-rT}]
-        # For a put:   scale · [K*·e^{-rT} − M₁·e^{-rT}]  (always 0 when K*<=0)
-        # M₁ is the forward of the average over the remaining period.  Rather than
-        # recompute the exact first moment, we price a fresh Asian with strike=0
-        # (deep ITM) which equals the discounted expected average, then apply the
-        # K* offset.
-
-        ttm = calculate_year_fraction(
-            self.pricing_date,
-            self.maturity,
-            day_count_convention=self.day_count_convention,
-        )
-        df = float(self.discount_curve.df(ttm))
-
-        fresh_spec_zero = dc_replace(
-            spec,
-            strike=0.0,
-            observed_average=None,
-            observed_count=None,
-        )
-        # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
-        disc_M1 = OptionValuation(
-            underlying=self._underlying,
-            spec=dc_replace(fresh_spec_zero, option_type=OptionType.CALL),
-            pricing_method=self._pricing_method,
-            params=self._params,
-        ).present_value()
-
-        if spec.option_type is OptionType.CALL:
-            return scale * (disc_M1 - K_star * df)
-        # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
-        return 0.0
 
     @property
     def _is_mc_analytic_eligible(self) -> bool:
