@@ -501,32 +501,6 @@ class OptionValuation:
         if self.maturity <= self.pricing_date:
             raise ValidationError("Option maturity must be after pricing_date.")
 
-        # Inject Asian fixing dates / grid_start into the simulation.
-        # We construct a new PathSimulation (via dc_replace on sim_config)
-        # so the caller's instance is never mutated.  pricing_date and
-        # maturity are already handled by _build_time_grid.
-        if isinstance(underlying, PathSimulation):
-            if isinstance(spec, AsianSpec):
-                sc_overrides: dict = {}  # SimulationConfig kwargs to override
-                if spec.fixing_dates is not None:
-                    extra = set(spec.fixing_dates) - underlying.observation_dates
-                    if extra:
-                        sc_overrides["observation_dates"] = underlying.observation_dates | extra
-                if (
-                    spec.averaging_start is not None
-                    and underlying.grid_start != spec.averaging_start
-                ):
-                    sc_overrides["grid_start"] = spec.averaging_start
-                if sc_overrides:
-                    underlying = type(underlying)(
-                        market_data=underlying.market_data,
-                        process_params=underlying._process_params,
-                        sim_config=dc_replace(underlying._sim_config, **sc_overrides),
-                        corr=underlying.correlation_context,
-                        name=underlying.name,
-                    )
-            self._underlying = underlying
-
         # Validate that MC requires PathSimulation
         if pricing_method == PricingMethod.MONTE_CARLO and not isinstance(
             self._underlying, PathSimulation
@@ -545,6 +519,28 @@ class OptionValuation:
                 f"{pricing_method.name} pricing does not use stochastic path simulation. "
                 "Pass an UnderlyingData instance instead of PathSimulation."
             )
+
+        # Inject Asian fixing dates / grid_start into the simulation.
+        # We construct a new PathSimulation (via dc_replace on sim_config)
+        # so the caller's instance is never mutated.  pricing_date and
+        # maturity are already handled by _build_time_grid.
+        if isinstance(underlying, PathSimulation) and isinstance(spec, AsianSpec):
+            sc_overrides: dict = {}  # SimulationConfig kwargs to override
+            if spec.fixing_dates is not None:
+                extra = set(spec.fixing_dates) - underlying.observation_dates
+                if extra:
+                    sc_overrides["observation_dates"] = underlying.observation_dates | extra
+            if spec.averaging_start is not None and underlying.grid_start != spec.averaging_start:
+                sc_overrides["grid_start"] = spec.averaging_start
+            if sc_overrides:
+                underlying = type(underlying)(
+                    market_data=underlying.market_data,
+                    process_params=underlying._process_params,
+                    sim_config=dc_replace(underlying._sim_config, **sc_overrides),
+                    corr=underlying.correlation_context,
+                    name=underlying.name,
+                )
+                self._underlying = underlying
 
         # Dispatch to appropriate pricing method implementation
         self._impl = self._build_impl()
@@ -569,44 +565,6 @@ class OptionValuation:
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
         return pv_pathwise()
-
-    _MD_FIELDS = frozenset({"pricing_date", "discount_curve", "currency"})
-
-    def _bump_underlying(
-        self,
-        **overrides: object,
-    ) -> PathSimulation | UnderlyingData:
-        """Return a new underlying with selected fields replaced.
-
-        Callers pass attribute-level kwargs (``pricing_date=``,
-        ``discount_curve=``, ``initial_value=``, ``volatility=``, etc.).
-        Keys in ``_MD_FIELDS`` are routed into a bumped ``MarketData``;
-        remaining keys are applied as direct-field overrides
-        (``dc_replace`` for ``UnderlyingData``, ``process_params`` bump
-        for ``PathSimulation``).
-        """
-        u = self._underlying
-
-        # Split into MarketData-level vs direct-field overrides.
-        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
-        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
-
-        if isinstance(u, UnderlyingData):
-            if md_kw:
-                rest_kw["market_data"] = dc_replace(u.market_data, **md_kw)
-            return dc_replace(u, **rest_kw)
-
-        # PathSimulation — rest_kw are process-param bumps.
-        bumped_pp = dc_replace(u._process_params, **rest_kw) if rest_kw else u._process_params
-        bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
-
-        return type(u)(  # type: ignore[arg-type]
-            market_data=bumped_md,
-            process_params=bumped_pp,
-            sim_config=u._sim_config,
-            corr=u.correlation_context,
-            name=u.name,
-        )
 
     def delta(
         self,
@@ -1132,56 +1090,42 @@ class OptionValuation:
 
         return base_pv + (euro_analytical - euro_num)
 
-    # ── Asian theta helpers ──────────────────────────────────────────────
+    _MD_FIELDS = frozenset({"pricing_date", "discount_curve", "currency"})
 
-    def _asian_theta_spec(self, bumped_date: dt.datetime) -> AsianSpec:
-        """Build a seasoned AsianSpec for theta bump-and-revalue.
+    def _bump_underlying(
+        self,
+        **overrides: object,
+    ) -> PathSimulation | UnderlyingData:
+        """Return a new underlying with selected fields replaced.
 
-        When the pricing date is bumped forward, fixing dates that now fall
-        on or before the new pricing date become observed fixings.
-
-        Case 1 — fixing_date == original pricing_date:
-            The observed price is deterministic (S₀).  A seasoned spec is
-            returned with observed_average/observed_count set accordingly.
-        Case 2 — pricing_date < fixing_date < bumped_date (intra-day):
-            The fixing is stochastic from the current viewpoint and would
-            require nested MC to handle correctly.  Raises
-            ``UnsupportedFeatureError``.
+        Callers pass attribute-level kwargs (``pricing_date=``,
+        ``discount_curve=``, ``initial_value=``, ``volatility=``, etc.).
+        Keys in ``_MD_FIELDS`` are routed into a bumped ``MarketData``;
+        remaining keys are applied as direct-field overrides
+        (``dc_replace`` for ``UnderlyingData``, ``process_params`` bump
+        for ``PathSimulation``).
         """
-        spec = self._spec
-        assert isinstance(spec, AsianSpec) and spec.fixing_dates is not None
+        u = self._underlying
 
-        elapsed = [d for d in spec.fixing_dates if d < bumped_date]
-        if not elapsed:
-            return spec
+        # Split into MarketData-level vs direct-field overrides.
+        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
+        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
 
-        # Case 2: intra-day fixings (between pricing_date and bumped_date,
-        # but not equal to pricing_date) require nested MC.
-        intraday = [d for d in elapsed if d != self.pricing_date]
-        if intraday:
-            raise UnsupportedFeatureError(
-                f"Theta calculation is not supported when fixing dates fall "
-                f"between pricing_date and the bumped date (intra-day fixings: "
-                f"{[d.isoformat() for d in intraday]}). "
-                f"This would require nested Monte Carlo simulation."
-            )
+        if isinstance(u, UnderlyingData):
+            if md_kw:
+                rest_kw["market_data"] = dc_replace(u.market_data, **md_kw)
+            return dc_replace(u, **rest_kw)
 
-        # Case 1: all elapsed fixings are at pricing_date → deterministic S₀.
-        n_elapsed = len(elapsed)
-        s0 = float(self._underlying.initial_value)
+        # PathSimulation — rest_kw are process-param bumps.
+        bumped_pp = dc_replace(u._process_params, **rest_kw) if rest_kw else u._process_params
+        bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
 
-        # Merge with any pre-existing seasoned state
-        old_n1 = spec.observed_count or 0
-        old_avg = spec.observed_average or 0.0
-        new_n1 = old_n1 + n_elapsed
-        new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
-
-        future_fixings = tuple(d for d in spec.fixing_dates if d >= bumped_date)
-        return dc_replace(
-            spec,
-            fixing_dates=future_fixings if future_fixings else None,
-            observed_average=new_avg,
-            observed_count=new_n1,
+        return type(u)(  # type: ignore[arg-type]
+            market_data=bumped_md,
+            process_params=bumped_pp,
+            sim_config=u._sim_config,
+            corr=u.correlation_context,
+            name=u.name,
         )
 
     @property
@@ -1308,6 +1252,58 @@ class OptionValuation:
             raise UnsupportedFeatureError(
                 "Pathwise and likelihood-ratio MC Greeks are not supported with discrete dividends."
             )
+
+    # ── Asian theta helpers ──────────────────────────────────────────────
+
+    def _asian_theta_spec(self, bumped_date: dt.datetime) -> AsianSpec:
+        """Build a seasoned AsianSpec for theta bump-and-revalue.
+
+        When the pricing date is bumped forward, fixing dates that now fall
+        on or before the new pricing date become observed fixings.
+
+        Case 1 — fixing_date == original pricing_date:
+            The observed price is deterministic (S₀).  A seasoned spec is
+            returned with observed_average/observed_count set accordingly.
+        Case 2 — pricing_date < fixing_date < bumped_date (intra-day):
+            The fixing is stochastic from the current viewpoint and would
+            require nested MC to handle correctly.  Raises
+            ``UnsupportedFeatureError``.
+        """
+        spec = self._spec
+        assert isinstance(spec, AsianSpec) and spec.fixing_dates is not None
+
+        elapsed = [d for d in spec.fixing_dates if d < bumped_date]
+        if not elapsed:
+            return spec
+
+        # Case 2: intra-day fixings (between pricing_date and bumped_date,
+        # but not equal to pricing_date) require nested MC.
+        intraday = [d for d in elapsed if d != self.pricing_date]
+        if intraday:
+            raise UnsupportedFeatureError(
+                f"Theta calculation is not supported when fixing dates fall "
+                f"between pricing_date and the bumped date (intra-day fixings: "
+                f"{[d.isoformat() for d in intraday]}). "
+                f"This would require nested Monte Carlo simulation."
+            )
+
+        # Case 1: all elapsed fixings are at pricing_date → deterministic S₀.
+        n_elapsed = len(elapsed)
+        s0 = float(self._underlying.initial_value)
+
+        # Merge with any pre-existing seasoned state
+        old_n1 = spec.observed_count or 0
+        old_avg = spec.observed_average or 0.0
+        new_n1 = old_n1 + n_elapsed
+        new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
+
+        future_fixings = tuple(d for d in spec.fixing_dates if d >= bumped_date)
+        return dc_replace(
+            spec,
+            fixing_dates=future_fixings if future_fixings else None,
+            observed_average=new_avg,
+            observed_count=new_n1,
+        )
 
     def _build_valuation(
         self,
