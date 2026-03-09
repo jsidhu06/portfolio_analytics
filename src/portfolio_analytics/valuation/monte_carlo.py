@@ -722,6 +722,12 @@ class _MCAsianValuation(_MCAsianBase):
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
 
+        When ``spec.observed_average`` and ``spec.observed_count`` are set
+        (seasoned Asian), the past observations are folded into the full
+        average.  For arithmetic this is equivalent to Hull's adjusted-strike
+        reduction; for geometric it uses the correct log-sum decomposition
+        (the arithmetic K* formula does **not** apply to geometric averaging).
+
         Returns
         -------
         np.ndarray
@@ -730,14 +736,26 @@ class _MCAsianValuation(_MCAsianBase):
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         averaging_paths, _ = self._extract_averaging_paths(paths, self.underlying.time_grid)
 
-        # Calculate average for each path
         spec = self.spec
+        n1 = spec.observed_count or 0
+        s_bar = spec.observed_average
+        n2 = averaging_paths.shape[0]
+        n_total = n1 + n2
+
         if spec.averaging is AsianAveraging.ARITHMETIC:
-            avg_prices = np.mean(averaging_paths, axis=0)
+            if n1 > 0 and s_bar is not None:
+                future_sum = np.sum(averaging_paths, axis=0)
+                avg_prices = (n1 * s_bar + future_sum) / n_total
+            else:
+                avg_prices = np.mean(averaging_paths, axis=0)
         elif spec.averaging is AsianAveraging.GEOMETRIC:
             if np.any(averaging_paths <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
-            avg_prices = np.exp(np.mean(np.log(averaging_paths), axis=0))
+            if n1 > 0 and s_bar is not None:
+                log_sum_future = np.sum(np.log(averaging_paths), axis=0)
+                avg_prices = np.exp((n1 * np.log(s_bar) + log_sum_future) / n_total)
+            else:
+                avg_prices = np.exp(np.mean(np.log(averaging_paths), axis=0))
         else:
             raise ValidationError(
                 f"Unsupported averaging method for Asian valuation: {spec.averaging}"

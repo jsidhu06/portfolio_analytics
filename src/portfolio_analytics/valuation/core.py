@@ -566,8 +566,13 @@ class OptionValuation:
         # Dispatch to appropriate pricing method implementation
         self._impl = self._build_impl()
 
-        # Resolve optional PV interceptor (e.g. seasoned Asian K* adjustment)
+        # Resolve optional PV interceptor (e.g. seasoned Asian K* adjustment).
+        # MC engine handles seasoned Asian directly in solve() with the correct
+        # log-sum decomposition for geometric averaging; the arithmetic K*
+        # interceptor is only needed for non-MC engines (BSM, binomial, PDE).
         tag = _resolve_interceptor(self._spec)
+        if tag == "SEASONED_ASIAN" and self._pricing_method is PricingMethod.MONTE_CARLO:
+            tag = None
         method_name = _PV_INTERCEPTORS.get(tag) if tag else None  # type: ignore[arg-type]
         self._pv_interceptor: Callable[[], float] | None = (
             getattr(self, method_name) if method_name else None
@@ -820,7 +825,16 @@ class OptionValuation:
 
         underlying_bumped = self._bump_underlying(pricing_date=bumped_date)
 
-        value_bumped = self._build_valuation(underlying=underlying_bumped).present_value()
+        # Asian fixing-date awareness: if fixing dates fall before the
+        # bumped pricing date they become observed ("seasoned") fixings.
+        bumped_spec = self._spec
+        if isinstance(self._spec, AsianSpec) and self._spec.fixing_dates:
+            bumped_spec = self._asian_theta_spec(bumped_date)
+
+        value_bumped = self._build_valuation(
+            underlying=underlying_bumped,
+            spec=bumped_spec,
+        ).present_value()
 
         return (value_bumped - value_now) / time_bump_days
 
@@ -1150,6 +1164,58 @@ class OptionValuation:
 
         return base_pv + (euro_analytical - euro_num)
 
+    # ── Asian theta helpers ──────────────────────────────────────────────
+
+    def _asian_theta_spec(self, bumped_date: dt.datetime) -> AsianSpec:
+        """Build a seasoned AsianSpec for theta bump-and-revalue.
+
+        When the pricing date is bumped forward, fixing dates that now fall
+        on or before the new pricing date become observed fixings.
+
+        Case 1 — fixing_date == original pricing_date:
+            The observed price is deterministic (S₀).  A seasoned spec is
+            returned with observed_average/observed_count set accordingly.
+        Case 2 — pricing_date < fixing_date < bumped_date (intra-day):
+            The fixing is stochastic from the current viewpoint and would
+            require nested MC to handle correctly.  Raises
+            ``UnsupportedFeatureError``.
+        """
+        spec = self._spec
+        assert isinstance(spec, AsianSpec) and spec.fixing_dates is not None
+
+        elapsed = [d for d in spec.fixing_dates if d < bumped_date]
+        if not elapsed:
+            return spec
+
+        # Case 2: intra-day fixings (between pricing_date and bumped_date,
+        # but not equal to pricing_date) require nested MC.
+        intraday = [d for d in elapsed if d != self.pricing_date]
+        if intraday:
+            raise UnsupportedFeatureError(
+                f"Theta calculation is not supported when fixing dates fall "
+                f"between pricing_date and the bumped date (intra-day fixings: "
+                f"{[d.isoformat() for d in intraday]}). "
+                f"This would require nested Monte Carlo simulation."
+            )
+
+        # Case 1: all elapsed fixings are at pricing_date → deterministic S₀.
+        n_elapsed = len(elapsed)
+        s0 = float(self._underlying.initial_value)
+
+        # Merge with any pre-existing seasoned state
+        old_n1 = spec.observed_count or 0
+        old_avg = spec.observed_average or 0.0
+        new_n1 = old_n1 + n_elapsed
+        new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
+
+        future_fixings = tuple(d for d in spec.fixing_dates if d >= bumped_date)
+        return dc_replace(
+            spec,
+            fixing_dates=future_fixings if future_fixings else None,
+            observed_average=new_avg,
+            observed_count=new_n1,
+        )
+
     # ── Seasoned Asian ───────────────────────────────────────────────────
 
     def _seasoned_asian_future_obs(self) -> int:
@@ -1170,7 +1236,9 @@ class OptionValuation:
 
         if self._pricing_method is PricingMethod.MONTE_CARLO:
             if spec.fixing_dates is not None:
-                return len(spec.fixing_dates)
+                # Only count fixings that are on or after the pricing date
+                n_future = sum(1 for d in spec.fixing_dates if d >= self.pricing_date)
+                return n_future if n_future > 0 else len(spec.fixing_dates)
             assert isinstance(self._underlying, PathSimulation)
             self._underlying._ensure_time_grid()
             return len(self._underlying.time_grid)
@@ -1387,10 +1455,15 @@ class OptionValuation:
                 "Pathwise and likelihood-ratio MC Greeks are not supported with discrete dividends."
             )
 
-    def _build_valuation(self, *, underlying) -> "OptionValuation":
+    def _build_valuation(
+        self,
+        *,
+        underlying,
+        spec: VanillaSpec | PayoffSpec | AsianSpec | None = None,
+    ) -> "OptionValuation":
         return OptionValuation(
             underlying=underlying,
-            spec=self._spec,
+            spec=spec if spec is not None else self._spec,
             pricing_method=self._pricing_method,
             params=self._params,
         )
