@@ -20,6 +20,7 @@ Design notes
 from __future__ import annotations
 from dataclasses import dataclass, replace as dc_replace
 from collections.abc import Sequence
+from typing import Any
 import datetime as dt
 import logging
 import numpy as np
@@ -885,8 +886,8 @@ class OptionValuation:
         u = self._underlying
 
         # Split into MarketData-level vs direct-field overrides.
-        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
-        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
+        md_kw: dict[str, Any] = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
+        rest_kw: dict[str, Any] = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
 
         if isinstance(u, UnderlyingData):
             if md_kw:

@@ -525,12 +525,6 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 "BinomialParams.asian_tree_averages must be set for Hull binomial Asian valuation"
             )
 
-        averaging_start = self.spec.averaging_start
-        if averaging_start is not None and averaging_start != self.parent.pricing_date:
-            raise UnsupportedFeatureError(
-                "Hull binomial Asian valuation requires averaging_start=pricing_date."
-            )
-
         # Seasoned state: n₁ past observations with average S̄
         n1 = self.spec.observed_count or 0
         s_bar = self.spec.observed_average
@@ -560,12 +554,12 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         # Fresh bounds are averages over t+1 future prices; seasoned bounds
         # are averages over n₁ + t + 1 total observations.
         if n1 > 0 and s_bar is not None:
-            n_future = np.searchsorted(
+            n_future: np.ndarray = np.searchsorted(
                 observation_indices,
                 np.arange(num_steps + 1),
                 side="right",
             ).astype(float)
-            n_total = n1 + n_future
+            n_total: np.ndarray = n1 + n_future
             avg_min = (n1 * s_bar_state + n_future[None, :] * avg_min) / n_total[None, :]
             avg_max = (n1 * s_bar_state + n_future[None, :] * avg_max) / n_total[None, :]
 
