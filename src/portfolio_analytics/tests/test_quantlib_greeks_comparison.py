@@ -2,15 +2,14 @@
 
 Sections
 --------
-1. European BSM analytical Greeks vs QuantLib AnalyticEuropeanEngine
-2. European binomial tree Greeks vs QuantLib analytical
-3. American PDE numerical Greeks vs QuantLib FdBlackScholesVanillaEngine
-4. European MC pathwise Greeks vs QuantLib analytical
-5. European Asian MC numerical Greeks vs QuantLib
+1. Vanilla European Greeks: PA engines vs QuantLib (broad scenarios)
+2. Vanilla American Greeks: PA engines vs QuantLib FD (broad scenarios)
+3. European Asian MC numerical Greeks vs QuantLib
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import datetime as dt
 import logging
 from typing import TYPE_CHECKING
@@ -27,6 +26,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import (
+    assert_greeks_close,
     flat_curve,
     market_data,
     make_vanilla_spec,
@@ -55,6 +55,14 @@ if TYPE_CHECKING:
 ql = pytest.importorskip("QuantLib")
 
 logger = logging.getLogger(__name__)
+
+# Convention mapping: QL → PA
+# delta, gamma: same
+# vega: QL per 100% vol → /100 to match PA per 1 vol-pt
+# theta: QL per year → /365 to match PA per day
+# rho: QL per 100% rate → /100 to match PA per 1%
+
+_QL_SCALE = {"delta": 1.0, "gamma": 1.0, "vega": 1 / 100, "theta": 1 / 365, "rho": 1 / 100}
 
 # ── Shared constants ────────────────────────────────────────────────────
 
@@ -104,12 +112,14 @@ def _underlying(
     spot: float,
     risk_free_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
 ) -> UnderlyingData:
     return underlying(
         initial_value=spot,
         volatility=VOL,
         market_data=_market_data(discount_curve=risk_free_curve),
         dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
     )
 
 
@@ -118,6 +128,7 @@ def _gbm(
     spot: float,
     risk_free_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     paths: int = 500_000,
 ) -> GBMProcess:
     return GBMProcess(
@@ -126,6 +137,7 @@ def _gbm(
             initial_value=spot,
             volatility=VOL,
             dividend_curve=dividend_curve,
+            discrete_dividends=discrete_dividends,
         ),
         SimulationConfig(
             paths=paths,
@@ -142,6 +154,32 @@ def _ql_setup() -> "ql_typing.Date":
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
     ql.Settings.instance().evaluationDate = eval_date
     return eval_date
+
+
+def _ql_curve_handle_from_discount_curve(
+    curve: DiscountCurve,
+    *,
+    eval_date: "ql_typing.Date",
+) -> "ql_typing.YieldTermStructureHandle":
+    day_count = ql.Actual365Fixed()
+    dates = [eval_date]
+    for t in curve.times[1:]:
+        dates.append(eval_date + int(round(float(t) * 365.0)))
+    return ql.YieldTermStructureHandle(ql.DiscountCurve(dates, list(curve.dfs), day_count))
+
+
+def _ql_dividend_vector(
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
+) -> "ql_typing.DividendVector":
+    if not discrete_dividends:
+        return ql.DividendVector([], [])
+    dates: list[ql_typing.Date] = []
+    amounts: list[float] = []
+    for ex_date, amount in discrete_dividends:
+        if PRICING_DATE <= ex_date <= MATURITY:
+            dates.append(ql.Date(ex_date.day, ex_date.month, ex_date.year))
+            amounts.append(float(amount))
+    return ql.DividendVector(dates, amounts)
 
 
 def _ql_process(
@@ -167,8 +205,10 @@ def _ql_european_option(
     strike: float,
     option_type: OptionType,
     dividend_yield: float = 0.0,
+    risk_free_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
 ) -> "ql_typing.VanillaOption":
-    """QuantLib European with AnalyticEuropeanEngine."""
+    """QuantLib European with AnalyticEuropeanEngine (flat or term-structured curves)."""
     eval_date = _ql_setup()
     ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
     ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
@@ -176,7 +216,33 @@ def _ql_european_option(
         ql.PlainVanillaPayoff(ql_type, strike),
         ql.EuropeanExercise(ql_maturity),
     )
-    process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield)
+
+    if risk_free_curve is None and dividend_curve is None:
+        process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield)
+    else:
+        rf_handle = (
+            _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date)
+            if risk_free_curve is not None
+            else ql.YieldTermStructureHandle(
+                ql.FlatForward(eval_date, RISK_FREE, ql.Actual365Fixed())
+            )
+        )
+        div_handle = (
+            _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date)
+            if dividend_curve is not None
+            else ql.YieldTermStructureHandle(
+                ql.FlatForward(eval_date, dividend_yield, ql.Actual365Fixed())
+            )
+        )
+        process = ql.BlackScholesMertonProcess(
+            ql.QuoteHandle(ql.SimpleQuote(spot)),
+            div_handle,
+            rf_handle,
+            ql.BlackVolTermStructureHandle(
+                ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql.Actual365Fixed())
+            ),
+        )
+
     option.setPricingEngine(ql.AnalyticEuropeanEngine(process))
     return option
 
@@ -187,6 +253,9 @@ def _ql_american_fd_option(
     strike: float,
     option_type: OptionType,
     dividend_yield: float = 0.0,
+    risk_free_curve: DiscountCurve | None = None,
+    dividend_curve: DiscountCurve | None = None,
+    discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     grid_points: int = 200,
     time_steps: int = 400,
 ) -> "ql_typing.VanillaOption":
@@ -198,15 +267,64 @@ def _ql_american_fd_option(
         ql.PlainVanillaPayoff(ql_type, strike),
         ql.AmericanExercise(eval_date, ql_maturity),
     )
-    process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield)
+    if risk_free_curve is None and dividend_curve is None:
+        process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield)
+    else:
+        rf_handle = (
+            _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date)
+            if risk_free_curve is not None
+            else ql.YieldTermStructureHandle(
+                ql.FlatForward(eval_date, RISK_FREE, ql.Actual365Fixed())
+            )
+        )
+        div_handle = (
+            _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date)
+            if dividend_curve is not None
+            else ql.YieldTermStructureHandle(
+                ql.FlatForward(eval_date, dividend_yield, ql.Actual365Fixed())
+            )
+        )
+        process = ql.BlackScholesMertonProcess(
+            ql.QuoteHandle(ql.SimpleQuote(spot)),
+            div_handle,
+            rf_handle,
+            ql.BlackVolTermStructureHandle(
+                ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql.Actual365Fixed())
+            ),
+        )
+
     engine = ql.FdBlackScholesVanillaEngine(
         process,
-        ql.DividendVector([], []),
+        _ql_dividend_vector(discrete_dividends),
         grid_points,
         time_steps,
     )
     option.setPricingEngine(engine)
     return option
+
+
+def _ql_greek(option: "ql_typing.VanillaOption", greek: str) -> float | None:
+    """Return a QuantLib greek when available, else ``None``."""
+    try:
+        return float(getattr(option, greek)())
+    except RuntimeError:
+        return None
+
+
+def _ql_scaled_greeks(
+    option: "ql_typing.VanillaOption",
+    *,
+    allow_missing: bool,
+) -> dict[str, float | None]:
+    """Return QuantLib Greeks scaled to portfolio_analytics conventions."""
+    values: dict[str, float | None] = {}
+    for greek, scale in _QL_SCALE.items():
+        val = _ql_greek(option, greek)
+        if val is None and allow_missing:
+            values[greek] = None
+        else:
+            values[greek] = None if val is None else val * scale
+    return values
 
 
 # Convention conversions (QuantLib → portfolio_analytics):
@@ -216,232 +334,200 @@ def _ql_american_fd_option(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 1. European BSM analytical Greeks vs QuantLib AnalyticEuropeanEngine
+# 1. Vanilla European Greeks: PA engines vs QuantLib (broad scenarios)
 # ═══════════════════════════════════════════════════════════════════════
 
-_EU_CASES = [
-    (100.0, 100.0, OptionType.CALL),  # ATM call
-    (100.0, 100.0, OptionType.PUT),  # ATM put
-    (90.0, 100.0, OptionType.CALL),  # OTM call
-    (110.0, 100.0, OptionType.PUT),  # OTM put
+_EU_VANILLA_SCENARIOS = [
+    pytest.param(100.0, 100.0, OptionType.CALL, "flat", "none", id="atm_call_flat"),
+    pytest.param(100.0, 95.0, OptionType.PUT, "flat", "flat", id="itm_put_flat_div"),
+    pytest.param(90.0, 100.0, OptionType.CALL, "nonflat", "nonflat", id="otm_call_nonflat"),
+    pytest.param(110.0, 100.0, OptionType.PUT, "nonflat", "none", id="otm_put_nonflat"),
 ]
 
 
-@pytest.mark.parametrize("spot,strike,option_type", _EU_CASES)
-@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
-def test_european_bsm_greeks_vs_quantlib(spot, strike, option_type, dividend_yield):
-    """BSM analytical delta/gamma/vega/theta/rho match QuantLib."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield) if dividend_yield else None
+def _resolve_curve(kind: str, *, is_dividend: bool) -> DiscountCurve | None:
+    if kind == "none":
+        return None
+    if kind == "flat":
+        rate = 0.03 if is_dividend else RISK_FREE
+        return flat_curve(PRICING_DATE, MATURITY, rate)
+    if kind == "nonflat":
+        forwards = np.array([0.01, 0.02, 0.015]) if is_dividend else np.array([0.03, 0.05, 0.06])
+        return DiscountCurve.from_forwards(times=np.array([0.0, 0.25, 0.5, 1.0]), forwards=forwards)
+    raise ValueError(f"unsupported curve kind: {kind}")
+
+
+@pytest.mark.parametrize("spot,strike,option_type,rate_kind,div_kind", _EU_VANILLA_SCENARIOS)
+@pytest.mark.parametrize(
+    "engine,tols",
+    [
+        (
+            PricingMethod.BSM,
+            {"delta": 1e-4, "gamma": 1e-4, "vega": 1e-4, "theta": 1e-4, "rho": 1e-4},
+        ),
+        (
+            PricingMethod.BINOMIAL,
+            {"delta": 0.01, "gamma": 0.03, "vega": 0.08, "theta": 0.30, "rho": 0.08},
+        ),
+        (
+            PricingMethod.PDE_FD,
+            {"delta": 0.02, "gamma": 0.05, "vega": 0.10, "theta": 0.30, "rho": 0.08},
+        ),
+        (
+            PricingMethod.MONTE_CARLO,
+            {"delta": 0.03, "gamma": 0.10, "vega": 0.05, "theta": 0.10, "rho": 0.10},
+        ),
+    ],
+)
+def test_vanilla_european_greeks_vs_quantlib(
+    spot, strike, option_type, rate_kind, div_kind, engine, tols
+):
+    """PA vanilla European Greeks align with QuantLib across flat/non-flat curve scenarios."""
+    r_curve = _resolve_curve(rate_kind, is_dividend=False)
+    q_curve = _resolve_curve(div_kind, is_dividend=True)
+
+    underlying = (
+        _gbm(spot=spot, risk_free_curve=r_curve, dividend_curve=q_curve)
+        if engine is PricingMethod.MONTE_CARLO
+        else _underlying(spot=spot, risk_free_curve=r_curve, dividend_curve=q_curve)
+    )
+    params = (
+        MC_CFG
+        if engine is PricingMethod.MONTE_CARLO
+        else BINOM_CFG
+        if engine is PricingMethod.BINOMIAL
+        else PDE_CFG
+        if engine is PricingMethod.PDE_FD
+        else None
+    )
+
     ov = OptionValuation(
-        _underlying(spot=spot, dividend_curve=q_curve),
+        underlying,
         _spec(strike=strike, option_type=option_type),
-        PricingMethod.BSM,
+        engine,
+        params=params,
     )
     ql_opt = _ql_european_option(
         spot=spot,
         strike=strike,
         option_type=option_type,
-        dividend_yield=dividend_yield,
+        risk_free_curve=r_curve,
+        dividend_curve=q_curve,
     )
 
-    pairs = {
-        "delta": (ov.delta(), ql_opt.delta()),
-        "gamma": (ov.gamma(), ql_opt.gamma()),
-        "vega": (ov.vega(), ql_opt.vega() / 100),
-        "theta": (ov.theta(), ql_opt.theta() / 365),
-        "rho": (ov.rho(), ql_opt.rho() / 100),
+    ql_values = _ql_scaled_greeks(ql_opt, allow_missing=False)
+    pa_values = {
+        "delta": ov.delta(),
+        "gamma": ov.gamma(),
+        "vega": ov.vega(),
+        "theta": ov.theta(),
+        "rho": ov.rho(),
     }
 
-    for name, (pa_val, ql_val) in pairs.items():
-        logger.info(
-            "BSM %s %s S=%.0f K=%.0f q=%.2f | PA=%.8f QL=%.8f",
-            name,
-            option_type.value,
-            spot,
-            strike,
-            dividend_yield,
-            pa_val,
-            ql_val,
-        )
-        assert np.isclose(pa_val, ql_val, rtol=1e-4), f"{name}: PA {pa_val:.8f} vs QL {ql_val:.8f}"
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 2. European binomial tree Greeks vs QuantLib analytical
-# ═══════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.parametrize("spot,strike,option_type", _EU_CASES)
-@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
-def test_european_binomial_greeks_vs_quantlib(spot, strike, option_type, dividend_yield):
-    """Binomial tree delta/gamma/theta converge to QuantLib analytical."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield) if dividend_yield else None
-    ov = OptionValuation(
-        _underlying(spot=spot, dividend_curve=q_curve),
-        _spec(strike=strike, option_type=option_type),
-        PricingMethod.BINOMIAL,
-        params=BINOM_CFG,
-    )
-    ql_opt = _ql_european_option(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_yield=dividend_yield,
+    assert_greeks_close(
+        lhs=pa_values,
+        rhs=ql_values,
+        tols=tols,
+        log_prefix=f"{engine.name} EU {option_type.value} S={spot:.0f} K={strike:.0f}",
+        lhs_name="PA",
+        rhs_name="QL",
+        skip_missing_rhs=False,
+        logger=logger,
     )
 
-    pairs = {
-        "delta": (ov.delta(), ql_opt.delta(), 0.005),
-        "gamma": (ov.gamma(), ql_opt.gamma(), 0.02),
-        "theta": (ov.theta(), ql_opt.theta() / 365, 0.02),
-    }
-
-    for name, (pa_val, ql_val, tol) in pairs.items():
-        logger.info(
-            "Binom %s %s S=%.0f K=%.0f q=%.2f | PA=%.6f QL=%.6f",
-            name,
-            option_type.value,
-            spot,
-            strike,
-            dividend_yield,
-            pa_val,
-            ql_val,
-        )
-        assert np.isclose(pa_val, ql_val, rtol=tol), f"{name}: PA {pa_val:.6f} vs QL {ql_val:.6f}"
-
 
 # ═══════════════════════════════════════════════════════════════════════
-# 3. American PDE numerical Greeks vs QuantLib FdBlackScholesVanillaEngine
+# 2. Vanilla American Greeks: PA engines vs QuantLib FD (broad scenarios)
 # ═══════════════════════════════════════════════════════════════════════
 
-_AM_CASES = [
-    (110.0, 100.0, OptionType.CALL),  # ITM call
-    (90.0, 100.0, OptionType.CALL),  # OTM call
-    (90.0, 100.0, OptionType.PUT),  # ITM put
-    (110.0, 100.0, OptionType.PUT),  # OTM put
+_AM_VANILLA_SCENARIOS = [
+    pytest.param(90.0, 100.0, OptionType.PUT, "flat", "none", None, id="itm_put_flat"),
+    pytest.param(110.0, 100.0, OptionType.CALL, "flat", "flat", None, id="itm_call_flat_div"),
+    pytest.param(100.0, 100.0, OptionType.PUT, "nonflat", "nonflat", None, id="atm_put_nonflat"),
+    pytest.param(
+        100.0,
+        100.0,
+        OptionType.PUT,
+        "nonflat",
+        "none",
+        [
+            (PRICING_DATE + dt.timedelta(days=90), 0.50),
+            (PRICING_DATE + dt.timedelta(days=270), 0.50),
+        ],
+        id="atm_put_nonflat_discrete",
+    ),
 ]
-
-
-@pytest.mark.parametrize("spot,strike,option_type", _AM_CASES)
-@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
-def test_american_pde_delta_vs_quantlib(spot, strike, option_type, dividend_yield):
-    """PDE bump-and-revalue delta aligns with QuantLib FD grid delta."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield) if dividend_yield else None
-    ov = OptionValuation(
-        _underlying(spot=spot, dividend_curve=q_curve),
-        _spec(
-            strike=strike,
-            option_type=option_type,
-            exercise_type=ExerciseType.AMERICAN,
-        ),
-        PricingMethod.PDE_FD,
-        params=PDE_CFG,
-    )
-    ql_opt = _ql_american_fd_option(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_yield=dividend_yield,
-    )
-
-    pa_delta = ov.delta()
-    ql_delta = ql_opt.delta()
-    logger.info(
-        "PDE AM delta %s S=%.0f K=%.0f q=%.2f | PA=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        dividend_yield,
-        pa_delta,
-        ql_delta,
-    )
-    assert np.isclose(pa_delta, ql_delta, rtol=0.02), (
-        f"delta: PA {pa_delta:.6f} vs QL {ql_delta:.6f}"
-    )
-
-
-@pytest.mark.parametrize("spot,strike,option_type", _AM_CASES)
-@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
-def test_american_pde_gamma_vs_quantlib(spot, strike, option_type, dividend_yield):
-    """PDE grid gamma vs QuantLib FD grid gamma."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield) if dividend_yield else None
-    ov = OptionValuation(
-        _underlying(spot=spot, dividend_curve=q_curve),
-        _spec(
-            strike=strike,
-            option_type=option_type,
-            exercise_type=ExerciseType.AMERICAN,
-        ),
-        PricingMethod.PDE_FD,
-        params=PDE_CFG,
-    )
-    ql_opt = _ql_american_fd_option(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_yield=dividend_yield,
-    )
-
-    pa_gamma = ov.gamma()
-    ql_gamma = ql_opt.gamma()
-    logger.info(
-        "PDE AM gamma %s S=%.0f K=%.0f q=%.2f | PA=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        dividend_yield,
-        pa_gamma,
-        ql_gamma,
-    )
-    assert np.isclose(pa_gamma, ql_gamma, rtol=0.05), (
-        f"gamma: PA {pa_gamma:.6f} vs QL {ql_gamma:.6f}"
-    )
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# 4. European MC pathwise Greeks vs QuantLib analytical
-# ═══════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.parametrize(
-    "spot,strike,option_type",
+    "spot,strike,option_type,rate_kind,div_kind,discrete_dividends", _AM_VANILLA_SCENARIOS
+)
+@pytest.mark.parametrize(
+    "engine,tols",
     [
-        (100.0, 100.0, OptionType.CALL),  # ATM call
-        (100.0, 100.0, OptionType.PUT),  # ATM put
-        (90.0, 100.0, OptionType.CALL),  # OTM call
+        (
+            PricingMethod.BINOMIAL,
+            {"delta": 0.03, "gamma": 0.08, "vega": 0.12, "theta": 0.35, "rho": 0.12},
+        ),
+        (
+            PricingMethod.PDE_FD,
+            {"delta": 0.03, "gamma": 0.08, "vega": 0.15, "theta": 0.35, "rho": 0.15},
+        ),
     ],
 )
-def test_european_mc_pathwise_greeks_vs_quantlib(spot, strike, option_type):
-    """MC pathwise delta/vega and pathwise-FD gamma match QuantLib analytical."""
+def test_vanilla_american_greeks_vs_quantlib(
+    spot,
+    strike,
+    option_type,
+    rate_kind,
+    div_kind,
+    discrete_dividends,
+    engine,
+    tols,
+):
+    """PA vanilla American Greeks align with QuantLib FD for broad curve/dividend scenarios."""
+    r_curve = _resolve_curve(rate_kind, is_dividend=False)
+    q_curve = _resolve_curve(div_kind, is_dividend=True)
+
     ov = OptionValuation(
-        _gbm(spot=spot, paths=500_000),
-        _spec(strike=strike, option_type=option_type),
-        PricingMethod.MONTE_CARLO,
-        params=MC_CFG,
+        _underlying(
+            spot=spot,
+            risk_free_curve=r_curve,
+            dividend_curve=q_curve,
+            discrete_dividends=discrete_dividends,
+        ),
+        _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN),
+        engine,
+        params=BINOM_CFG if engine is PricingMethod.BINOMIAL else PDE_CFG,
     )
-    ql_opt = _ql_european_option(
+    ql_opt = _ql_american_fd_option(
         spot=spot,
         strike=strike,
         option_type=option_type,
+        risk_free_curve=r_curve,
+        dividend_curve=q_curve,
+        discrete_dividends=discrete_dividends,
     )
 
-    pairs = {
-        "delta": (ov.delta(), ql_opt.delta(), 0.03),
-        "gamma": (ov.gamma(), ql_opt.gamma(), 0.10),
-        "vega": (ov.vega(), ql_opt.vega() / 100, 0.05),
-        "theta": (ov.theta(), ql_opt.theta() / 365, 0.05),
+    pa_values = {
+        "delta": ov.delta(),
+        "gamma": ov.gamma(),
+        "vega": ov.vega(),
+        "theta": ov.theta(),
+        "rho": ov.rho(),
     }
-
-    for name, (pa_val, ql_val, tol) in pairs.items():
-        logger.info(
-            "MC pw %s %s S=%.0f K=%.0f | PA=%.6f QL=%.6f",
-            name,
-            option_type.value,
-            spot,
-            strike,
-            pa_val,
-            ql_val,
-        )
-        assert np.isclose(pa_val, ql_val, rtol=tol), f"{name}: PA {pa_val:.6f} vs QL {ql_val:.6f}"
+    ql_values = _ql_scaled_greeks(ql_opt, allow_missing=True)
+    assert_greeks_close(
+        lhs=pa_values,
+        rhs=ql_values,
+        tols=tols,
+        log_prefix=f"{engine.name} AM {option_type.value} S={spot:.0f} K={strike:.0f}",
+        lhs_name="PA",
+        rhs_name="QL",
+        skip_missing_rhs=True,
+        atol=1e-4,
+        logger=logger,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -464,8 +550,8 @@ def _ql_asian_greeks(
     strike: float,
     spot: float,
     vol: float,
-    rate: float,
-    div_yield: float,
+    risk_free_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
 ) -> dict[str, float | None]:
     """Price a European Asian via QuantLib and return available Greeks.
 
@@ -476,8 +562,12 @@ def _ql_asian_greeks(
     ql.Settings.instance().evaluationDate = eval_date
 
     spot_h = ql.QuoteHandle(ql.SimpleQuote(spot))
-    rf_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, rate, ql.Actual365Fixed()))
-    div_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, div_yield, ql.Actual365Fixed()))
+    rf_h = _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date)
+    div_h = (
+        _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date)
+        if dividend_curve is not None
+        else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
+    )
     vol_h = ql.BlackVolTermStructureHandle(
         ql.BlackConstantVol(eval_date, ql.TARGET(), vol, ql.Actual365Fixed())
     )
@@ -519,15 +609,12 @@ def _pa_asian_mc_greeks(
     strike: float,
     spot: float,
     vol: float,
-    rate: float,
-    div_yield: float,
+    risk_free_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
 ) -> dict[str, float]:
     """Build our MC Asian and compute numerical Greeks."""
-    ttm = 1.0  # 365-day maturity, ACT/365
-    r_curve = DiscountCurve.flat(rate, end_time=ttm)
-    q_curve = DiscountCurve.flat(div_yield, end_time=ttm) if div_yield else None
-    md = MarketData(PRICING_DATE, r_curve, currency=CURRENCY)
-    params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=q_curve)
+    md = MarketData(PRICING_DATE, risk_free_curve, currency=CURRENCY)
+    params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=dividend_curve)
     sim_cfg = SimulationConfig(
         paths=150_000,
         end_date=MATURITY,
@@ -558,71 +645,78 @@ def _pa_asian_mc_greeks(
     }
 
 
-# Convention mapping: QL → PA
-# delta, gamma: same
-# vega: QL per 100% vol → /100 to match PA per 1 vol-pt
-# theta: QL per year → /365 to match PA per day
-# rho: QL per 100% rate → /100 to match PA per 1%
-_QL_SCALE = {"delta": 1, "gamma": 1, "vega": 1 / 100, "theta": 1 / 365, "rho": 1 / 100}
-
 _ASIAN_GREEK_SCENARIOS = [
-    # Geometric — analytic engine, all 5 Greeks
+    # Geometric (all 5 Greeks available from QL analytic engine)
     pytest.param(
-        100, 100, 0.20, OptionType.CALL, AsianAveraging.GEOMETRIC, 0.05, 0.0, id="geom_call_atm"
-    ),
-    pytest.param(
-        100, 100, 0.20, OptionType.PUT, AsianAveraging.GEOMETRIC, 0.05, 0.0, id="geom_put_atm"
+        100,
+        100,
+        0.20,
+        OptionType.CALL,
+        AsianAveraging.GEOMETRIC,
+        "flat",
+        "none",
+        id="geom_call_atm_flat",
     ),
     pytest.param(
         100,
-        110,
+        90,
         0.25,
-        OptionType.CALL,
+        OptionType.PUT,
         AsianAveraging.GEOMETRIC,
-        0.05,
-        0.02,
-        id="geom_call_otm_div",
+        "nonflat",
+        "flat",
+        id="geom_put_itm_nonflat",
     ),
-    pytest.param(
-        100, 90, 0.25, OptionType.PUT, AsianAveraging.GEOMETRIC, 0.03, 0.01, id="geom_put_itm_div"
-    ),
-    # Arithmetic TW — delta/gamma only
-    pytest.param(
-        100, 100, 0.20, OptionType.CALL, AsianAveraging.ARITHMETIC, 0.05, 0.0, id="arith_call_atm"
-    ),
-    pytest.param(
-        100, 100, 0.20, OptionType.PUT, AsianAveraging.ARITHMETIC, 0.05, 0.0, id="arith_put_atm"
-    ),
+    # Arithmetic (TW engine: delta/gamma only)
     pytest.param(
         100,
         110,
         0.30,
         OptionType.CALL,
         AsianAveraging.ARITHMETIC,
-        0.05,
-        0.02,
-        id="arith_call_otm_div",
+        "flat",
+        "flat",
+        id="arith_call_otm_flat_div",
     ),
     pytest.param(
-        100, 90, 0.25, OptionType.PUT, AsianAveraging.ARITHMETIC, 0.03, 0.01, id="arith_put_itm_div"
+        100,
+        100,
+        0.20,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        "nonflat",
+        "none",
+        id="arith_put_atm_nonflat",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,option_type,averaging,rate,div_yield",
+    "spot,strike,vol,option_type,averaging,rate_kind,div_kind",
     _ASIAN_GREEK_SCENARIOS,
 )
-def test_asian_mc_greeks_vs_quantlib(spot, strike, vol, option_type, averaging, rate, div_yield):
+def test_asian_mc_greeks_vs_quantlib(
+    spot,
+    strike,
+    vol,
+    option_type,
+    averaging,
+    rate_kind,
+    div_kind,
+):
     """European Asian MC numerical Greeks vs QuantLib analytic/TW Greeks."""
+    r_curve = _resolve_curve(rate_kind, is_dividend=False)
+    q_curve = _resolve_curve(div_kind, is_dividend=True)
+    assert r_curve is not None
+
     ql_greeks = _ql_asian_greeks(
         option_type=option_type,
         averaging=averaging,
         strike=strike,
         spot=spot,
         vol=vol,
-        rate=rate,
-        div_yield=div_yield,
+        risk_free_curve=r_curve,
+        dividend_curve=q_curve,
     )
     pa_greeks = _pa_asian_mc_greeks(
         option_type=option_type,
@@ -630,8 +724,8 @@ def test_asian_mc_greeks_vs_quantlib(spot, strike, vol, option_type, averaging, 
         strike=strike,
         spot=spot,
         vol=vol,
-        rate=rate,
-        div_yield=div_yield,
+        risk_free_curve=r_curve,
+        dividend_curve=q_curve,
     )
 
     # Tolerances: MC numerical bump-and-revalue vs analytic/TW

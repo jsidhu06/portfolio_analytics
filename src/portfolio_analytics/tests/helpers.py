@@ -1,6 +1,7 @@
 import datetime as dt
 from typing import Any, Sequence
 
+import numpy as np
 
 from portfolio_analytics.enums import DayCountConvention, ExerciseType, OptionType
 from portfolio_analytics.market_environment import MarketData
@@ -126,3 +127,39 @@ def make_vanilla_spec(
         maturity=maturity,
         currency=currency,
     )
+
+
+def assert_greeks_close(
+    *,
+    lhs: dict[str, float],
+    rhs: dict[str, float | None],
+    tols: dict[str, float],
+    log_prefix: str,
+    lhs_name: str,
+    rhs_name: str,
+    atol: float = 0.0,
+    skip_missing_rhs: bool = False,
+    logger: Any = None,
+) -> None:
+    """Log and assert per-greek closeness with per-greek tolerances."""
+    for greek, tol in tols.items():
+        rhs_val = rhs[greek]
+        if rhs_val is None and skip_missing_rhs:
+            if logger is not None:
+                logger.info("%s %s unavailable in %s; skipping", log_prefix, greek, rhs_name)
+            continue
+
+        assert rhs_val is not None
+        if logger is not None:
+            logger.info(
+                "%s %s | %s=%.6f %s=%.6f",
+                log_prefix,
+                greek,
+                lhs_name,
+                lhs[greek],
+                rhs_name,
+                rhs_val,
+            )
+        assert np.isclose(lhs[greek], rhs_val, rtol=tol, atol=atol), (
+            f"{greek}: {lhs_name}={lhs[greek]:.6f} vs {rhs_name}={rhs_val:.6f}"
+        )

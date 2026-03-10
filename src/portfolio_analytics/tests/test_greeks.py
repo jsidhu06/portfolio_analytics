@@ -1,12 +1,17 @@
 """Comprehensive tests for greek calculations (delta, gamma, vega, theta, rho)."""
 
 import datetime as dt
-
+import logging
 import numpy as np
 import pytest
 
-from portfolio_analytics.exceptions import ConfigurationError, ValidationError
+from portfolio_analytics.exceptions import (
+    ConfigurationError,
+    ValidationError,
+    UnsupportedFeatureError,
+)
 from portfolio_analytics.enums import (
+    AsianAveraging,
     ExerciseType,
     GreekCalculationMethod,
     OptionType,
@@ -14,7 +19,7 @@ from portfolio_analytics.enums import (
 )
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
+from portfolio_analytics.tests.helpers import assert_greeks_close, flat_curve
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     PathSimulation,
@@ -22,11 +27,14 @@ from portfolio_analytics.stochastic_processes import (
     SimulationConfig,
 )
 from portfolio_analytics.valuation import (
+    AsianSpec,
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
 )
 from portfolio_analytics.valuation import BinomialParams, MonteCarloParams
+
+logger = logging.getLogger(__name__)
 
 
 class TestGreeksSetup:
@@ -366,167 +374,33 @@ class TestThetaBasicProperties(TestGreeksSetup):
         # Near-expiry ATM call has very large negative theta
         assert theta < -0.05
 
-    def test_bsm_analytical_vs_numerical_theta(self):
-        """Analytical BSM theta should closely match numerical theta."""
-        spec = self._make_spec(option_type=OptionType.CALL)
-        ud = self._make_ud()
-        valuation = self._make_val(ud, spec, PricingMethod.BSM)
-
-        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-
-        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
-
-    def test_bsm_analytical_vs_numerical_theta_put(self):
-        """Analytical BSM put theta should closely match numerical theta."""
-        spec = self._make_spec(option_type=OptionType.PUT)
-        ud = self._make_ud()
-        valuation = self._make_val(ud, spec, PricingMethod.BSM)
-
-        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-
-        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
-
-    def test_theta_consistency_bsm_binomial(self):
-        """BSM and binomial theta should approximately agree for European options."""
-        spec = self._make_spec(option_type=OptionType.CALL)
-
-        bsm_val = self._make_val(self._make_ud(), spec, PricingMethod.BSM)
-        theta_bsm = bsm_val.theta()
-
-        binomial_val = self._make_val(
-            self._make_ud(),
-            spec,
-            PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=2500),
-        )
-        theta_binomial = binomial_val.theta()
-
-        assert np.isclose(theta_bsm, theta_binomial, atol=0.005)
-
 
 class TestGreekCalculationMethods(TestGreeksSetup):
-    """Test analytical vs numerical greek calculation methods."""
+    """Light consistency checks between analytical and numerical BSM Greeks.
 
-    def test_bsm_analytical_vs_numerical_delta(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
+    Broad multi-scenario benchmarking is covered in test_quantlib_greeks_comparison.py.
+    """
+
+    @pytest.mark.parametrize(
+        "option_type,greek,rtol",
+        [
+            (OptionType.CALL, "delta", 1e-3),
+            (OptionType.CALL, "gamma", 1e-3),
+            (OptionType.CALL, "vega", 1e-3),
+            (OptionType.CALL, "theta", 0.02),
+            (OptionType.PUT, "theta", 0.02),
+        ],
+    )
+    def test_bsm_analytical_vs_numerical_smoke(self, option_type, greek, rtol):
+        spec = self._make_spec(option_type=option_type)
         ud = self._make_ud()
         valuation = self._make_val(ud, spec, PricingMethod.BSM)
 
-        delta_analytical = valuation.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        delta_numerical = valuation.delta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+        analytic_fn = getattr(valuation, greek)
+        analytical = analytic_fn(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+        numerical = analytic_fn(greek_calc_method=GreekCalculationMethod.NUMERICAL)
 
-        assert np.isclose(delta_analytical, delta_numerical, rtol=1e-3)
-
-    def test_bsm_analytical_vs_numerical_gamma(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-        ud = self._make_ud()
-        valuation = self._make_val(ud, spec, PricingMethod.BSM)
-
-        gamma_analytical = valuation.gamma(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        gamma_numerical = valuation.gamma(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-
-        assert np.isclose(gamma_analytical, gamma_numerical, rtol=1e-3)
-
-    def test_bsm_analytical_vs_numerical_vega(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-        ud = self._make_ud()
-        valuation = self._make_val(ud, spec, PricingMethod.BSM)
-
-        vega_analytical = valuation.vega(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        vega_numerical = valuation.vega(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-
-        assert np.isclose(vega_analytical, vega_numerical, rtol=1e-3)
-
-    def test_bsm_analytical_vs_numerical_rho(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-        ud = self._make_ud()
-        valuation = self._make_val(ud, spec, PricingMethod.BSM)
-
-        rho_analytical = valuation.rho(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        rho_numerical = valuation.rho(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-
-        assert np.isclose(rho_analytical, rho_numerical, rtol=1e-3)
-
-    def test_bsm_analytical_vs_numerical_theta(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-        ud = self._make_ud()
-        valuation = self._make_val(ud, spec, PricingMethod.BSM)
-
-        theta_analytical = valuation.theta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
-        theta_numerical = valuation.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
-
-        assert np.isclose(theta_analytical, theta_numerical, rtol=0.02)
-
-
-class TestGreekConsistencyAcrossPricingMethods(TestGreeksSetup):
-    """Test that greeks are consistent across different pricing methods."""
-
-    def test_call_delta_consistency_bsm_binomial(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-
-        bsm_val = self._make_val(self._make_ud(), spec, PricingMethod.BSM)
-        delta_bsm = bsm_val.delta()
-
-        binomial_val = self._make_val(
-            self._make_ud(),
-            spec,
-            PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=2500),
-        )
-        delta_binomial = binomial_val.delta()
-
-        assert np.isclose(delta_bsm, delta_binomial, atol=0.01)
-
-    def test_call_delta_consistency_bsm_mcs(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-
-        bsm_val = self._make_val(self._make_ud(), spec, PricingMethod.BSM)
-        delta_bsm = bsm_val.delta()
-
-        gbm = self._make_gbm(dividend_curve=None)
-        mcs_val = self._make_val(
-            gbm,
-            spec,
-            PricingMethod.MONTE_CARLO,
-            params=MonteCarloParams(random_seed=42),
-        )
-        delta_mcs = mcs_val.delta()
-
-        assert np.isclose(delta_bsm, delta_mcs, atol=0.03)
-
-    def test_gamma_consistency_bsm_binomial(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-
-        bsm_val = self._make_val(self._make_ud(), spec, PricingMethod.BSM)
-        gamma_bsm = bsm_val.gamma()
-
-        binomial_val = self._make_val(
-            self._make_ud(),
-            spec,
-            PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=2500),
-        )
-        gamma_binomial = binomial_val.gamma()
-
-        assert np.isclose(gamma_bsm, gamma_binomial, atol=0.005)
-
-    def test_vega_consistency_bsm_binomial(self):
-        spec = self._make_spec(option_type=OptionType.CALL)
-
-        bsm_val = self._make_val(self._make_ud(), spec, PricingMethod.BSM)
-        vega_bsm = bsm_val.vega()
-
-        binomial_val = self._make_val(
-            self._make_ud(),
-            spec,
-            PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=2500),
-        )
-        vega_binomial = binomial_val.vega()
-
-        assert np.isclose(vega_bsm, vega_binomial, atol=0.1)
+        assert np.isclose(analytical, numerical, rtol=rtol)
 
 
 class TestGreeksDividendCurveEffect(TestGreeksSetup):
@@ -741,3 +615,290 @@ class TestGreekImmutability(TestGreeksSetup):
         assert 0 < delta1 < 1.0  # ITM call delta
         assert gamma2 > 0  # ATM gamma is positive
         assert vega3 > 0  # vega always positive
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Asian Greeks not covered by QuantLib comparisons
+# ═══════════════════════════════════════════════════════════════════════
+
+_PRICING_DATE = dt.datetime(2025, 1, 1)
+_MATURITY = dt.datetime(2026, 1, 1)
+_CURRENCY = "USD"
+_SPOT = 100.0
+_VOL = 0.20
+_MC_SEED = 42
+_ASIAN_STEPS = 52
+
+_NONFLAT_R = DiscountCurve.from_forwards(
+    times=np.array([0.0, 0.25, 0.5, 1.0]),
+    forwards=np.array([0.03, 0.05, 0.06]),
+)
+_NONFLAT_Q = DiscountCurve.from_forwards(
+    times=np.array([0.0, 0.25, 0.5, 1.0]),
+    forwards=np.array([0.01, 0.02, 0.015]),
+)
+_DISCRETE_DIVS = [
+    (_PRICING_DATE + dt.timedelta(days=90), 0.50),
+    (_PRICING_DATE + dt.timedelta(days=270), 0.50),
+]
+
+
+def _asian_curve(kind: str, *, is_dividend: bool) -> DiscountCurve | None:
+    if kind == "none":
+        return None
+    if kind == "flat":
+        rate = 0.03 if is_dividend else 0.05
+        return flat_curve(_PRICING_DATE, _MATURITY, rate)
+    if kind == "nonflat":
+        return _NONFLAT_Q if is_dividend else _NONFLAT_R
+    raise ValueError(f"unsupported curve kind: {kind}")
+
+
+def _asian_md(rate_curve: DiscountCurve) -> MarketData:
+    return MarketData(_PRICING_DATE, rate_curve, currency=_CURRENCY)
+
+
+def _asian_ud(
+    *,
+    spot: float,
+    strike: float,
+    option_type: OptionType,
+    averaging: AsianAveraging,
+    rate_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+) -> tuple[UnderlyingData, AsianSpec]:
+    ud = UnderlyingData(
+        initial_value=spot,
+        volatility=_VOL,
+        market_data=_asian_md(rate_curve),
+        dividend_curve=dividend_curve,
+        discrete_dividends=discrete_dividends,
+    )
+    spec = AsianSpec(
+        averaging=averaging,
+        option_type=option_type,
+        strike=strike,
+        maturity=_MATURITY,
+        currency=_CURRENCY,
+        exercise_type=ExerciseType.AMERICAN,
+    )
+    return ud, spec
+
+
+def _asian_mc(
+    *,
+    spot: float,
+    rate_curve: DiscountCurve,
+    dividend_curve: DiscountCurve | None,
+    discrete_dividends: list[tuple[dt.datetime, float]] | None,
+) -> GBMProcess:
+    return GBMProcess(
+        _asian_md(rate_curve),
+        GBMParams(
+            initial_value=spot,
+            volatility=_VOL,
+            dividend_curve=dividend_curve,
+            discrete_dividends=discrete_dividends,
+        ),
+        SimulationConfig(paths=120_000, num_steps=_ASIAN_STEPS, end_date=_MATURITY),
+    )
+
+
+def _greeks(ov: OptionValuation) -> dict[str, float]:
+    return {
+        "delta": ov.delta(),
+        "gamma": ov.gamma(),
+        "vega": ov.vega(),
+        "theta": ov.theta(),
+        "rho": ov.rho(),
+    }
+
+
+_ASIAN_AM_PA_SCENARIOS = [
+    pytest.param(
+        100.0,
+        100.0,
+        OptionType.PUT,
+        AsianAveraging.GEOMETRIC,
+        "flat",
+        "none",
+        None,
+        id="am_geom_put_atm_flat",
+    ),
+    pytest.param(
+        100.0,
+        100.0,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        "flat",
+        "flat",
+        None,
+        id="am_arith_put_atm_flat_div",
+    ),
+    pytest.param(
+        95.0,
+        105.0,
+        OptionType.CALL,
+        AsianAveraging.ARITHMETIC,
+        "nonflat",
+        "nonflat",
+        None,
+        id="am_arith_call_otm_nonflat",
+    ),
+    pytest.param(
+        100.0,
+        100.0,
+        OptionType.PUT,
+        AsianAveraging.ARITHMETIC,
+        "nonflat",
+        "none",
+        _DISCRETE_DIVS,
+        id="am_arith_put_atm_nonflat_discrete",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "spot,strike,option_type,averaging,rate_kind,div_kind,discrete_dividends",
+    _ASIAN_AM_PA_SCENARIOS,
+)
+def test_asian_american_greeks_binomial_vs_mc(
+    spot,
+    strike,
+    option_type,
+    averaging,
+    rate_kind,
+    div_kind,
+    discrete_dividends,
+):
+    """For Asian scenarios unsupported by QL, PA binomial and MC greeks should broadly align."""
+    r_curve = _asian_curve(rate_kind, is_dividend=False)
+    q_curve = _asian_curve(div_kind, is_dividend=True)
+    assert r_curve is not None
+
+    ud, spec = _asian_ud(
+        spot=spot,
+        strike=strike,
+        option_type=option_type,
+        averaging=averaging,
+        rate_curve=r_curve,
+        dividend_curve=q_curve,
+        discrete_dividends=discrete_dividends,
+    )
+    mc_process = _asian_mc(
+        spot=spot,
+        rate_curve=r_curve,
+        dividend_curve=q_curve,
+        discrete_dividends=discrete_dividends,
+    )
+
+    # For Hull-style Asian trees, use representative averages ~= 2x num_steps.
+    binom = OptionValuation(
+        ud,
+        spec,
+        PricingMethod.BINOMIAL,
+        params=BinomialParams(num_steps=_ASIAN_STEPS, asian_tree_averages=2 * _ASIAN_STEPS),
+    )
+    mc = OptionValuation(
+        mc_process,
+        spec,
+        PricingMethod.MONTE_CARLO,
+        params=MonteCarloParams(random_seed=_MC_SEED),
+    )
+
+    g_bin = _greeks(binom)
+    g_mc = _greeks(mc)
+    tols = {"delta": 0.15, "gamma": 0.30, "vega": 0.20, "theta": 0.30, "rho": 0.20}
+
+    assert_greeks_close(
+        lhs=g_bin,
+        rhs=g_mc,
+        tols=tols,
+        log_prefix=(
+            f"Asian AM {averaging.value} {option_type.value} "
+            f"r={rate_kind} q={div_kind} disc_div={discrete_dividends is not None}"
+        ),
+        lhs_name="Binom",
+        rhs_name="MC",
+        atol=1e-3,
+        logger=logger,
+    )
+
+
+# ── Asian auto-select Greek method → NUMERICAL ─────────────────────────
+
+
+class TestAsianGreekMethodSelection(TestGreeksSetup):
+    """Verify Asian specs always use NUMERICAL Greek method."""
+
+    def test_asian_bsm_auto_selects_numerical(self):
+        """BSM Asian should auto-select NUMERICAL, not ANALYTICAL."""
+        ud = self._make_ud()
+        spec = AsianSpec(
+            averaging=AsianAveraging.GEOMETRIC,
+            option_type=OptionType.CALL,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+            num_steps=12,
+        )
+        ov = OptionValuation(ud, spec, PricingMethod.BSM)
+        # Should not raise — would crash with AttributeError if ANALYTICAL were used
+        delta = ov.delta()
+        assert np.isfinite(delta)
+
+    def test_asian_binomial_auto_selects_numerical(self):
+        """Binomial Asian should auto-select NUMERICAL, not TREE."""
+        ud = self._make_ud()
+        spec = AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.CALL,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+            num_steps=12,
+        )
+        ov = OptionValuation(
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=100, asian_tree_averages=40),
+        )
+        delta = ov.delta()
+        assert np.isfinite(delta)
+
+    def test_asian_explicit_analytical_raises(self):
+        """Explicitly requesting ANALYTICAL for Asian should raise."""
+        ud = self._make_ud()
+        spec = AsianSpec(
+            averaging=AsianAveraging.GEOMETRIC,
+            option_type=OptionType.CALL,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+            num_steps=12,
+        )
+        ov = OptionValuation(ud, spec, PricingMethod.BSM)
+        with pytest.raises(UnsupportedFeatureError, match="Asian options only support.*NUMERICAL"):
+            ov.delta(greek_calc_method=GreekCalculationMethod.ANALYTICAL)
+
+    def test_asian_explicit_tree_raises(self):
+        """Explicitly requesting TREE for Asian should raise."""
+        ud = self._make_ud()
+        spec = AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.CALL,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+            num_steps=12,
+        )
+        ov = OptionValuation(
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=100, asian_tree_averages=40),
+        )
+        with pytest.raises(UnsupportedFeatureError, match="Asian options only support.*NUMERICAL"):
+            ov.delta(greek_calc_method=GreekCalculationMethod.TREE)
