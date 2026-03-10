@@ -48,7 +48,6 @@ from .bsm import _BSMEuropeanValuation
 from .asian_analytical import _AnalyticalAsianValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
 from ..rates import DiscountCurve
-from ..utils import calculate_year_fraction
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
@@ -777,30 +776,20 @@ class OptionValuation:
             Greek computation method. Analytical rho is used for BSM by default;
             otherwise finite-difference bump-and-revalue is used.
         rate_bump
-            Absolute bump in annualized flat rate for numerical rho.
+            Absolute parallel bump in the continuously-compounded risk-free
+            zero-rate curve for numerical rho.
 
         Returns
         -------
         float
-            Rho reported per 1% rate move.
+            Rho reported per 1% parallel rate move.
         """
         method = self._resolve_greek_method(greek_calc_method)
         if method == GreekCalculationMethod.ANALYTICAL:
             return float(self._impl.rho())
 
-        if self.discount_curve.flat_rate is None:
-            raise UnsupportedFeatureError("Numerical rho requires a flat discount curve.")
-
-        rate_up = self.discount_curve.flat_rate + rate_bump / 2
-        rate_down = self.discount_curve.flat_rate - rate_bump / 2
-
-        ttm = calculate_year_fraction(
-            self.pricing_date,
-            self.maturity,
-            day_count_convention=self.day_count_convention,
-        )
-        curve_up = DiscountCurve.flat(rate_up, end_time=ttm)
-        curve_down = DiscountCurve.flat(rate_down, end_time=ttm)
+        curve_up = self.discount_curve.bump_parallel_zero_rate(rate_bump / 2)
+        curve_down = self.discount_curve.bump_parallel_zero_rate(-rate_bump / 2)
 
         up = self._bump_underlying(discount_curve=curve_up)
         dn = self._bump_underlying(discount_curve=curve_down)
