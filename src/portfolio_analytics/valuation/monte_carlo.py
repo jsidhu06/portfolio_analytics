@@ -665,7 +665,7 @@ class _MCAsianBase:
                 _resolve_time_index(
                     time_grid,
                     d,
-                    "fixing_date",
+                    f"fixing_date: {d.strftime('%Y-%m-%d')}",
                     day_count_convention=self.underlying.day_count_convention,
                 )
                 for d in self.spec.fixing_dates
@@ -722,6 +722,14 @@ class _MCAsianValuation(_MCAsianBase):
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector based on path averages.
 
+        Seasoned Asians (``spec.observed_average`` and
+        ``spec.observed_count`` set) are handled directly:
+
+        - **Arithmetic**: past observations are folded into the mean via
+          ``(n₁·S̄ + Σ S_i) / (n₁ + n₂)``.
+        - **Geometric**: past observations are folded via log-sum
+          decomposition.
+
         Returns
         -------
         np.ndarray
@@ -730,14 +738,26 @@ class _MCAsianValuation(_MCAsianBase):
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         averaging_paths, _ = self._extract_averaging_paths(paths, self.underlying.time_grid)
 
-        # Calculate average for each path
         spec = self.spec
+        n1 = spec.observed_count or 0
+        s_bar = spec.observed_average
+
         if spec.averaging is AsianAveraging.ARITHMETIC:
-            avg_prices = np.mean(averaging_paths, axis=0)
+            if n1 > 0 and s_bar is not None:
+                n2 = averaging_paths.shape[0]
+                sum_future = np.sum(averaging_paths, axis=0)
+                avg_prices = (n1 * s_bar + sum_future) / (n1 + n2)
+            else:
+                avg_prices = np.mean(averaging_paths, axis=0)
         elif spec.averaging is AsianAveraging.GEOMETRIC:
             if np.any(averaging_paths <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
-            avg_prices = np.exp(np.mean(np.log(averaging_paths), axis=0))
+            if n1 > 0 and s_bar is not None:
+                n2 = averaging_paths.shape[0]
+                log_sum_future = np.sum(np.log(averaging_paths), axis=0)
+                avg_prices = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + n2))
+            else:
+                avg_prices = np.exp(np.mean(np.log(averaging_paths), axis=0))
         else:
             raise ValidationError(
                 f"Unsupported averaging method for Asian valuation: {spec.averaging}"
@@ -923,9 +943,31 @@ class _MCAsianAmericanValuation(_MCAsianBase):
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         averaging_paths, time_list = self._extract_averaging_paths(paths, self.underlying.time_grid)
-        running_avg = _running_averages(averaging_paths, self.spec.averaging)
-        intrinsic = self._asian_payoff(running_avg)
 
+        spec = self.spec
+        n1 = spec.observed_count or 0
+        s_bar = spec.observed_average
+
+        if n1 > 0 and s_bar is not None:
+            # Seasoned: fold past observations into running averages.
+            n_obs = averaging_paths.shape[0]
+            counts = np.arange(1, n_obs + 1, dtype=float).reshape(-1, 1)
+            if spec.averaging is AsianAveraging.GEOMETRIC:
+                # G_j = exp((n1·ln(S̄) + Σ_{i=1}^{j} ln(S_i)) / (n1+j))
+                if np.any(averaging_paths <= 0.0):
+                    raise NumericalError(
+                        "Geometric averaging requires strictly positive path prices."
+                    )
+                log_cumsum = np.cumsum(np.log(averaging_paths), axis=0)
+                running_avg = np.exp((n1 * np.log(s_bar) + log_cumsum) / (n1 + counts))
+            else:
+                # A_j = (n1·S̄ + Σ_{i=1}^{j} S_i) / (n1+j)
+                cumsum = np.cumsum(averaging_paths, axis=0)
+                running_avg = (n1 * s_bar + cumsum) / (n1 + counts)
+        else:
+            running_avg = _running_averages(averaging_paths, spec.averaging)
+
+        intrinsic = self._asian_payoff(running_avg)
         return averaging_paths, running_avg, intrinsic, time_list
 
     # ------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """Interest-rate and discount-curve utilities."""
 
+from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 
@@ -51,7 +52,7 @@ class DiscountCurve:
         cls,
         times: np.ndarray,
         forwards: np.ndarray,
-    ) -> "DiscountCurve":
+    ) -> DiscountCurve:
         """Build a curve from piecewise-constant forward rates.
 
         Parameters
@@ -81,7 +82,7 @@ class DiscountCurve:
         cls,
         times: np.ndarray,
         zero_rates: np.ndarray,
-    ) -> "DiscountCurve":
+    ) -> DiscountCurve:
         """Build a curve from continuously-compounded zero (spot) rates.
 
         Parameters
@@ -112,7 +113,7 @@ class DiscountCurve:
         rate: float,
         end_time: float,
         steps: int = 1,
-    ) -> "DiscountCurve":
+    ) -> DiscountCurve:
         """Build a flat continuously-compounded discount curve.
 
         Parameters
@@ -136,6 +137,17 @@ class DiscountCurve:
         times = np.linspace(0.0, float(end_time), int(steps) + 1)
         dfs = np.exp(-float(rate) * times)
         return cls(times=times, dfs=dfs, flat_rate=float(rate))
+
+    def bump_parallel_zero_rate(self, bump: float) -> DiscountCurve:
+        """Return a new curve with a parallel shift to continuously-compounded zero rates.
+
+        Parameters
+        ----------
+        bump
+            Additive shift applied to the zero rate at every tenor.
+        """
+        bumped_dfs = self.dfs * np.exp(-bump * self.times)
+        return DiscountCurve(times=self.times.copy(), dfs=bumped_dfs)
 
     def df(self, t: float | np.ndarray) -> np.ndarray:
         """Interpolate discount factors with log-linear interpolation.

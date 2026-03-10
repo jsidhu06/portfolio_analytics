@@ -48,28 +48,10 @@ from .bsm import _BSMEuropeanValuation
 from .asian_analytical import _AnalyticalAsianValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
 from ..rates import DiscountCurve
-from ..utils import calculate_year_fraction
 from ..market_environment import MarketData
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
 logger = logging.getLogger(__name__)
-
-# ── PV interceptors ─────────────────────────────────────────────────
-# Maps a tag → OptionValuation method name that completely replaces the
-# normal present_value() flow.  Resolved once during __init__ via
-# _resolve_interceptor(); at most one interceptor per instance.
-_PV_INTERCEPTORS: dict[str, str] = {
-    "SEASONED_ASIAN": "_seasoned_asian_pv",
-}
-
-
-def _resolve_interceptor(
-    spec: VanillaSpec | PayoffSpec | AsianSpec,
-) -> str | None:
-    """Return a _PV_INTERCEPTORS key if *spec* requires pre-PV transformation."""
-    if isinstance(spec, AsianSpec) and spec.observed_average is not None:
-        return "SEASONED_ASIAN"
-    return None
 
 
 # ── Implementation registries ───────────────────────────────────────
@@ -518,32 +500,6 @@ class OptionValuation:
         if self.maturity <= self.pricing_date:
             raise ValidationError("Option maturity must be after pricing_date.")
 
-        # Inject Asian fixing dates / grid_start into the simulation.
-        # We construct a new PathSimulation (via dc_replace on sim_config)
-        # so the caller's instance is never mutated.  pricing_date and
-        # maturity are already handled by _build_time_grid.
-        if isinstance(underlying, PathSimulation):
-            if isinstance(spec, AsianSpec):
-                sc_overrides: dict = {}  # SimulationConfig kwargs to override
-                if spec.fixing_dates is not None:
-                    extra = set(spec.fixing_dates) - underlying.observation_dates
-                    if extra:
-                        sc_overrides["observation_dates"] = underlying.observation_dates | extra
-                if (
-                    spec.averaging_start is not None
-                    and underlying.grid_start != spec.averaging_start
-                ):
-                    sc_overrides["grid_start"] = spec.averaging_start
-                if sc_overrides:
-                    underlying = type(underlying)(
-                        market_data=underlying.market_data,
-                        process_params=underlying._process_params,
-                        sim_config=dc_replace(underlying._sim_config, **sc_overrides),
-                        corr=underlying.correlation_context,
-                        name=underlying.name,
-                    )
-            self._underlying = underlying
-
         # Validate that MC requires PathSimulation
         if pricing_method == PricingMethod.MONTE_CARLO and not isinstance(
             self._underlying, PathSimulation
@@ -563,15 +519,30 @@ class OptionValuation:
                 "Pass an UnderlyingData instance instead of PathSimulation."
             )
 
+        # Inject Asian fixing dates / grid_start into the simulation.
+        # We construct a new PathSimulation (via dc_replace on sim_config)
+        # so the caller's instance is never mutated.  pricing_date and
+        # maturity are already handled by _build_time_grid.
+        if isinstance(underlying, PathSimulation) and isinstance(spec, AsianSpec):
+            sc_overrides: dict = {}  # SimulationConfig kwargs to override
+            if spec.fixing_dates is not None:
+                extra = set(spec.fixing_dates) - underlying.observation_dates
+                if extra:
+                    sc_overrides["observation_dates"] = underlying.observation_dates | extra
+            if spec.averaging_start is not None and underlying.grid_start != spec.averaging_start:
+                sc_overrides["grid_start"] = spec.averaging_start
+            if sc_overrides:
+                underlying = type(underlying)(
+                    market_data=underlying.market_data,
+                    process_params=underlying._process_params,
+                    sim_config=dc_replace(underlying._sim_config, **sc_overrides),
+                    corr=underlying.correlation_context,
+                    name=underlying.name,
+                )
+                self._underlying = underlying
+
         # Dispatch to appropriate pricing method implementation
         self._impl = self._build_impl()
-
-        # Resolve optional PV interceptor (e.g. seasoned Asian K* adjustment)
-        tag = _resolve_interceptor(self._spec)
-        method_name = _PV_INTERCEPTORS.get(tag) if tag else None  # type: ignore[arg-type]
-        self._pv_interceptor: Callable[[], float] | None = (
-            getattr(self, method_name) if method_name else None
-        )
 
     # ──────────────────────────────
     # Public API (methods)
@@ -579,9 +550,6 @@ class OptionValuation:
 
     def present_value(self) -> float:
         """Calculate present value of the derivative."""
-        if self._pv_interceptor is not None:
-            return float(self._pv_interceptor())
-
         base_pv = float(self._impl.present_value())
         if self._params is None or not getattr(self._params, "control_variate_european", False):
             return base_pv
@@ -596,44 +564,6 @@ class OptionValuation:
                 "present_value_pathwise is only implemented for Monte Carlo valuation."
             )
         return pv_pathwise()
-
-    _MD_FIELDS = frozenset({"pricing_date", "discount_curve", "currency"})
-
-    def _bump_underlying(
-        self,
-        **overrides: object,
-    ) -> PathSimulation | UnderlyingData:
-        """Return a new underlying with selected fields replaced.
-
-        Callers pass attribute-level kwargs (``pricing_date=``,
-        ``discount_curve=``, ``initial_value=``, ``volatility=``, etc.).
-        Keys in ``_MD_FIELDS`` are routed into a bumped ``MarketData``;
-        remaining keys are applied as direct-field overrides
-        (``dc_replace`` for ``UnderlyingData``, ``process_params`` bump
-        for ``PathSimulation``).
-        """
-        u = self._underlying
-
-        # Split into MarketData-level vs direct-field overrides.
-        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
-        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
-
-        if isinstance(u, UnderlyingData):
-            if md_kw:
-                rest_kw["market_data"] = dc_replace(u.market_data, **md_kw)
-            return dc_replace(u, **rest_kw)
-
-        # PathSimulation — rest_kw are process-param bumps.
-        bumped_pp = dc_replace(u._process_params, **rest_kw) if rest_kw else u._process_params
-        bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
-
-        return type(u)(  # type: ignore[arg-type]
-            market_data=bumped_md,
-            process_params=bumped_pp,
-            sim_config=u._sim_config,
-            corr=u.correlation_context,
-            name=u.name,
-        )
 
     def delta(
         self,
@@ -820,7 +750,16 @@ class OptionValuation:
 
         underlying_bumped = self._bump_underlying(pricing_date=bumped_date)
 
-        value_bumped = self._build_valuation(underlying=underlying_bumped).present_value()
+        # Asian fixing-date awareness: if fixing dates fall before the
+        # bumped pricing date they become observed ("seasoned") fixings.
+        bumped_spec = self._spec
+        if isinstance(self._spec, AsianSpec) and self._spec.fixing_dates:
+            bumped_spec = self._asian_theta_spec(bumped_date)
+
+        value_bumped = self._build_valuation(
+            underlying=underlying_bumped,
+            spec=bumped_spec,
+        ).present_value()
 
         return (value_bumped - value_now) / time_bump_days
 
@@ -837,30 +776,20 @@ class OptionValuation:
             Greek computation method. Analytical rho is used for BSM by default;
             otherwise finite-difference bump-and-revalue is used.
         rate_bump
-            Absolute bump in annualized flat rate for numerical rho.
+            Absolute parallel bump in the continuously-compounded risk-free
+            zero-rate curve for numerical rho.
 
         Returns
         -------
         float
-            Rho reported per 1% rate move.
+            Rho reported per 1% parallel rate move.
         """
         method = self._resolve_greek_method(greek_calc_method)
         if method == GreekCalculationMethod.ANALYTICAL:
             return float(self._impl.rho())
 
-        if self.discount_curve.flat_rate is None:
-            raise UnsupportedFeatureError("Numerical rho requires a flat discount curve.")
-
-        rate_up = self.discount_curve.flat_rate + rate_bump / 2
-        rate_down = self.discount_curve.flat_rate - rate_bump / 2
-
-        ttm = calculate_year_fraction(
-            self.pricing_date,
-            self.maturity,
-            day_count_convention=self.day_count_convention,
-        )
-        curve_up = DiscountCurve.flat(rate_up, end_time=ttm)
-        curve_down = DiscountCurve.flat(rate_down, end_time=ttm)
+        curve_up = self.discount_curve.bump_parallel_zero_rate(rate_bump / 2)
+        curve_down = self.discount_curve.bump_parallel_zero_rate(-rate_bump / 2)
 
         up = self._bump_underlying(discount_curve=curve_up)
         dn = self._bump_underlying(discount_curve=curve_down)
@@ -1150,117 +1079,43 @@ class OptionValuation:
 
         return base_pv + (euro_analytical - euro_num)
 
-    # ── Seasoned Asian ───────────────────────────────────────────────────
+    _MD_FIELDS = frozenset({"pricing_date", "discount_curve", "currency"})
 
-    def _seasoned_asian_future_obs(self) -> int:
-        """Return the number of *future* averaging observations (n₂)."""
-        spec = self._spec
-        assert isinstance(spec, AsianSpec)
+    def _bump_underlying(
+        self,
+        **overrides: object,
+    ) -> PathSimulation | UnderlyingData:
+        """Return a new underlying with selected fields replaced.
 
-        if self._pricing_method is PricingMethod.BSM:
-            if spec.num_steps is None:
-                raise ValidationError(
-                    "num_steps is required on AsianSpec for analytical (BSM) pricing."
-                )
-            return spec.num_steps + 1
+        Callers pass attribute-level kwargs (``pricing_date=``,
+        ``discount_curve=``, ``initial_value=``, ``volatility=``, etc.).
+        Keys in ``_MD_FIELDS`` are routed into a bumped ``MarketData``;
+        remaining keys are applied as direct-field overrides
+        (``dc_replace`` for ``UnderlyingData``, ``process_params`` bump
+        for ``PathSimulation``).
+        """
+        u = self._underlying
 
-        if self._pricing_method is PricingMethod.BINOMIAL:
-            assert isinstance(self._params, BinomialParams)
-            return self._params.num_steps + 1
+        # Split into MarketData-level vs direct-field overrides.
+        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
+        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
 
-        if self._pricing_method is PricingMethod.MONTE_CARLO:
-            if spec.fixing_dates is not None:
-                return len(spec.fixing_dates)
-            assert isinstance(self._underlying, PathSimulation)
-            self._underlying._ensure_time_grid()
-            return len(self._underlying.time_grid)
+        if isinstance(u, UnderlyingData):
+            if md_kw:
+                rest_kw["market_data"] = dc_replace(u.market_data, **md_kw)
+            return dc_replace(u, **rest_kw)
 
-        raise UnsupportedFeatureError(
-            f"Seasoned Asian pricing is not supported for {self._pricing_method.name}."
+        # PathSimulation — rest_kw are process-param bumps.
+        bumped_pp = dc_replace(u._process_params, **rest_kw) if rest_kw else u._process_params
+        bumped_md = dc_replace(u.market_data, **md_kw) if md_kw else u.market_data
+
+        return type(u)(  # type: ignore[arg-type]
+            market_data=bumped_md,
+            process_params=bumped_pp,
+            sim_config=u._sim_config,
+            corr=u.correlation_context,
+            name=u.name,
         )
-
-    def _seasoned_asian_pv(self) -> float:
-        """Price a seasoned Asian using Hull's adjusted-strike reduction.
-        When part of the averaging window has elapsed, the payoff of an
-        average-price call is::
-
-            max((n₁·S̄ + n₂·S_avg_future) / (n₁+n₂) − K, 0)
-
-        which equals ``(n₂/(n₁+n₂)) · max(S_avg_future − K*, 0)`` where::
-
-            K* = ((n₁+n₂)/n₂) · K  −  (n₁/n₂) · S̄
-
-        When K* > 0 this is a newly-issued Asian with strike K* scaled by
-        n₂/(n₁+n₂).  When K* ≤ 0 the option is certain to be exercised and
-        its value is that of a forward contract on the remaining average.
-
-        See Hull, *Options, Futures, and Other Derivatives*, Section 26.13."""
-        spec = self._spec
-        assert isinstance(spec, AsianSpec)
-        assert spec.observed_average is not None and spec.observed_count is not None
-
-        n1 = spec.observed_count
-        n2 = self._seasoned_asian_future_obs()
-        n_total = n1 + n2
-        S_bar = spec.observed_average
-        K = spec.strike
-
-        K_star = (n_total / n2) * K - (n1 / n2) * S_bar
-        scale = n2 / n_total
-
-        logger.debug(
-            "Seasoned Asian: n1=%d n2=%d S_bar=%.4f K=%.4f K*=%.4f scale=%.4f",
-            n1,
-            n2,
-            S_bar,
-            K,
-            K_star,
-            scale,
-        )
-
-        if K_star > 0.0:
-            fresh_spec = dc_replace(spec, strike=K_star, observed_average=None, observed_count=None)
-            fresh_pv = OptionValuation(
-                underlying=self._underlying,
-                spec=fresh_spec,
-                pricing_method=self._pricing_method,
-                params=self._params,
-            ).present_value()
-            return scale * fresh_pv
-
-        # K* <= 0: option is certain to be exercised → value as forward contract.
-        # For a call:  scale · [M₁·e^{-rT} − K*·e^{-rT}]
-        # For a put:   scale · [K*·e^{-rT} − M₁·e^{-rT}]  (always 0 when K*<=0)
-        # M₁ is the forward of the average over the remaining period.  Rather than
-        # recompute the exact first moment, we price a fresh Asian with strike=0
-        # (deep ITM) which equals the discounted expected average, then apply the
-        # K* offset.
-
-        ttm = calculate_year_fraction(
-            self.pricing_date,
-            self.maturity,
-            day_count_convention=self.day_count_convention,
-        )
-        df = float(self.discount_curve.df(ttm))
-
-        fresh_spec_zero = dc_replace(
-            spec,
-            strike=0.0,
-            observed_average=None,
-            observed_count=None,
-        )
-        # A zero-strike Asian call equals e^{-rT} · E[S_avg] = discounted M₁
-        disc_M1 = OptionValuation(
-            underlying=self._underlying,
-            spec=dc_replace(fresh_spec_zero, option_type=OptionType.CALL),
-            pricing_method=self._pricing_method,
-            params=self._params,
-        ).present_value()
-
-        if spec.option_type is OptionType.CALL:
-            return scale * (disc_M1 - K_star * df)
-        # Put with K*<=0: max(K* - S_avg, 0) is 0 when K*<=0 and S_avg>0
-        return 0.0
 
     @property
     def _is_mc_analytic_eligible(self) -> bool:
@@ -1305,6 +1160,17 @@ class OptionValuation:
             )
 
         # --- validate explicit choice ---
+
+        # Asian options only support NUMERICAL — no engine-native Greeks.
+        if (
+            isinstance(self._spec, AsianSpec)
+            and greek_calc_method != GreekCalculationMethod.NUMERICAL
+        ):
+            raise UnsupportedFeatureError(
+                f"Asian options only support GreekCalculationMethod.NUMERICAL "
+                f"(bump-and-revalue), got {greek_calc_method.name}."
+            )
+
         capability_flags = {
             "tree_capable": tree_capable,
             "grid_capable": grid_capable,
@@ -1341,6 +1207,9 @@ class OptionValuation:
         grid_capable: bool,
     ) -> GreekCalculationMethod:
         """Choose the best Greek method for the current pricing engine."""
+        # Asian options: no engine-native Greeks implemented — always bump-and-revalue.
+        if isinstance(self._spec, AsianSpec):
+            return GreekCalculationMethod.NUMERICAL
         if self._pricing_method == PricingMethod.BSM:
             return GreekCalculationMethod.ANALYTICAL
         if tree_capable and self._pricing_method == PricingMethod.BINOMIAL:
@@ -1387,10 +1256,67 @@ class OptionValuation:
                 "Pathwise and likelihood-ratio MC Greeks are not supported with discrete dividends."
             )
 
-    def _build_valuation(self, *, underlying) -> "OptionValuation":
+    # ── Asian theta helpers ──────────────────────────────────────────────
+
+    def _asian_theta_spec(self, bumped_date: dt.datetime) -> AsianSpec:
+        """Build a seasoned AsianSpec for theta bump-and-revalue.
+
+        When the pricing date is bumped forward, fixing dates that now fall
+        on or before the new pricing date become observed fixings.
+
+        Case 1 — fixing_date == original pricing_date:
+            The observed price is deterministic (S₀).  A seasoned spec is
+            returned with observed_average/observed_count set accordingly.
+        Case 2 — pricing_date < fixing_date < bumped_date (intra-day):
+            The fixing is stochastic from the current viewpoint and would
+            require nested MC to handle correctly.  Raises
+            ``UnsupportedFeatureError``.
+        """
+        spec = self._spec
+        assert isinstance(spec, AsianSpec) and spec.fixing_dates is not None
+
+        elapsed = [d for d in spec.fixing_dates if d < bumped_date]
+        if not elapsed:
+            return spec
+
+        # Case 2: intra-day fixings (between pricing_date and bumped_date,
+        # but not equal to pricing_date) require nested MC.
+        intraday = [d for d in elapsed if d != self.pricing_date]
+        if intraday:
+            raise UnsupportedFeatureError(
+                f"Theta calculation is not supported when fixing dates fall "
+                f"between pricing_date and the bumped date (intra-day fixings: "
+                f"{[d.isoformat() for d in intraday]}). "
+                f"This would require nested Monte Carlo simulation."
+            )
+
+        # Case 1: all elapsed fixings are at pricing_date → deterministic S₀.
+        n_elapsed = len(elapsed)
+        s0 = float(self._underlying.initial_value)
+
+        # Merge with any pre-existing seasoned state
+        old_n1 = spec.observed_count or 0
+        old_avg = spec.observed_average or 0.0
+        new_n1 = old_n1 + n_elapsed
+        new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
+
+        future_fixings = tuple(d for d in spec.fixing_dates if d >= bumped_date)
+        return dc_replace(
+            spec,
+            fixing_dates=future_fixings if future_fixings else None,
+            observed_average=new_avg,
+            observed_count=new_n1,
+        )
+
+    def _build_valuation(
+        self,
+        *,
+        underlying,
+        spec: VanillaSpec | PayoffSpec | AsianSpec | None = None,
+    ) -> "OptionValuation":
         return OptionValuation(
             underlying=underlying,
-            spec=self._spec,
+            spec=spec if spec is not None else self._spec,
             pricing_method=self._pricing_method,
             params=self._params,
         )
