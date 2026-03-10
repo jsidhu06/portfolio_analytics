@@ -52,6 +52,8 @@ from portfolio_analytics.valuation.params import (
 if TYPE_CHECKING:
     import QuantLib as ql_typing
 
+pytestmark = pytest.mark.slow
+
 ql = pytest.importorskip("QuantLib")
 
 logger = logging.getLogger(__name__)

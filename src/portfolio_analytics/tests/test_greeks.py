@@ -759,6 +759,7 @@ _ASIAN_AM_PA_SCENARIOS = [
 ]
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "spot,strike,option_type,averaging,rate_kind,div_kind,discrete_dividends",
     _ASIAN_AM_PA_SCENARIOS,
@@ -863,7 +864,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             ud,
             spec,
             PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=100, asian_tree_averages=40),
+            params=BinomialParams(num_steps=100, asian_tree_averages=150),
         )
         delta = ov.delta()
         assert np.isfinite(delta)
@@ -898,7 +899,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             ud,
             spec,
             PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=100, asian_tree_averages=40),
+            params=BinomialParams(num_steps=100, asian_tree_averages=150),
         )
         with pytest.raises(UnsupportedFeatureError, match="Asian options only support.*NUMERICAL"):
             ov.delta(greek_calc_method=GreekCalculationMethod.TREE)

@@ -2467,6 +2467,7 @@ class TestAveragingStart:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "spot,strike,vol,r,q,days,option_type",
     [

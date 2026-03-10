@@ -425,6 +425,7 @@ _GREEKS = [
 ]
 
 
+@pytest.mark.slow
 class TestMCGreekMethodAgreement:
     """PATHWISE, LR, and NUMERICAL should agree across diverse market setups."""
 

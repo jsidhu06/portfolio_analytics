@@ -52,7 +52,7 @@ jobs:
               --cov=portfolio_analytics \
               --cov-report=term-missing \
               --cov-branch \
-              -q
+              -q --runslow
 
   compatibility:
     name: Compatibility (resolver-based)
