@@ -657,9 +657,8 @@ class _MCAsianBase:
     # ------------------------------------------------------------------
 
     def _fixing_indices(self, time_grid: np.ndarray) -> np.ndarray | None:
-        """Return grid indices for explicit fixing dates, or None."""
-        if self.spec.fixing_dates is None:
-            return None
+        """Return grid indices for the contractual Asian observation schedule."""
+        fixing_dates = self.parent._asian_observation_dates()  # type: ignore[attr-defined]
         return np.array(
             [
                 _resolve_time_index(
@@ -668,7 +667,7 @@ class _MCAsianBase:
                     f"fixing_date: {d.strftime('%Y-%m-%d')}",
                     day_count_convention=self.underlying.day_count_convention,
                 )
-                for d in self.spec.fixing_dates
+                for d in fixing_dates
             ],
             dtype=int,
         )
@@ -692,24 +691,7 @@ class _MCAsianBase:
             time_list       : (N_obs,) datetime sub-grid for those dates
         """
         fixing_idx = self._fixing_indices(time_grid)
-        if fixing_idx is not None:
-            return paths[fixing_idx], time_grid[fixing_idx]
-
-        spec = self.spec
-        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
-        idx_start = _resolve_time_index(
-            time_grid,
-            averaging_start,
-            "averaging_start",
-            day_count_convention=self.underlying.day_count_convention,
-        )
-        idx_end = _resolve_time_index(
-            time_grid,
-            self.parent.maturity,
-            "maturity",
-            day_count_convention=self.underlying.day_count_convention,
-        )
-        return paths[idx_start : idx_end + 1], time_grid[idx_start : idx_end + 1]
+        return paths[fixing_idx], time_grid[fixing_idx]
 
 
 class _MCAsianValuation(_MCAsianBase):

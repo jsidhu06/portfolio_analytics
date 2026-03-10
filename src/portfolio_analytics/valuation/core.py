@@ -23,6 +23,7 @@ from collections.abc import Sequence
 import datetime as dt
 import logging
 import numpy as np
+import pandas as pd
 from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
@@ -276,16 +277,24 @@ class OptionValuation:
                 "Pass an UnderlyingData instance instead of PathSimulation."
             )
 
-        # Inject Asian fixing dates / grid_start into the simulation.
+        # Inject Asian observation dates / grid_start into the simulation.
         # We construct a new PathSimulation (via dc_replace on sim_config)
         # so the caller's instance is never mutated.  pricing_date and
         # maturity are already handled by _build_time_grid.
+        if isinstance(spec, AsianSpec):
+            obs_dates = self._asian_observation_dates()
+            if obs_dates[0] < self.pricing_date:
+                raise ValidationError(
+                    "Asian observation schedule must not start before pricing_date."
+                )
+            if obs_dates[-1] > self.maturity:
+                raise ValidationError("Asian observation schedule must not extend beyond maturity.")
+
         if isinstance(underlying, PathSimulation) and isinstance(spec, AsianSpec):
             sc_overrides: dict = {}  # SimulationConfig kwargs to override
-            if spec.fixing_dates is not None:
-                extra = set(spec.fixing_dates) - underlying.observation_dates
-                if extra:
-                    sc_overrides["observation_dates"] = underlying.observation_dates | extra
+            extra = set(self._asian_observation_dates()) - underlying.observation_dates
+            if extra:
+                sc_overrides["observation_dates"] = underlying.observation_dates | extra
             if spec.averaging_start is not None and underlying.grid_start != spec.averaging_start:
                 sc_overrides["grid_start"] = spec.averaging_start
             if sc_overrides:
@@ -568,6 +577,28 @@ class OptionValuation:
     def underlying(self) -> PathSimulation | UnderlyingData:
         """Underlying data/process used by this valuation instance."""
         return self._underlying
+
+    def _asian_observation_dates(self) -> tuple[dt.datetime, ...]:
+        """Resolve the contractual Asian observation schedule as datetimes."""
+        if not isinstance(self._spec, AsianSpec):
+            raise ConfigurationError("Asian observation schedule requested for non-Asian spec.")
+
+        spec = self._spec
+        if spec.fixing_dates is not None:
+            return tuple(spec.fixing_dates)
+
+        assert spec.num_steps is not None
+        averaging_start = spec.averaging_start or self.pricing_date
+        if averaging_start > self.maturity:
+            raise ValidationError("averaging_start must be on or before maturity.")
+
+        return tuple(
+            pd.date_range(
+                start=averaging_start,
+                end=self.maturity,
+                periods=spec.num_steps + 1,
+            ).to_pydatetime()
+        )
 
     @property
     def spec(self) -> VanillaSpec | PayoffSpec | AsianSpec:

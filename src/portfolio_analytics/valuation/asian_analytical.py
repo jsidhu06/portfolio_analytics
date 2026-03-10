@@ -324,6 +324,11 @@ class _AnalyticalAsianValuation:
             raise UnsupportedFeatureError(
                 "Analytical (BSM) Asian pricing requires GEOMETRIC or ARITHMETIC averaging."
             )
+        if spec.fixing_dates is not None:
+            raise ValidationError(
+                "Analytical (BSM) Asian pricing does not support fixing_dates. "
+                "Provide num_steps and use equally spaced observations."
+            )
         if spec.num_steps is None:
             raise ValidationError(
                 "num_steps is required on AsianSpec for analytical (BSM) pricing."
@@ -447,11 +452,6 @@ class _AnalyticalAsianValuation:
             raise UnsupportedFeatureError(
                 "Hull's K* strike-adjustment is only valid for arithmetic averaging. "
                 "Use PricingMethod BINOMIAL or MONTE_CARLO for seasoned geometric Asians."
-            )
-
-        if spec.num_steps is None:
-            raise ValidationError(
-                "num_steps is required on AsianSpec for analytical (BSM) pricing."
             )
 
         n1 = spec.observed_count

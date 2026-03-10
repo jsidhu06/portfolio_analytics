@@ -141,9 +141,9 @@ class AsianSpec:
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
     num_steps : int, optional
-        Number of equally spaced time steps within the averaging window.
-        Required for analytical (BSM) pricing.  For Monte Carlo and Binomial the
-        step count is determined by the simulation/tree time grid.
+        Number of equally spaced averaging intervals within the averaging
+        window. Defines the contract observation schedule as ``num_steps + 1``
+        observation time points.
     exercise_type : ExerciseType
         Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
     contract_size : int | float
@@ -155,7 +155,7 @@ class AsianSpec:
         (pricing date, ex-dividend dates, maturity) are simulated but excluded
         from the average.  Dates must be in ascending order and fall within
         ``[averaging_start (or pricing_date), maturity]``.  Mutually exclusive
-        with ``num_steps`` for Monte Carlo pricing (ignored for BSM analytical).
+        with ``num_steps``.
     observed_average : float, optional
         For seasoned Asians: the realised average price over the already-observed
         period.  Must be provided together with ``observed_count``.
@@ -215,6 +215,10 @@ class AsianSpec:
             raise ValidationError("AsianSpec.strike must be >= 0")
         object.__setattr__(self, "strike", strike)
 
+        # Exactly one schedule source is required.
+        if (self.fixing_dates is None) == (self.num_steps is None):
+            raise ValidationError("AsianSpec requires exactly one of fixing_dates or num_steps.")
+
         if self.num_steps is not None:
             if not isinstance(self.num_steps, int) or self.num_steps < 1:
                 raise ValidationError("num_steps must be a positive integer")
@@ -232,8 +236,8 @@ class AsianSpec:
             # maturity is available so we can at least ensure dates don't exceed it.
             if dates[-1] > self.maturity:
                 raise ValidationError("fixing_dates must not extend beyond maturity.")
-            if self.averaging_start is not None and dates[0] < self.averaging_start:
-                raise ValidationError("fixing_dates must not precede averaging_start.")
+            if self.averaging_start is not None:
+                raise ValidationError("if fixing_dates are provided, averaging_start must be None")
             object.__setattr__(self, "fixing_dates", dates)
 
         # Seasoned Asian: observed_average and observed_count must be both set or both None

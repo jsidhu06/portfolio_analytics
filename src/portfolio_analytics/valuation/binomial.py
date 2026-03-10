@@ -342,6 +342,32 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         super().__init__(parent)
         self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
 
+    def _tree_dates(self, num_steps: int) -> np.ndarray:
+        """Return CRR tree dates (length ``num_steps + 1``)."""
+        return np.array(
+            pd.date_range(
+                self.parent.pricing_date,
+                self.parent.maturity,
+                periods=num_steps + 1,
+            ).to_pydatetime()
+        )
+
+    def _observation_indices(self, num_steps: int) -> np.ndarray:
+        """Map contractual observation dates to nearest CRR tree indices."""
+        obs_dates = self.parent._asian_observation_dates()  # type: ignore[attr-defined]
+        tree_dates = self._tree_dates(num_steps)
+
+        tree_seconds = np.array([d.timestamp() for d in tree_dates], dtype=float)
+        mapped: list[int] = []
+        for d in obs_dates:
+            idx = int(np.argmin(np.abs(tree_seconds - d.timestamp())))
+            if not mapped or idx != mapped[-1]:
+                mapped.append(idx)
+
+        if not mapped:
+            raise ValidationError("No valid Asian observation nodes mapped to the binomial tree.")
+        return np.array(mapped, dtype=int)
+
     def _solve_mc(self) -> np.ndarray:
         """Price Asian option via Monte Carlo sampling on the binomial tree.
 
@@ -361,6 +387,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         mc_paths = int(self.binom_params.mc_paths)
         rng = np.random.default_rng(self.binom_params.random_seed)
+        obs_idx = self._observation_indices(num_steps)
 
         K = self.parent.strike
 
@@ -380,25 +407,28 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         # Advanced indexing: col_idx broadcasts to (I, N+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
         prices = spot_lattice[row_idx, col_idx]  # (I, N+1)
+        obs_prices = prices[:, obs_idx]
 
         # Seasoned state: fold past observations into path averages
         n1 = self.spec.observed_count or 0
         s_bar = self.spec.observed_average
 
         if self.spec.averaging is AsianAveraging.GEOMETRIC:
-            if np.any(prices <= 0.0):
+            if np.any(obs_prices <= 0.0):
                 raise NumericalError("Geometric averaging requires strictly positive path prices.")
             if n1 > 0 and s_bar is not None:
-                log_sum_future = np.sum(np.log(prices), axis=1)
-                avg_s = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + num_steps + 1))
+                n2 = obs_prices.shape[1]
+                log_sum_future = np.sum(np.log(obs_prices), axis=1)
+                avg_s = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + n2))
             else:
-                avg_s = np.exp(np.mean(np.log(prices), axis=1))  # (I,)
+                avg_s = np.exp(np.mean(np.log(obs_prices), axis=1))  # (I,)
         else:
             if n1 > 0 and s_bar is not None:
-                sum_future = np.sum(prices, axis=1)
-                avg_s = (n1 * s_bar + sum_future) / (n1 + num_steps + 1)
+                n2 = obs_prices.shape[1]
+                sum_future = np.sum(obs_prices, axis=1)
+                avg_s = (n1 * s_bar + sum_future) / (n1 + n2)
             else:
-                avg_s = prices.mean(axis=1)  # (I,)
+                avg_s = obs_prices.mean(axis=1)  # (I,)
 
         if self.spec.option_type is OptionType.CALL:
             payoffs = np.maximum(avg_s - K, 0.0)
@@ -422,7 +452,9 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
     @staticmethod
     def _compute_ordering_bounds(
-        lattice: np.ndarray, num_steps: int
+        lattice: np.ndarray,
+        num_steps: int,
+        observation_indices: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Compute min/max running-average bounds achievable at each node.
 
@@ -436,18 +468,22 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         avg_max = np.zeros_like(lattice)
 
         for t in range(num_steps + 1):
+            obs = observation_indices[observation_indices <= t]
+            if obs.size == 0:
+                continue
+
             time_idx = np.arange(t + 1)
             row = time_idx[:, None]
             time = time_idx[None, :]
 
             downs_first_rows = np.minimum(time, row)
             prices_min = lattice[downs_first_rows, time]
-            avg_min[: t + 1, t] = prices_min.mean(axis=1)
+            avg_min[: t + 1, t] = prices_min[:, obs].mean(axis=1)
 
             ups_first: np.ndarray = t - row
             ups_first_rows = np.maximum(0, time - ups_first)
             prices_max = lattice[ups_first_rows, time]
-            avg_max[: t + 1, t] = prices_max.mean(axis=1)
+            avg_max[: t + 1, t] = prices_max[:, obs].mean(axis=1)
 
         return avg_min, avg_max
 
@@ -478,6 +514,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             self.binom_params.asian_tree_averages,
         )
         discount_factors, p, spot_lattice = self._setup_binomial_parameters()
+        observation_indices = self._observation_indices(num_steps)
 
         averaging = self.spec.averaging
         if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
@@ -505,20 +542,32 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                     "Hull binomial geometric averaging requires strictly positive spot lattice."
                 )
             log_spot_lattice = np.log(spot_lattice)
-            avg_min, avg_max = self._compute_ordering_bounds(log_spot_lattice, num_steps)
+            avg_min, avg_max = self._compute_ordering_bounds(
+                log_spot_lattice,
+                num_steps,
+                observation_indices,
+            )
             s_bar_state = np.log(s_bar) if s_bar is not None else 0.0
         else:
-            avg_min, avg_max = self._compute_ordering_bounds(spot_lattice, num_steps)
+            avg_min, avg_max = self._compute_ordering_bounds(
+                spot_lattice,
+                num_steps,
+                observation_indices,
+            )
             s_bar_state = s_bar if s_bar is not None else 0.0
 
         # Fold past observations into the bounds.
         # Fresh bounds are averages over t+1 future prices; seasoned bounds
         # are averages over n₁ + t + 1 total observations.
         if n1 > 0 and s_bar is not None:
-            n_future = np.arange(1, num_steps + 2, dtype=float)  # [1, 2, ..., N+1]
+            n_future = np.searchsorted(
+                observation_indices,
+                np.arange(num_steps + 1),
+                side="right",
+            ).astype(float)
             n_total = n1 + n_future
-            avg_min = (n1 * s_bar_state + n_future * avg_min) / n_total
-            avg_max = (n1 * s_bar_state + n_future * avg_max) / n_total
+            avg_min = (n1 * s_bar_state + n_future[None, :] * avg_min) / n_total[None, :]
+            avg_max = (n1 * s_bar_state + n_future[None, :] * avg_max) / n_total[None, :]
 
         avg_grid: np.ndarray = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):
@@ -550,9 +599,15 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 s_down = spot_lattice[rows + 1, t + 1]
             grid_here = avg_grid[:, rows, t]  # shape (k,t+1)
 
-            obs_so_far = n1 + t + 1  # total observations up to step t
-            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)
-            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)
+            obs_so_far = n1 + int(np.searchsorted(observation_indices, t, side="right"))
+            obs_count_now = int(np.searchsorted(observation_indices, t, side="right"))
+            obs_count_next = int(np.searchsorted(observation_indices, t + 1, side="right"))
+            if obs_count_next > obs_count_now:
+                avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)
+                avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)
+            else:
+                avg_up = grid_here
+                avg_down = grid_here
 
             v_up = np.empty_like(avg_up)
             v_down = np.empty_like(avg_down)

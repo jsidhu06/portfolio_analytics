@@ -145,7 +145,7 @@ def _asian_spec(
     option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
     averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
-    num_steps: int | None = None,
+    num_steps: int | None = NUM_STEPS,
     averaging_start: dt.datetime | None = None,
 ) -> AsianSpec:
     return AsianSpec(
@@ -2309,6 +2309,7 @@ class TestValidation:
                     strike=100,
                     maturity=maturity,
                     option_type=OptionType.CALL,
+                    num_steps=None,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
                 PricingMethod.BSM,
