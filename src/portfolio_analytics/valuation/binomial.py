@@ -487,6 +487,73 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         return avg_min, avg_max
 
+    @staticmethod
+    def _apply_seasoned_bounds(
+        *,
+        avg_min: np.ndarray,
+        avg_max: np.ndarray,
+        observation_indices: np.ndarray,
+        num_steps: int,
+        n1: int,
+        s_bar_state: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Fold seasoned observations into per-step min/max bounds."""
+
+        if n1 <= 0:
+            raise ValidationError("Seasoned bounds require positive observed_count")
+
+        n_future: np.ndarray = np.searchsorted(
+            observation_indices,
+            np.arange(num_steps + 1),
+            side="right",
+        ).astype(float)
+        n_total: np.ndarray = n1 + n_future
+
+        avg_min_out = (n1 * s_bar_state + n_future[None, :] * avg_min) / n_total[None, :]
+        avg_max_out = (n1 * s_bar_state + n_future[None, :] * avg_max) / n_total[None, :]
+        return avg_min_out, avg_max_out
+
+    @staticmethod
+    def _update_child_averages(
+        *,
+        grid_here: np.ndarray,
+        s_up: np.ndarray,
+        s_down: np.ndarray,
+        observation_indices: np.ndarray,
+        t: int,
+        n1: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Update running-average state when advancing one tree step."""
+        obs_count_now = int(np.searchsorted(observation_indices, t, side="right"))
+        obs_so_far = n1 + obs_count_now
+        obs_count_next = int(np.searchsorted(observation_indices, t + 1, side="right"))
+        if obs_count_next > obs_count_now:
+            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)
+            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)
+            return avg_up, avg_down
+        return grid_here, grid_here
+
+    @staticmethod
+    def _interp_child_values(
+        *,
+        avg_up: np.ndarray,
+        avg_down: np.ndarray,
+        avg_grid: np.ndarray,
+        values: np.ndarray,
+        rows: np.ndarray,
+        t: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Interpolate continuation values from child average grids."""
+        v_up = np.empty_like(avg_up)
+        v_down = np.empty_like(avg_down)
+        for j, row_idx in enumerate(rows):
+            row = int(row_idx)
+            v_up[:, j] = np.interp(avg_up[:, j], avg_grid[:, row, t + 1], values[:, row, t + 1])
+            v_down[:, j] = np.interp(
+                avg_down[:, j], avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]
+            )
+        return v_up, v_down
+
     def _solve_hull(self) -> tuple[np.ndarray, np.ndarray]:
         """Price an Asian option using Hull's representative-averages binomial tree.
 
@@ -554,14 +621,14 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         # Fresh bounds are averages over t+1 future prices; seasoned bounds
         # are averages over n₁ + t + 1 total observations.
         if n1 > 0 and s_bar is not None:
-            n_future: np.ndarray = np.searchsorted(
-                observation_indices,
-                np.arange(num_steps + 1),
-                side="right",
-            ).astype(float)
-            n_total: np.ndarray = n1 + n_future
-            avg_min = (n1 * s_bar_state + n_future[None, :] * avg_min) / n_total[None, :]
-            avg_max = (n1 * s_bar_state + n_future[None, :] * avg_max) / n_total[None, :]
+            avg_min, avg_max = self._apply_seasoned_bounds(
+                avg_min=avg_min,
+                avg_max=avg_max,
+                observation_indices=observation_indices,
+                num_steps=num_steps,
+                n1=n1,
+                s_bar_state=s_bar_state,
+            )
 
         avg_grid: np.ndarray = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
         for t in range(num_steps + 1):
@@ -593,23 +660,22 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 s_down = spot_lattice[rows + 1, t + 1]
             grid_here = avg_grid[:, rows, t]  # shape (k,t+1)
 
-            obs_so_far = n1 + int(np.searchsorted(observation_indices, t, side="right"))
-            obs_count_now = int(np.searchsorted(observation_indices, t, side="right"))
-            obs_count_next = int(np.searchsorted(observation_indices, t + 1, side="right"))
-            if obs_count_next > obs_count_now:
-                avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)
-                avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)
-            else:
-                avg_up = grid_here
-                avg_down = grid_here
-
-            v_up = np.empty_like(avg_up)
-            v_down = np.empty_like(avg_down)
-            for j, row in enumerate(rows):  # type: ignore[assignment]
-                v_up[:, j] = np.interp(avg_up[:, j], avg_grid[:, row, t + 1], values[:, row, t + 1])
-                v_down[:, j] = np.interp(
-                    avg_down[:, j], avg_grid[:, row + 1, t + 1], values[:, row + 1, t + 1]
-                )
+            avg_up, avg_down = self._update_child_averages(
+                grid_here=grid_here,
+                s_up=s_up,
+                s_down=s_down,
+                observation_indices=observation_indices,
+                t=t,
+                n1=n1,
+            )
+            v_up, v_down = self._interp_child_values(
+                avg_up=avg_up,
+                avg_down=avg_down,
+                avg_grid=avg_grid,
+                values=values,
+                rows=rows,
+                t=t,
+            )
 
             continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)
 

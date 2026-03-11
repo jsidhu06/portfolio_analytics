@@ -12,6 +12,7 @@ Covers:
 import datetime as dt
 from dataclasses import dataclass
 import logging
+import warnings
 from typing import Sequence
 
 import numpy as np
@@ -43,6 +44,7 @@ from portfolio_analytics.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
     _asian_geometric_analytical,
 )
+from portfolio_analytics.valuation.binomial import _BinomialAsianValuation
 from portfolio_analytics.valuation.core import AsianSpec
 from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
 
@@ -3411,3 +3413,145 @@ class TestMCSeasonedAsian:
         # indices → identical averaging data.  The only difference is
         # floating-point ordering of log-sums, giving ~1 ULP of drift.
         assert np.isclose(full_pv, seasoned_pv, rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Hull Asian binomial helper tests (Figure 27.3, S=50, K=50, r=10%, σ=40%)
+# ---------------------------------------------------------------------------
+
+
+class TestBinomialAsianHullHelpers:
+    """Focused tests for helper methods used by Hull Asian backward induction."""
+
+    def test_compute_ordering_bounds_matches_hull_example_xyz_nodes(self):
+        # Hull Ch. 27 example parameters (Figure 27.3)
+        s0 = 50.0
+        u = 1.0936
+        d = 0.9144
+        num_steps = 20
+
+        i_idx = np.arange(num_steps + 1)[:, None]
+        t_idx = np.arange(num_steps + 1)[None, :]
+        spot_lattice = s0 * (u ** (t_idx - i_idx)) * (d**i_idx)
+
+        observation_indices = np.arange(num_steps + 1, dtype=int)
+        avg_min, avg_max = _BinomialAsianValuation._compute_ordering_bounds(
+            spot_lattice,
+            num_steps,
+            observation_indices,
+        )
+
+        # Node X: t=4, row=2; Node Y: t=5, row=2; Node Z: t=5, row=3
+        assert np.isclose(avg_min[2, 4], 46.65, atol=0.01)
+        assert np.isclose(avg_max[2, 4], 53.83, atol=0.01)
+        assert np.isclose(avg_min[2, 5], 47.99, atol=0.01)
+        assert np.isclose(avg_max[2, 5], 57.39, atol=0.01)
+        assert np.isclose(avg_min[3, 5], 43.88, atol=0.01)
+        assert np.isclose(avg_max[3, 5], 52.48, atol=0.01)
+
+        # Representative 4-point average grids used in the figure.
+        x_grid = np.linspace(avg_min[2, 4], avg_max[2, 4], 4)
+        y_grid = np.linspace(avg_min[2, 5], avg_max[2, 5], 4)
+        z_grid = np.linspace(avg_min[3, 5], avg_max[3, 5], 4)
+
+        assert np.allclose(x_grid, np.array([46.65, 49.04, 51.44, 53.83]), atol=0.01)
+        assert np.allclose(y_grid, np.array([47.99, 51.12, 54.26, 57.39]), atol=0.01)
+        assert np.allclose(z_grid, np.array([43.88, 46.75, 49.61, 52.48]), atol=0.01)
+
+    def test_interp_child_values_matches_hull_example_at_node_x(self):
+        # Hull Figure 27.3 interpolation at node X (t=0.20 -> 0.25).
+        k = 4
+        num_steps = 20
+        t_idx = 4
+        rows = np.array([2], dtype=int)
+
+        avg_grid = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
+        values = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
+
+        avg_grid[:, 2, 5] = np.array([47.99, 51.12, 54.26, 57.39])
+        values[:, 2, 5] = np.array([7.575, 8.101, 8.635, 9.178])
+
+        avg_grid[:, 3, 5] = np.array([43.88, 46.75, 49.61, 52.48])
+        values[:, 3, 5] = np.array([3.430, 3.750, 4.079, 4.416])
+
+        x_grid = np.array([46.65, 49.04, 51.44, 53.83])
+        s_up = 54.68
+        s_down = 45.72
+        n_obs_so_far = 5
+
+        avg_up = ((n_obs_so_far * x_grid + s_up) / (n_obs_so_far + 1))[:, None]
+        avg_down = ((n_obs_so_far * x_grid + s_down) / (n_obs_so_far + 1))[:, None]
+
+        v_up, v_down = _BinomialAsianValuation._interp_child_values(
+            avg_up=avg_up,
+            avg_down=avg_down,
+            avg_grid=avg_grid,
+            values=values,
+            rows=rows,
+            t=t_idx,
+        )
+
+        assert np.isclose(v_up[2, 0], 8.247, atol=1.0e-3)
+        assert np.isclose(v_down[2, 0], 4.182, atol=1.0e-3)
+
+        p = 0.5056
+        discount = np.exp(-0.1 * 0.05)
+        x_values = discount * (p * v_up[:, 0] + (1.0 - p) * v_down[:, 0])
+        assert np.allclose(x_values, np.array([5.642, 5.923, 6.206, 6.492]), atol=1.0e-3)
+
+
+# ---------------------------------------------------------------------------
+# Hull Asian binomial tree integration tests (S=50, K=50, r=10%, σ=40%, T=1)
+# ---------------------------------------------------------------------------
+
+
+def _hull_asian_underlying() -> UnderlyingData:
+    """Build UnderlyingData for Hull's Asian option example."""
+    curve_r = flat_curve(PRICING_DATE, PRICING_DATE + dt.timedelta(days=365), 0.10)
+    curve_q = flat_curve(PRICING_DATE, PRICING_DATE + dt.timedelta(days=365), 0.0)
+    md = market_data(pricing_date=PRICING_DATE, discount_curve=curve_r)
+    return underlying(
+        initial_value=50.0,
+        volatility=0.40,
+        market_data=md,
+        dividend_curve=curve_q,
+    )
+
+
+class TestBinomialAsianHullTreePricing:
+    """Integration tests: Hull Asian binomial tree prices (arithmetic call).
+
+    Hull Ch. 27 Figure 27.3: S₀=50, K=50, r=10%, σ=40%, T=1 year.
+    """
+
+    @pytest.mark.parametrize(
+        "exercise_type, num_steps, tree_averages, expected_pv",
+        [
+            pytest.param(ExerciseType.EUROPEAN, 20, 4, 7.17, id="european_20steps_4avg"),
+            pytest.param(ExerciseType.AMERICAN, 20, 4, 7.77, id="american_20steps_4avg"),
+            pytest.param(ExerciseType.EUROPEAN, 60, 100, 5.58, id="european_60steps_100avg"),
+            pytest.param(ExerciseType.AMERICAN, 60, 100, 6.17, id="american_60steps_100avg"),
+        ],
+    )
+    def test_hull_asian_call(
+        self,
+        exercise_type: ExerciseType,
+        num_steps: int,
+        tree_averages: int,
+        expected_pv: float,
+    ):
+        ud = _hull_asian_underlying()
+        asian_spec = AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.CALL,
+            strike=50.0,
+            maturity=PRICING_DATE + dt.timedelta(days=365),
+            num_steps=num_steps,
+            currency=CURRENCY,
+            exercise_type=exercise_type,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            params = BinomialParams(num_steps=num_steps, asian_tree_averages=tree_averages)
+        price = OptionValuation(ud, asian_spec, PricingMethod.BINOMIAL, params).present_value()
+        assert np.isclose(price, expected_pv, atol=0.01)
