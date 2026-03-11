@@ -630,6 +630,7 @@ def _pa_asian_mc_greeks(
         maturity=MATURITY,
         currency=CURRENCY,
         fixing_dates=_ASIAN_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     ov = OptionValuation(
         process,

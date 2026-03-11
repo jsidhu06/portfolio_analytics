@@ -124,6 +124,7 @@ def _asian_spec(
         strike=strike,
         maturity=MATURITY,
         currency=CURRENCY,
+        num_steps=STEPS,
         exercise_type=exercise_type,
     )
 
@@ -175,6 +176,7 @@ class TestAsianControlVariate:
             maturity=MATURITY,
             currency=CURRENCY,
             num_steps=STEPS,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
@@ -227,6 +229,7 @@ class TestAsianControlVariate:
                 maturity=MATURITY,
                 currency=CURRENCY,
                 num_steps=STEPS,
+                exercise_type=ExerciseType.EUROPEAN,
             )
             european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
@@ -264,6 +267,7 @@ class TestAsianControlVariate:
             strike=strike,
             maturity=maturity,
             currency=CURRENCY,
+            num_steps=STEPS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         euro_hull = OptionValuation(
@@ -278,6 +282,7 @@ class TestAsianControlVariate:
             maturity=maturity,
             currency=CURRENCY,
             num_steps=STEPS,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         euro_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 
@@ -321,6 +326,7 @@ class TestAsianControlVariate:
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,
+            num_steps=STEPS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         european_hull = OptionValuation(
@@ -335,6 +341,7 @@ class TestAsianControlVariate:
             maturity=MATURITY,
             currency=CURRENCY,
             num_steps=STEPS,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
 

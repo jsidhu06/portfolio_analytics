@@ -843,6 +843,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             maturity=self.maturity,
             currency=self.currency,
             num_steps=12,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(ud, spec, PricingMethod.BSM)
         # Should not raise — would crash with AttributeError if ANALYTICAL were used
@@ -859,6 +860,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             maturity=self.maturity,
             currency=self.currency,
             num_steps=12,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(
             ud,
@@ -879,6 +881,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             maturity=self.maturity,
             currency=self.currency,
             num_steps=12,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(ud, spec, PricingMethod.BSM)
         with pytest.raises(UnsupportedFeatureError, match="Asian options only support.*NUMERICAL"):
@@ -894,6 +897,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             maturity=self.maturity,
             currency=self.currency,
             num_steps=12,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(
             ud,

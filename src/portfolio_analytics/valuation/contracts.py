@@ -145,7 +145,7 @@ class AsianSpec:
         window. Defines the contract observation schedule as ``num_steps + 1``
         observation time points.
     exercise_type : ExerciseType
-        Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
+        Exercise style (EUROPEAN or AMERICAN).
     contract_size : int | float
         Contract multiplier (default 100)
     fixing_dates : Sequence[dt.datetime], optional
@@ -176,11 +176,11 @@ class AsianSpec:
     option_type: OptionType  # CALL or PUT
     strike: float
     maturity: dt.datetime
+    exercise_type: ExerciseType
     currency: str | None = None
     averaging_start: dt.datetime | None = None
     num_steps: int | None = None
     contract_size: int | float = 100
-    exercise_type: ExerciseType = ExerciseType.EUROPEAN
     fixing_dates: Sequence[dt.datetime] | None = None
     observed_average: float | None = None
     observed_count: int | None = None

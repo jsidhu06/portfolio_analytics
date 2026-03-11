@@ -800,6 +800,7 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
         fixing_dates=_MONTHLY_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     gbm = _pa_asian_gbm(fixing_dates=_MONTHLY_FIXINGS)
     pa_mc = OptionValuation(
@@ -845,6 +846,7 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
         fixing_dates=_QUARTERLY_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     gbm = _pa_asian_gbm(fixing_dates=_QUARTERLY_FIXINGS)
     pa_mc = OptionValuation(
@@ -907,6 +909,7 @@ def test_asian_arithmetic_put_nonflat_curves_vs_quantlib():
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
         fixing_dates=_BIMONTHLY_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     gbm = _pa_asian_gbm(
         fixing_dates=_BIMONTHLY_FIXINGS,
@@ -960,6 +963,7 @@ def test_asian_geometric_put_nonflat_curves_vs_quantlib():
         maturity=_ASIAN_MATURITY,
         currency=CURRENCY,
         fixing_dates=_BIMONTHLY_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     gbm = _pa_asian_gbm(
         fixing_dates=_BIMONTHLY_FIXINGS,

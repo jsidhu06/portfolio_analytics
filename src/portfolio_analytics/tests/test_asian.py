@@ -1232,6 +1232,7 @@ class TestFixingDatesValidation:
                 strike=100.0,
                 maturity=_FD_MATURITY,
                 fixing_dates=(),
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_unsorted_fixing_dates_raises(self):
@@ -1245,6 +1246,7 @@ class TestFixingDatesValidation:
                     dt.datetime(2025, 6, 1),
                     dt.datetime(2025, 3, 1),
                 ),
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_fixing_dates_beyond_maturity_raises(self):
@@ -1258,6 +1260,7 @@ class TestFixingDatesValidation:
                     dt.datetime(2025, 6, 1),
                     dt.datetime(2026, 6, 1),  # past maturity
                 ),
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_fixing_dates_before_averaging_start_raises(self):
@@ -1272,6 +1275,7 @@ class TestFixingDatesValidation:
                     dt.datetime(2025, 3, 1),  # before averaging_start
                     dt.datetime(2025, 6, 1),
                 ),
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_valid_fixing_dates_accepted(self):
@@ -1282,6 +1286,7 @@ class TestFixingDatesValidation:
             strike=100.0,
             maturity=_FD_MATURITY,
             fixing_dates=_MONTHLY_FIXINGS,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         assert spec.fixing_dates == _MONTHLY_FIXINGS
 
@@ -1812,6 +1817,7 @@ class TestSeasonedAsian:
                 currency=CURRENCY,
                 num_steps=5,
                 observed_average=52.0,
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_observed_count_requires_observed_average(self):
@@ -1824,6 +1830,7 @@ class TestSeasonedAsian:
                 currency=CURRENCY,
                 num_steps=5,
                 observed_count=6,
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_observed_average_must_be_positive(self):
@@ -1837,6 +1844,7 @@ class TestSeasonedAsian:
                 num_steps=5,
                 observed_average=-1.0,
                 observed_count=6,
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_observed_count_must_be_positive_int(self):
@@ -1850,6 +1858,7 @@ class TestSeasonedAsian:
                 num_steps=5,
                 observed_average=52.0,
                 observed_count=0,
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     # ── K* > 0: reduces to fresh Asian ───────────────────────────────────
@@ -1879,6 +1888,7 @@ class TestSeasonedAsian:
             maturity=self.MATURITY,
             currency=CURRENCY,
             num_steps=n2_steps,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         fresh_pv = OptionValuation(
             self._ud(),
@@ -1896,6 +1906,7 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
             observed_average=S_bar,
             observed_count=n1,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         seasoned_pv = OptionValuation(
             self._ud(),
@@ -1916,6 +1927,7 @@ class TestSeasonedAsian:
             num_steps=5,
             observed_average=52.0,
             observed_count=6,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         with pytest.raises(UnsupportedFeatureError, match="arithmetic averaging"):
             OptionValuation(
@@ -1944,6 +1956,7 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
             observed_average=S_bar,
             observed_count=n1,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         pv = OptionValuation(
             self._ud(),
@@ -1964,6 +1977,7 @@ class TestSeasonedAsian:
             maturity=self.MATURITY,
             currency=CURRENCY,
             num_steps=n2_steps,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         disc_M1 = OptionValuation(
             self._ud(),
@@ -1985,6 +1999,7 @@ class TestSeasonedAsian:
             num_steps=5,
             observed_average=120.0,
             observed_count=6,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         pv = OptionValuation(
             self._ud(),
@@ -2013,6 +2028,7 @@ class TestSeasonedAsian:
             maturity=self.MATURITY,
             currency=CURRENCY,
             num_steps=n2_steps,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         fresh_pv = OptionValuation(
             self._ud(),
@@ -2029,6 +2045,7 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
             observed_average=K,  # ATM: S̄ = K
             observed_count=n1,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         seasoned_pv = OptionValuation(
             self._ud(),
@@ -2053,6 +2070,7 @@ class TestSeasonedAsian:
                 num_steps=n2_steps,
                 observed_average=s_bar,
                 observed_count=n1,
+                exercise_type=ExerciseType.EUROPEAN,
             )
             return OptionValuation(
                 self._ud(),
@@ -2077,6 +2095,7 @@ class TestSeasonedAsian:
                 num_steps=n2_steps,
                 observed_average=s_bar,
                 observed_count=n1,
+                exercise_type=ExerciseType.EUROPEAN,
             )
             return OptionValuation(
                 self._ud(),
@@ -2101,6 +2120,7 @@ class TestSeasonedAsian:
                 num_steps=n2_steps,
                 observed_average=K,
                 observed_count=n1,
+                exercise_type=ExerciseType.EUROPEAN,
             )
             return OptionValuation(
                 self._ud(),
@@ -2127,6 +2147,7 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
             observed_average=S_bar,
             observed_count=n1,
+            exercise_type=ExerciseType.EUROPEAN,
         )
 
         bsm_pv = OptionValuation(
@@ -2160,6 +2181,7 @@ class TestSeasonedAsian:
             num_steps=n2_steps,
             observed_average=S_bar,
             observed_count=n1,
+            exercise_type=ExerciseType.EUROPEAN,
         )
 
         bsm_pv = OptionValuation(
@@ -2475,6 +2497,7 @@ class TestValidation:
                 maturity=maturity,
                 currency=CURRENCY,
                 num_steps=0,
+                exercise_type=ExerciseType.EUROPEAN,
             )
 
     def test_pure_function_validation(self):
@@ -3238,6 +3261,7 @@ class TestAsianThetaFixingAtPricingDate:
             maturity=self.MATURITY,
             currency=CURRENCY,
             fixing_dates=self.FIXINGS_WITH_T0,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(
             self._gbm(),
@@ -3264,6 +3288,7 @@ class TestAsianThetaFixingAtPricingDate:
             maturity=self.MATURITY,
             currency=CURRENCY,
             fixing_dates=self.FIXINGS_WITH_T0,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         spec_no_t0 = AsianSpec(
             averaging=averaging,
@@ -3272,6 +3297,7 @@ class TestAsianThetaFixingAtPricingDate:
             maturity=self.MATURITY,
             currency=CURRENCY,
             fixing_dates=self.FIXINGS_NO_T0,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         gbm = self._gbm()
         mc = MonteCarloParams(random_seed=MC_SEED)
@@ -3295,6 +3321,7 @@ class TestAsianThetaFixingAtPricingDate:
             maturity=self.MATURITY,
             currency=CURRENCY,
             fixing_dates=(intraday_fixing,) + self.FIXINGS_NO_T0,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(
             self._gbm(),
@@ -3348,6 +3375,7 @@ class TestMCSeasonedAsian:
             fixing_dates=fixings,
             observed_average=self.SPOT,
             observed_count=3,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         pv = OptionValuation(
             self._gbm(),
@@ -3382,6 +3410,7 @@ class TestMCSeasonedAsian:
             maturity=self.MATURITY,
             currency=CURRENCY,
             fixing_dates=fixings_all,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         full_pv = OptionValuation(
             self._gbm(paths=500_000),
@@ -3400,6 +3429,7 @@ class TestMCSeasonedAsian:
             fixing_dates=future_fixings,
             observed_average=self.SPOT,
             observed_count=1,
+            exercise_type=ExerciseType.EUROPEAN,
         )
         seasoned_pv = OptionValuation(
             self._gbm(paths=500_000),
