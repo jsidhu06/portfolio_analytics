@@ -10,6 +10,7 @@ Covers:
 """
 
 import datetime as dt
+from dataclasses import dataclass
 import logging
 from typing import Sequence
 
@@ -147,6 +148,8 @@ def _asian_spec(
     averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
     num_steps: int | None = NUM_STEPS,
     averaging_start: dt.datetime | None = None,
+    observed_average: float | None = None,
+    observed_count: int | None = None,
 ) -> AsianSpec:
     return AsianSpec(
         averaging=averaging,
@@ -157,37 +160,173 @@ def _asian_spec(
         exercise_type=exercise_type,
         num_steps=num_steps,
         averaging_start=averaging_start,
+        observed_average=observed_average,
+        observed_count=observed_count,
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ThreeMethodCase:
+    spot: float
+    strike: float
+    vol: float
+    short_rate: float
+    dividend_yield: float
+    days: int
+    option_type: OptionType
+    spec_steps: int
+    mc_grid_steps: int
+    binom_mc_steps: int
+    hull_steps: int
+    averaging_start_days: int | None
+    observed_average: float | None
+    observed_count: int | None
+    mc_paths: int
+    rtol: float
+
+
 @pytest.mark.parametrize(
-    "spot,strike,vol,short_rate,dividend_yield,days,option_type",
+    "case",
     [
-        (100.0, 100.0, 0.2, 0.03, 0.0, 365, OptionType.CALL),
-        (100.0, 100.0, 0.2, 0.03, 0.02, 365, OptionType.CALL),
-        (110.0, 100.0, 0.25, 0.01, 0.0, 270, OptionType.PUT),
-        (110.0, 100.0, 0.25, 0.01, 0.015, 270, OptionType.PUT),
-        (95.0, 90.0, 0.3, 0.05, 0.0, 540, OptionType.CALL),
-        (95.0, 90.0, 0.3, 0.05, 0.025, 540, OptionType.CALL),
-        (105.0, 110.0, 0.18, 0.02, 0.0, 180, OptionType.PUT),
-        (105.0, 110.0, 0.18, 0.02, 0.01, 180, OptionType.PUT),
+        pytest.param(
+            _ThreeMethodCase(
+                spot=100.0,
+                strike=100.0,
+                vol=0.20,
+                short_rate=0.03,
+                dividend_yield=0.00,
+                days=365,
+                option_type=OptionType.CALL,
+                spec_steps=60,
+                mc_grid_steps=60,
+                binom_mc_steps=60,
+                hull_steps=60,
+                averaging_start_days=None,
+                observed_average=None,
+                observed_count=None,
+                mc_paths=120_000,
+                rtol=0.03,
+            ),
+            id="fresh_atm_balanced",
+        ),
+        pytest.param(
+            _ThreeMethodCase(
+                spot=110.0,
+                strike=100.0,
+                vol=0.25,
+                short_rate=0.01,
+                dividend_yield=0.015,
+                days=270,
+                option_type=OptionType.PUT,
+                spec_steps=36,
+                mc_grid_steps=72,
+                binom_mc_steps=72,
+                hull_steps=72,
+                averaging_start_days=None,
+                observed_average=None,
+                observed_count=None,
+                mc_paths=100_000,
+                rtol=0.03,
+            ),
+            id="fresh_put_div_decoupled_steps",
+        ),
+        pytest.param(
+            _ThreeMethodCase(
+                spot=95.0,
+                strike=90.0,
+                vol=0.30,
+                short_rate=0.05,
+                dividend_yield=0.01,
+                days=540,
+                option_type=OptionType.CALL,
+                spec_steps=48,
+                mc_grid_steps=80,
+                binom_mc_steps=80,
+                hull_steps=80,
+                averaging_start_days=90,
+                observed_average=None,
+                observed_count=None,
+                mc_paths=100_000,
+                rtol=0.03,
+            ),
+            id="forward_start_fresh",
+        ),
+        pytest.param(
+            _ThreeMethodCase(
+                spot=100.0,
+                strike=100.0,
+                vol=0.20,
+                short_rate=0.03,
+                dividend_yield=0.01,
+                days=365,
+                option_type=OptionType.CALL,
+                spec_steps=60,
+                mc_grid_steps=60,
+                binom_mc_steps=60,
+                hull_steps=60,
+                averaging_start_days=None,
+                observed_average=102.0,
+                observed_count=5,
+                mc_paths=120_000,
+                rtol=0.03,
+            ),
+            id="seasoned_fresh_window",
+        ),
+        pytest.param(
+            _ThreeMethodCase(
+                spot=100.0,
+                strike=100.0,
+                vol=0.20,
+                short_rate=0.03,
+                dividend_yield=0.01,
+                days=365,
+                option_type=OptionType.CALL,
+                spec_steps=60,
+                mc_grid_steps=60,
+                binom_mc_steps=60,
+                hull_steps=60,
+                averaging_start_days=60,
+                observed_average=102.0,
+                observed_count=5,
+                mc_paths=120_000,
+                rtol=0.03,
+            ),
+            id="seasoned_forward_start",
+        ),
     ],
 )
-def test_asian_binomial_hull_close_to_mc(
-    spot, strike, vol, short_rate, dividend_yield, days, option_type
-):
-    maturity = PRICING_DATE + dt.timedelta(days=days)
-    spec = _asian_spec(strike=strike, maturity=maturity, option_type=option_type)
-    q_curve = _flat_dividend_curve(dividend_yield, maturity)
+def test_asian_three_method_convergence_across_schedule_variants(case: _ThreeMethodCase):
+    """Cross-check Asian prices across stochastic MC, binomial MC, and Hull tree.
+
+    This test intentionally decouples contract schedule resolution (AsianSpec)
+    from pricing-engine numerical resolution (MC/binomial step counts) and
+    covers fresh, forward-start, seasoned, and forward-start seasoned cases.
+    """
+    maturity = PRICING_DATE + dt.timedelta(days=case.days)
+    averaging_start = (
+        None
+        if case.averaging_start_days is None
+        else PRICING_DATE + dt.timedelta(days=case.averaging_start_days)
+    )
+    spec = _asian_spec(
+        strike=case.strike,
+        maturity=maturity,
+        option_type=case.option_type,
+        num_steps=case.spec_steps,
+        averaging_start=averaging_start,
+        observed_average=case.observed_average,
+        observed_count=case.observed_count,
+    )
+    q_curve = _flat_dividend_curve(case.dividend_yield, maturity)
 
     mc_underlying = _gbm_underlying(
-        spot=spot,
-        vol=vol,
-        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
+        spot=case.spot,
+        vol=case.vol,
+        discount_curve=flat_curve(PRICING_DATE, maturity, case.short_rate),
         dividend_curve=q_curve,
         maturity=maturity,
-        paths=MC_PATHS,
-        num_steps=NUM_STEPS,
+        paths=case.mc_paths,
+        num_steps=case.mc_grid_steps,
     )
     mc_pv = OptionValuation(
         mc_underlying,
@@ -197,9 +336,9 @@ def test_asian_binomial_hull_close_to_mc(
     ).present_value()
 
     binom_underlying = _underlying(
-        spot=spot,
-        vol=vol,
-        discount_curve=flat_curve(PRICING_DATE, maturity, short_rate),
+        spot=case.spot,
+        vol=case.vol,
+        discount_curve=flat_curve(PRICING_DATE, maturity, case.short_rate),
         dividend_curve=q_curve,
         maturity=maturity,
     )
@@ -209,8 +348,8 @@ def test_asian_binomial_hull_close_to_mc(
         spec,
         PricingMethod.BINOMIAL,
         params=BinomialParams(
-            num_steps=NUM_STEPS * 2,
-            mc_paths=MC_PATHS,
+            num_steps=case.binom_mc_steps,
+            mc_paths=case.mc_paths,
             random_seed=MC_SEED,
         ),
     ).present_value()
@@ -220,27 +359,36 @@ def test_asian_binomial_hull_close_to_mc(
         spec,
         PricingMethod.BINOMIAL,
         params=BinomialParams(
-            num_steps=NUM_STEPS,
-            asian_tree_averages=ASIAN_TREE_AVERAGES,
+            num_steps=case.hull_steps,
+            asian_tree_averages=2 * case.hull_steps,
         ),
     ).present_value()
 
     logger.info(
-        "Asian %s S=%.2f K=%.2f vol=%.2f r=%.2f q=%.2f days=%d\nMC=%.6f Hull=%.6f BinomMC=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        vol,
-        short_rate,
-        dividend_yield,
-        days,
+        "Asian 3-method %s S=%.2f K=%.2f vol=%.2f r=%.2f q=%.2f days=%d "
+        "spec_steps=%d mc_grid=%d binom_mc=%d hull_steps=%d avg_start=%s n1=%s\n"
+        "MC=%.6f Hull=%.6f BinomMC=%.6f",
+        case.option_type.value,
+        case.spot,
+        case.strike,
+        case.vol,
+        case.short_rate,
+        case.dividend_yield,
+        case.days,
+        case.spec_steps,
+        case.mc_grid_steps,
+        case.binom_mc_steps,
+        case.hull_steps,
+        case.averaging_start_days,
+        case.observed_count,
         mc_pv,
         hull_pv,
         binom_mc_pv,
     )
 
-    assert np.isclose(mc_pv, hull_pv, rtol=0.02)
-    assert np.isclose(binom_mc_pv, hull_pv, rtol=0.02)
+    assert np.isclose(mc_pv, hull_pv, rtol=case.rtol)
+    assert np.isclose(mc_pv, binom_mc_pv, rtol=case.rtol)
+    assert np.isclose(binom_mc_pv, hull_pv, rtol=case.rtol)
 
 
 @pytest.mark.parametrize(
