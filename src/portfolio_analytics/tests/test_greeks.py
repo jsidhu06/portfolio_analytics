@@ -20,6 +20,7 @@ from portfolio_analytics.enums import (
 from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import assert_greeks_close, flat_curve
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.stochastic_processes import (
     GBMParams,
     PathSimulation,
@@ -402,6 +403,43 @@ class TestGreekCalculationMethods(TestGreeksSetup):
 
         assert np.isclose(analytical, numerical, rtol=rtol)
 
+    def test_binomial_tree_theta_matches_numerical_with_comparable_time_bump(self):
+        """Tree theta and bump-and-revalue theta should align when bump uses 2*dt.
+
+        Binomial tree theta uses (f_ud - f_0) / (2*dt), so a numerical theta
+        bump of approximately 2*dt days is the comparable finite-difference
+        horizon.
+        """
+        num_steps = 200
+        spec = self._make_spec(option_type=OptionType.CALL)
+        ud = self._make_ud()
+        valuation = self._make_val(
+            ud,
+            spec,
+            PricingMethod.BINOMIAL,
+            params=BinomialParams(num_steps=num_steps),
+        )
+
+        ttm = calculate_year_fraction(
+            self.pricing_date,
+            self.maturity,
+            day_count_convention=valuation.day_count_convention,
+        )
+
+        dt = ttm / num_steps
+
+        # Binomial tree theta uses a 2*dt horizon in year units, then reports
+        # per calendar day (division by 365). Use the same horizon here.
+        time_bump_days = 2.0 * dt * 365.0
+
+        theta_tree = valuation.theta(greek_calc_method=GreekCalculationMethod.TREE)
+        theta_num = valuation.theta(
+            greek_calc_method=GreekCalculationMethod.NUMERICAL,
+            time_bump_days=time_bump_days,
+        )
+
+        assert np.isclose(theta_tree, theta_num, rtol=2e-3, atol=5e-5)
+
 
 class TestGreeksDividendCurveEffect(TestGreeksSetup):
     """Test the effect of dividend curves on greeks."""
@@ -628,6 +666,7 @@ _SPOT = 100.0
 _VOL = 0.20
 _MC_SEED = 42
 _ASIAN_STEPS = 52
+_ASIAN_THETA_BUMP_DAYS = 7
 
 _NONFLAT_R = DiscountCurve.from_forwards(
     times=np.array([0.0, 0.25, 0.5, 1.0]),
@@ -682,6 +721,7 @@ def _asian_ud(
         maturity=_MATURITY,
         currency=_CURRENCY,
         exercise_type=ExerciseType.AMERICAN,
+        num_steps=_ASIAN_STEPS,
     )
     return ud, spec
 
@@ -710,7 +750,12 @@ def _greeks(ov: OptionValuation) -> dict[str, float]:
         "delta": ov.delta(),
         "gamma": ov.gamma(),
         "vega": ov.vega(),
-        "theta": ov.theta(),
+        # A 1-day theta bump is too noisy for MC in these Asian AM scenarios;
+        # use a wider bump so binomial-vs-MC comparison is signal-dominated.
+        "theta": ov.theta(
+            greek_calc_method=GreekCalculationMethod.NUMERICAL,
+            time_bump_days=_ASIAN_THETA_BUMP_DAYS,
+        ),
         "rho": ov.rho(),
     }
 

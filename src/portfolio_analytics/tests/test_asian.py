@@ -10,12 +10,13 @@ Covers:
 """
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dc_replace
 import logging
 import warnings
 from typing import Sequence
 
 import numpy as np
+import pandas as pd
 import pytest
 from scipy.stats import norm
 
@@ -24,6 +25,7 @@ from portfolio_analytics.enums import (
     ExerciseType,
     OptionType,
     PricingMethod,
+    GreekCalculationMethod,
 )
 from portfolio_analytics.exceptions import UnsupportedFeatureError, ValidationError
 from portfolio_analytics.market_environment import MarketData
@@ -3331,6 +3333,74 @@ class TestAsianThetaFixingAtPricingDate:
         )
         with pytest.raises(UnsupportedFeatureError, match="intra-day"):
             ov.theta()
+
+    def test_theta_num_steps_magnitude_vs_equivalent_no_t0_fixing(self):
+        """Implicit num_steps schedule should have smaller |theta| than no-t0 equivalent.
+
+        A num_steps schedule includes pricing_date as the first observation,
+        equivalent to an explicit fixing_dates schedule with a t0 fixing.
+        Removing that first fixing should increase time-value sensitivity.
+        """
+        num_steps = 52
+        explicit_fixings = tuple(
+            pd.date_range(
+                PRICING_DATE,
+                self.MATURITY,
+                periods=num_steps + 1,
+            ).to_pydatetime()
+        )
+
+        spec_with_t0 = AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.PUT,
+            strike=self.STRIKE,
+            maturity=self.MATURITY,
+            currency=CURRENCY,
+            num_steps=num_steps,
+            exercise_type=ExerciseType.EUROPEAN,
+        )
+        spec_no_t0 = dc_replace(spec_with_t0, fixing_dates=explicit_fixings[1:], num_steps=None)
+
+        gbm = self._gbm()
+        mc = MonteCarloParams(random_seed=MC_SEED)
+
+        theta_with_t0 = OptionValuation(
+            gbm,
+            spec_with_t0,
+            PricingMethod.MONTE_CARLO,
+            params=mc,
+        ).theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        theta_no_t0 = OptionValuation(
+            gbm,
+            spec_no_t0,
+            PricingMethod.MONTE_CARLO,
+            params=mc,
+        ).theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
+
+        assert abs(theta_with_t0) < abs(theta_no_t0)
+
+    def test_theta_num_steps_intraday_raises(self):
+        """Implicit schedules with sub-daily spacing should raise for 1-day theta bumps."""
+        gbm = self._gbm()
+        spec = AsianSpec(
+            averaging=AsianAveraging.ARITHMETIC,
+            option_type=OptionType.PUT,
+            strike=self.STRIKE,
+            maturity=gbm.pricing_date + dt.timedelta(days=30),
+            currency=CURRENCY,
+            # ~0.5-day spacing -> introduces fixings in (t, t+1d)
+            num_steps=60,
+            exercise_type=ExerciseType.EUROPEAN,
+        )
+        ov = OptionValuation(
+            gbm,
+            spec,
+            PricingMethod.MONTE_CARLO,
+            params=MonteCarloParams(random_seed=MC_SEED),
+        )
+        with pytest.raises(UnsupportedFeatureError, match="intra-day"):
+            ov.theta(greek_calc_method=GreekCalculationMethod.NUMERICAL)
 
 
 # ---------------------------------------------------------------------------

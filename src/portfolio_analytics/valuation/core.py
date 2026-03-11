@@ -517,10 +517,10 @@ class OptionValuation:
 
         underlying_bumped = self._bump_underlying(pricing_date=bumped_date)
 
-        # Asian fixing-date awareness: if fixing dates fall before the
-        # bumped pricing date they become observed ("seasoned") fixings.
+        # Asian fixing-date awareness: if contractual observations fall before
+        # the bumped pricing date they become observed ("seasoned") fixings.
         bumped_spec = self._spec
-        if isinstance(self._spec, AsianSpec) and self._spec.fixing_dates:
+        if isinstance(self._spec, AsianSpec):
             bumped_spec = self._asian_theta_spec(bumped_date)
 
         value_bumped = self._build_valuation(
@@ -1062,9 +1062,12 @@ class OptionValuation:
             ``UnsupportedFeatureError``.
         """
         spec = self._spec
-        assert isinstance(spec, AsianSpec) and spec.fixing_dates is not None
+        assert isinstance(spec, AsianSpec)
 
-        elapsed = [d for d in spec.fixing_dates if d < bumped_date]
+        # Build the effective contractual schedule from either explicit
+        # fixing_dates or the num_steps schedule.
+        schedule = self._asian_observation_dates()
+        elapsed = [d for d in schedule if d < bumped_date]
         if not elapsed:
             return spec
 
@@ -1089,10 +1092,14 @@ class OptionValuation:
         new_n1 = old_n1 + n_elapsed
         new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
 
-        future_fixings = tuple(d for d in spec.fixing_dates if d >= bumped_date)
+        future_fixings = tuple(d for d in schedule if d >= bumped_date)
+
+        # Represent the seasoned remainder with explicit fixing_dates.
+        # This works uniformly for both original schedule sources.
         return dc_replace(
             spec,
-            fixing_dates=future_fixings if future_fixings else None,
+            num_steps=None,
+            fixing_dates=future_fixings,
             observed_average=new_avg,
             observed_count=new_n1,
         )
