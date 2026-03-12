@@ -59,6 +59,7 @@ CURRENCY = "USD"
 MC_PATHS = 200_000
 MC_SEED = 42
 NUM_STEPS = 60
+NUM_OBSERVATIONS = NUM_STEPS + 1
 BINOM_STEPS = 100
 ASIAN_TREE_AVERAGES = 100
 DEFAULT_SHORT_RATE = 0.03
@@ -150,7 +151,7 @@ def _asian_spec(
     option_type: OptionType,
     exercise_type: ExerciseType = ExerciseType.EUROPEAN,
     averaging: AsianAveraging = AsianAveraging.ARITHMETIC,
-    num_steps: int | None = NUM_STEPS,
+    num_observations: int | None = NUM_OBSERVATIONS,
     averaging_start: dt.datetime | None = None,
     observed_average: float | None = None,
     observed_count: int | None = None,
@@ -162,7 +163,7 @@ def _asian_spec(
         maturity=maturity,
         currency=CURRENCY,
         exercise_type=exercise_type,
-        num_steps=num_steps,
+        num_observations=num_observations,
         averaging_start=averaging_start,
         observed_average=observed_average,
         observed_count=observed_count,
@@ -178,7 +179,7 @@ class _ThreeMethodCase:
     dividend_yield: float
     days: int
     option_type: OptionType
-    spec_steps: int
+    spec_observations: int
     mc_grid_steps: int
     binom_mc_steps: int
     hull_steps: int
@@ -201,7 +202,7 @@ class _ThreeMethodCase:
                 dividend_yield=0.00,
                 days=365,
                 option_type=OptionType.CALL,
-                spec_steps=60,
+                spec_observations=61,
                 mc_grid_steps=60,
                 binom_mc_steps=60,
                 hull_steps=60,
@@ -222,7 +223,7 @@ class _ThreeMethodCase:
                 dividend_yield=0.015,
                 days=270,
                 option_type=OptionType.PUT,
-                spec_steps=36,
+                spec_observations=37,
                 mc_grid_steps=72,
                 binom_mc_steps=72,
                 hull_steps=72,
@@ -243,7 +244,7 @@ class _ThreeMethodCase:
                 dividend_yield=0.01,
                 days=540,
                 option_type=OptionType.CALL,
-                spec_steps=48,
+                spec_observations=49,
                 mc_grid_steps=80,
                 binom_mc_steps=80,
                 hull_steps=80,
@@ -264,7 +265,7 @@ class _ThreeMethodCase:
                 dividend_yield=0.01,
                 days=365,
                 option_type=OptionType.CALL,
-                spec_steps=60,
+                spec_observations=61,
                 mc_grid_steps=60,
                 binom_mc_steps=60,
                 hull_steps=60,
@@ -285,7 +286,7 @@ class _ThreeMethodCase:
                 dividend_yield=0.01,
                 days=365,
                 option_type=OptionType.CALL,
-                spec_steps=60,
+                spec_observations=61,
                 mc_grid_steps=60,
                 binom_mc_steps=60,
                 hull_steps=60,
@@ -316,7 +317,7 @@ def test_asian_three_method_convergence_across_schedule_variants(case: _ThreeMet
         strike=case.strike,
         maturity=maturity,
         option_type=case.option_type,
-        num_steps=case.spec_steps,
+        num_observations=case.spec_observations,
         averaging_start=averaging_start,
         observed_average=case.observed_average,
         observed_count=case.observed_count,
@@ -370,7 +371,7 @@ def test_asian_three_method_convergence_across_schedule_variants(case: _ThreeMet
 
     logger.info(
         "Asian 3-method %s S=%.2f K=%.2f vol=%.2f r=%.2f q=%.2f days=%d "
-        "spec_steps=%d mc_grid=%d binom_mc=%d hull_steps=%d avg_start=%s n1=%s\n"
+        "spec_observations=%d mc_grid=%d binom_mc=%d hull_steps=%d avg_start=%s n1=%s\n"
         "MC=%.6f Hull=%.6f BinomMC=%.6f",
         case.option_type.value,
         case.spot,
@@ -379,7 +380,7 @@ def test_asian_three_method_convergence_across_schedule_variants(case: _ThreeMet
         case.short_rate,
         case.dividend_yield,
         case.days,
-        case.spec_steps,
+        case.spec_observations,
         case.mc_grid_steps,
         case.binom_mc_steps,
         case.hull_steps,
@@ -1299,7 +1300,7 @@ class TestFixingDatesValidation:
 
 
 class TestSmallObservationCounts:
-    """With N=1 the average is over {S₀, S(T)} (2 prices).
+    """With M=2 observations the average is over {S₀, S(T)}.
 
     Averaging reduces effective variance, so the Asian price is strictly
     less than the vanilla BSM price for both calls and puts.
@@ -1314,7 +1315,7 @@ class TestSmallObservationCounts:
             (90, 110, 0.25, 0.08, 0.01, 540, OptionType.PUT),
         ],
     )
-    def test_n1_less_than_bsm(self, spot, strike, vol, r, q, days, option_type):
+    def test_m2_less_than_bsm(self, spot, strike, vol, r, q, days, option_type):
         maturity = PRICING_DATE + dt.timedelta(days=days)
         und = _underlying(
             spot=spot,
@@ -1330,7 +1331,7 @@ class TestSmallObservationCounts:
                 strike=strike,
                 maturity=maturity,
                 option_type=option_type,
-                num_steps=1,
+                num_observations=2,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1349,7 +1350,7 @@ class TestSmallObservationCounts:
             PricingMethod.BSM,
         ).present_value()
 
-        assert asian_pv < bsm_pv, f"N=1 Asian={asian_pv:.8f} should be < BSM={bsm_pv:.8f}"
+        assert asian_pv < bsm_pv, f"M=2 Asian={asian_pv:.8f} should be < BSM={bsm_pv:.8f}"
         assert asian_pv > 0.0
 
 
@@ -1386,7 +1387,7 @@ class TestGeometricAsianPutCallParity:
                 strike=strike,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=num_obs,
+                num_observations=num_obs,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1398,16 +1399,16 @@ class TestGeometricAsianPutCallParity:
                 strike=strike,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=num_obs,
+                num_observations=num_obs,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
         ).present_value()
 
-        # E[G] via the formula internals (N intervals → M=N+1 prices)
+        # E[G] via the formula internals (M observations, N=M-1 intervals)
         T = days / 365.0
-        N = num_obs
-        M = N + 1
+        M = num_obs
+        N = M - 1
         delta = T / N
         t_bar = N * delta / 2.0
         M1 = np.log(spot) + (r - q - 0.5 * vol**2) * t_bar
@@ -1441,7 +1442,7 @@ class TestAnalyticalVsMC:
     )
     def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, option_type):
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        num_steps = 60
+        num_observations = 61
 
         # Analytical
         und = _underlying(
@@ -1457,7 +1458,7 @@ class TestAnalyticalVsMC:
                 strike=strike,
                 maturity=maturity,
                 option_type=option_type,
-                num_steps=num_steps,
+                num_observations=num_observations,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1470,7 +1471,7 @@ class TestAnalyticalVsMC:
             discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             paths=300_000,
-            num_steps=num_steps,
+            num_steps=num_observations - 1,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
         mc_pv = OptionValuation(
@@ -1493,7 +1494,7 @@ class TestAnalyticalVsMC:
             analytical_pv,
             mc_pv,
         )
-        # Both analytical and MC include S₀ in the average (N+1 prices).
+        # Both analytical and MC include S₀ in the average (M observations).
         # Tolerance absorbs MC sampling noise.
         assert np.isclose(analytical_pv, mc_pv, rtol=0.02), (
             f"analytical={analytical_pv:.6f} MC={mc_pv:.6f}"
@@ -1522,7 +1523,7 @@ class TestGeometricAsianProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1545,7 +1546,7 @@ class TestGeometricAsianProperties:
                     strike=100,
                     maturity=maturity,
                     option_type=OptionType.CALL,
-                    num_steps=12,
+                    num_observations=12,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
                 PricingMethod.BSM,
@@ -1569,7 +1570,7 @@ class TestGeometricAsianProperties:
                     strike=100,
                     maturity=maturity,
                     option_type=OptionType.PUT,
-                    num_steps=12,
+                    num_observations=12,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
                 PricingMethod.BSM,
@@ -1577,13 +1578,13 @@ class TestGeometricAsianProperties:
             pvs.append(pv)
         assert pvs[0] > pvs[1] > pvs[2]
 
-    def test_more_steps_increases_effective_variance(self):
+    def test_more_observations_increases_effective_variance(self):
         """With S₀ included, M₂ = σ²T·(2N+1)/(6(N+1)) is increasing in N.
 
         The known S₀ observation contributes zero variance; adding more
         future observations dilutes its weight, raising the effective vol
         of the geometric average toward σ/√3.  ATM call price therefore
-        increases with the number of steps.
+        increases with the number of observations.
         """
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(
@@ -1598,7 +1599,7 @@ class TestGeometricAsianProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=4,
+                num_observations=4,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1609,7 +1610,7 @@ class TestGeometricAsianProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=252,
+                num_observations=252,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1632,7 +1633,7 @@ class TestGeometricAsianProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1669,7 +1670,7 @@ class TestGeometricAsianProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1721,7 +1722,7 @@ class TestContinuousLimit:
             risk_free_rate=r,
             dividend_yield=q,
             option_type=OptionType.CALL,
-            num_steps=10_000,
+            num_observations=10_000,
         )
 
         assert np.isclose(discrete_call, continuous_call, rtol=1e-4)
@@ -1748,7 +1749,7 @@ class TestDividendYield:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1766,7 +1767,7 @@ class TestDividendYield:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -1817,7 +1818,7 @@ class TestSeasonedAsian:
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=5,
+                num_observations=5,
                 observed_average=52.0,
                 exercise_type=ExerciseType.EUROPEAN,
             )
@@ -1830,7 +1831,7 @@ class TestSeasonedAsian:
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=5,
+                num_observations=5,
                 observed_count=6,
                 exercise_type=ExerciseType.EUROPEAN,
             )
@@ -1843,7 +1844,7 @@ class TestSeasonedAsian:
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=5,
+                num_observations=5,
                 observed_average=-1.0,
                 observed_count=6,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -1857,7 +1858,7 @@ class TestSeasonedAsian:
                 strike=50.0,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=5,
+                num_observations=5,
                 observed_average=52.0,
                 observed_count=0,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -1874,8 +1875,7 @@ class TestSeasonedAsian:
         """
         averaging = AsianAveraging.ARITHMETIC
         n1, S_bar, K = 6, 52.0, 50.0
-        n2_steps = 5  # n₂ = 6 future observations
-        n2 = n2_steps + 1
+        n2 = 6
         n_total = n1 + n2
 
         K_star = (n_total / n2) * K - (n1 / n2) * S_bar
@@ -1889,7 +1889,7 @@ class TestSeasonedAsian:
             strike=K_star,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             exercise_type=ExerciseType.EUROPEAN,
         )
         fresh_pv = OptionValuation(
@@ -1905,7 +1905,7 @@ class TestSeasonedAsian:
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             observed_average=S_bar,
             observed_count=n1,
             exercise_type=ExerciseType.EUROPEAN,
@@ -1926,7 +1926,7 @@ class TestSeasonedAsian:
             strike=50.0,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=5,
+            num_observations=5,
             observed_average=52.0,
             observed_count=6,
             exercise_type=ExerciseType.EUROPEAN,
@@ -1943,8 +1943,7 @@ class TestSeasonedAsian:
     def test_k_star_negative_call_is_forward(self):
         """When K* <= 0, the call is certain to be exercised."""
         n1, S_bar, K = 6, 120.0, 50.0
-        n2_steps = 5
-        n2 = n2_steps + 1
+        n2 = 6
         n_total = n1 + n2
         K_star = (n_total / n2) * K - (n1 / n2) * S_bar
         assert K_star < 0, "This test requires K* < 0"
@@ -1955,7 +1954,7 @@ class TestSeasonedAsian:
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             observed_average=S_bar,
             observed_count=n1,
             exercise_type=ExerciseType.EUROPEAN,
@@ -1978,7 +1977,7 @@ class TestSeasonedAsian:
             strike=0.0,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             exercise_type=ExerciseType.EUROPEAN,
         )
         disc_M1 = OptionValuation(
@@ -1998,7 +1997,7 @@ class TestSeasonedAsian:
             strike=50.0,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=5,
+            num_observations=5,
             observed_average=120.0,
             observed_count=6,
             exercise_type=ExerciseType.EUROPEAN,
@@ -2020,7 +2019,7 @@ class TestSeasonedAsian:
         leaving the remaining average with less optionality.
         """
         K = self.SPOT  # ATM
-        n2_steps = 5
+        n2 = 6
         n1 = 6
 
         fresh_spec = AsianSpec(
@@ -2029,7 +2028,7 @@ class TestSeasonedAsian:
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             exercise_type=ExerciseType.EUROPEAN,
         )
         fresh_pv = OptionValuation(
@@ -2044,7 +2043,7 @@ class TestSeasonedAsian:
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             observed_average=K,  # ATM: S̄ = K
             observed_count=n1,
             exercise_type=ExerciseType.EUROPEAN,
@@ -2059,7 +2058,7 @@ class TestSeasonedAsian:
 
     def test_higher_observed_average_increases_call_value(self):
         """A higher observed average should increase the seasoned call value."""
-        n2_steps = 5
+        n2 = 6
         n1 = 6
 
         def _seasoned_call(s_bar: float) -> float:
@@ -2069,7 +2068,7 @@ class TestSeasonedAsian:
                 strike=self.SPOT,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=n2_steps,
+                num_observations=n2,
                 observed_average=s_bar,
                 observed_count=n1,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -2084,7 +2083,7 @@ class TestSeasonedAsian:
 
     def test_higher_observed_average_decreases_put_value(self):
         """A higher observed average should decrease the seasoned put value."""
-        n2_steps = 5
+        n2 = 6
         n1 = 6
 
         def _seasoned_put(s_bar: float) -> float:
@@ -2094,7 +2093,7 @@ class TestSeasonedAsian:
                 strike=self.SPOT,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=n2_steps,
+                num_observations=n2,
                 observed_average=s_bar,
                 observed_count=n1,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -2109,7 +2108,7 @@ class TestSeasonedAsian:
 
     def test_more_observed_reduces_optionality(self):
         """More past observations (with S̄ = K) → less optionality → lower call value."""
-        n2_steps = 5
+        n2 = 6
         K = self.SPOT
 
         def _seasoned_call(n1: int) -> float:
@@ -2119,7 +2118,7 @@ class TestSeasonedAsian:
                 strike=K,
                 maturity=self.MATURITY,
                 currency=CURRENCY,
-                num_steps=n2_steps,
+                num_observations=n2,
                 observed_average=K,
                 observed_count=n1,
                 exercise_type=ExerciseType.EUROPEAN,
@@ -2138,7 +2137,7 @@ class TestSeasonedAsian:
     def test_binomial_seasoned_matches_analytical(self):
         """Binomial Hull tree seasoned Asian should converge to analytical."""
         n1, S_bar, K = 6, 52.0, 50.0
-        n2_steps = 60
+        n2 = 61
 
         seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
@@ -2146,7 +2145,7 @@ class TestSeasonedAsian:
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             observed_average=S_bar,
             observed_count=n1,
             exercise_type=ExerciseType.EUROPEAN,
@@ -2162,7 +2161,7 @@ class TestSeasonedAsian:
             self._ud(),
             seasoned_spec,
             PricingMethod.BINOMIAL,
-            params=BinomialParams(num_steps=n2_steps, asian_tree_averages=100),
+            params=BinomialParams(num_steps=n2 - 1, asian_tree_averages=100),
         ).present_value()
 
         assert np.isclose(binom_pv, bsm_pv, rtol=0.01), (
@@ -2172,7 +2171,7 @@ class TestSeasonedAsian:
     def test_mc_seasoned_matches_analytical(self):
         """MC seasoned Asian should converge to analytical."""
         n1, S_bar, K = 6, 52.0, 50.0
-        n2_steps = 60
+        n2 = 61
 
         seasoned_spec = AsianSpec(
             averaging=AsianAveraging.ARITHMETIC,
@@ -2180,7 +2179,7 @@ class TestSeasonedAsian:
             strike=K,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=n2_steps,
+            num_observations=n2,
             observed_average=S_bar,
             observed_count=n1,
             exercise_type=ExerciseType.EUROPEAN,
@@ -2198,7 +2197,7 @@ class TestSeasonedAsian:
             discount_curve=flat_curve(PRICING_DATE, self.MATURITY, self.RATE),
             maturity=self.MATURITY,
             paths=200_000,
-            num_steps=n2_steps,
+            num_steps=n2 - 1,
         )
         mc_pv = OptionValuation(
             gbm,
@@ -2222,7 +2221,7 @@ class TestSeasonedAsian:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -2240,7 +2239,7 @@ class TestSeasonedAsian:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -2302,7 +2301,7 @@ class TestSeasonedBinomialVsMC:
             strike=self.STRIKE,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=self.NUM_STEPS,
+            num_observations=self.NUM_STEPS + 1,
             exercise_type=exercise_type,
             observed_average=self.S_BAR,
             observed_count=self.N1,
@@ -2461,14 +2460,14 @@ class TestValidation:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
         ).present_value()
         assert pv > 0.0
 
-    def test_missing_num_steps_raises(self):
+    def test_missing_num_observations_raises(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
         und = _underlying(
             spot=100,
@@ -2476,29 +2475,29 @@ class TestValidation:
             discount_curve=flat_curve(PRICING_DATE, maturity, 0.05),
             maturity=maturity,
         )
-        with pytest.raises(Exception, match="num_steps"):
+        with pytest.raises(Exception, match="num_observations"):
             OptionValuation(
                 und,
                 _asian_spec(
                     strike=100,
                     maturity=maturity,
                     option_type=OptionType.CALL,
-                    num_steps=None,
+                    num_observations=None,
                     averaging=AsianAveraging.GEOMETRIC,
                 ),
                 PricingMethod.BSM,
             )
 
-    def test_invalid_num_steps_on_spec(self):
+    def test_invalid_num_observations_on_spec(self):
         maturity = PRICING_DATE + dt.timedelta(days=365)
-        with pytest.raises(Exception, match="num_steps"):
+        with pytest.raises(Exception, match="num_observations"):
             AsianSpec(
                 averaging=AsianAveraging.GEOMETRIC,
                 option_type=OptionType.CALL,
                 strike=100,
                 maturity=maturity,
                 currency=CURRENCY,
-                num_steps=0,
+                num_observations=1,
                 exercise_type=ExerciseType.EUROPEAN,
             )
 
@@ -2512,7 +2511,7 @@ class TestValidation:
                 risk_free_rate=0.05,
                 dividend_yield=0.0,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
             )
         with pytest.raises(Exception, match="volatility"):
             _asian_geometric_analytical(
@@ -2523,9 +2522,9 @@ class TestValidation:
                 risk_free_rate=0.05,
                 dividend_yield=0.0,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
             )
-        with pytest.raises(Exception, match="num_steps"):
+        with pytest.raises(Exception, match="num_observations"):
             _asian_geometric_analytical(
                 spot=100,
                 strike=100,
@@ -2534,7 +2533,7 @@ class TestValidation:
                 risk_free_rate=0.05,
                 dividend_yield=0.0,
                 option_type=OptionType.CALL,
-                num_steps=0,
+                num_observations=1,
             )
 
 
@@ -2563,7 +2562,7 @@ class TestAveragingStart:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -2575,7 +2574,7 @@ class TestAveragingStart:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -2602,7 +2601,7 @@ class TestAveragingStart:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=10,
+                num_observations=10,
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
@@ -2615,17 +2614,17 @@ class TestAveragingStart:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=10,
+                num_observations=10,
                 averaging_start=avg_start,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
         ).present_value()
 
-        # Compute E[G] (N intervals → M=N+1 prices)
+        # Compute E[G] (M observations, N=M-1 intervals)
         T = 365.0 / 365.0
-        N = 10
-        M = N + 1
+        M = 10
+        N = M - 1
         r, q, sigma = 0.05, 0.0, 0.2
         t_s = 60.0 / 365.0
         delta = (T - t_s) / N
@@ -2694,7 +2693,7 @@ def test_geometric_asian_four_method_comparison(
             strike=strike,
             maturity=maturity,
             option_type=option_type,
-            num_steps=NUM_STEPS,
+            num_observations=NUM_OBSERVATIONS,
             averaging=AsianAveraging.GEOMETRIC,
         ),
         PricingMethod.BSM,
@@ -2792,8 +2791,9 @@ class TestHullExample26_3:
     """Verify against Hull Example 26.3 (pp. 626-627).
 
     Hull's example uses observations at T/m, 2T/m, ..., T (i.e. does NOT
-    include S₀ at time 0).  Our convention includes S₀, so our "num_steps=m"
-    gives m+1 observations.  We test both the raw moments against Hull's
+    include S₀ at time 0).  Our convention includes S₀, so using
+    ``num_observations = m + 1`` gives that extra t0 observation. We test both
+    the raw moments against Hull's
     numbers (using his convention) and the pipeline with our S₀ convention.
     """
 
@@ -2845,7 +2845,7 @@ class TestHullExample26_3:
             risk_free_rate=r,
             dividend_yield=q,
             option_type=OptionType.CALL,
-            num_steps=10_000,
+            num_observations=10_000,
         )
         assert np.isclose(price, 5.62, atol=0.02), f"price={price:.4f} expected ~5.62"
 
@@ -2853,7 +2853,7 @@ class TestHullExample26_3:
         """Hull's discrete prices: 12 obs → 6.00, 52 obs → 5.70, 250 obs → 5.63.
 
         Hull uses m observations at T/m, 2T/m, ..., T (no S₀).
-        Our pricer with ``averaging_start = T/m`` and ``num_steps = m - 1``
+        Our pricer with ``averaging_start = T/m`` and ``num_observations = m``
         places M = m observations at exactly those times, matching Hull.
         """
         S0, K, r, q, sigma, T = 50.0, 50.0, 0.1, 0.0, 0.4, 1.0
@@ -2868,7 +2868,7 @@ class TestHullExample26_3:
                 risk_free_rate=r,
                 dividend_yield=q,
                 option_type=OptionType.CALL,
-                num_steps=m - 1,
+                num_observations=m,
                 averaging_start=T / m,
             )
 
@@ -2892,7 +2892,7 @@ class TestArithmeticPutCallParity:
     """For European arithmetic Asians: C - P = e^{-rT}(M₁ - K)."""
 
     @pytest.mark.parametrize(
-        "spot,strike,vol,r,q,days,num_steps",
+        "spot,strike,vol,r,q,days,num_observations",
         [
             (100, 100, 0.20, 0.05, 0.00, 365, 12),
             (100, 100, 0.25, 0.05, 0.02, 365, 52),
@@ -2900,7 +2900,7 @@ class TestArithmeticPutCallParity:
             (110, 90, 0.30, 0.03, 0.00, 180, 6),
         ],
     )
-    def test_put_call_parity(self, spot, strike, vol, r, q, days, num_steps):
+    def test_put_call_parity(self, spot, strike, vol, r, q, days, num_observations):
         maturity = PRICING_DATE + dt.timedelta(days=days)
         und = _underlying(
             spot=spot,
@@ -2916,7 +2916,7 @@ class TestArithmeticPutCallParity:
                 strike=strike,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=num_steps,
+                num_observations=num_observations,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -2928,7 +2928,7 @@ class TestArithmeticPutCallParity:
                 strike=strike,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=num_steps,
+                num_observations=num_observations,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -2936,8 +2936,8 @@ class TestArithmeticPutCallParity:
 
         # E[S_avg] = M₁ via forward prices
         T = days / 365.0
-        N = num_steps
-        M = N + 1
+        M = num_observations
+        N = M - 1
         delta = T / N
         t = np.arange(M, dtype=float) * delta
         F = spot * np.exp((r - q) * t)
@@ -2970,7 +2970,7 @@ class TestArithmeticVsMC:
     )
     def test_analytical_close_to_mc(self, spot, strike, vol, r, q, days, option_type):
         maturity = PRICING_DATE + dt.timedelta(days=days)
-        num_steps = 60
+        num_observations = 61
 
         # Turnbull-Wakeman analytical
         und = _underlying(
@@ -2986,7 +2986,7 @@ class TestArithmeticVsMC:
                 strike=strike,
                 maturity=maturity,
                 option_type=option_type,
-                num_steps=num_steps,
+                num_observations=num_observations,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -2999,7 +2999,7 @@ class TestArithmeticVsMC:
             discount_curve=flat_curve(PRICING_DATE, maturity, r),
             maturity=maturity,
             paths=300_000,
-            num_steps=num_steps,
+            num_steps=num_observations - 1,
             dividend_curve=_flat_dividend_curve(q, maturity),
         )
         mc_pv = OptionValuation(
@@ -3052,7 +3052,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -3064,7 +3064,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -3088,7 +3088,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -3100,7 +3100,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.PUT,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.GEOMETRIC,
             ),
             PricingMethod.BSM,
@@ -3124,7 +3124,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=52,
+                num_observations=52,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -3159,7 +3159,7 @@ class TestArithmeticProperties:
                     strike=100,
                     maturity=maturity,
                     option_type=option_type,
-                    num_steps=12,
+                    num_observations=12,
                     averaging=AsianAveraging.ARITHMETIC,
                 ),
                 PricingMethod.BSM,
@@ -3179,7 +3179,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -3197,7 +3197,7 @@ class TestArithmeticProperties:
                 strike=100,
                 maturity=maturity,
                 option_type=OptionType.CALL,
-                num_steps=12,
+                num_observations=12,
                 averaging=AsianAveraging.ARITHMETIC,
             ),
             PricingMethod.BSM,
@@ -3334,19 +3334,19 @@ class TestAsianThetaFixingAtPricingDate:
         with pytest.raises(UnsupportedFeatureError, match="intra-day"):
             ov.theta()
 
-    def test_theta_num_steps_magnitude_vs_equivalent_no_t0_fixing(self):
-        """Implicit num_steps schedule should have smaller |theta| than no-t0 equivalent.
+    def test_theta_num_observations_magnitude_vs_equivalent_no_t0_fixing(self):
+        """Implicit num_observations schedule should have smaller |theta| than no-t0 equivalent.
 
-        A num_steps schedule includes pricing_date as the first observation,
+        A num_observations schedule includes pricing_date as the first observation,
         equivalent to an explicit fixing_dates schedule with a t0 fixing.
         Removing that first fixing should increase time-value sensitivity.
         """
-        num_steps = 52
+        num_observations = 52
         explicit_fixings = tuple(
             pd.date_range(
                 PRICING_DATE,
                 self.MATURITY,
-                periods=num_steps + 1,
+                periods=num_observations,
             ).to_pydatetime()
         )
 
@@ -3356,10 +3356,12 @@ class TestAsianThetaFixingAtPricingDate:
             strike=self.STRIKE,
             maturity=self.MATURITY,
             currency=CURRENCY,
-            num_steps=num_steps,
+            num_observations=num_observations,
             exercise_type=ExerciseType.EUROPEAN,
         )
-        spec_no_t0 = dc_replace(spec_with_t0, fixing_dates=explicit_fixings[1:], num_steps=None)
+        spec_no_t0 = dc_replace(
+            spec_with_t0, fixing_dates=explicit_fixings[1:], num_observations=None
+        )
 
         gbm = self._gbm()
         mc = MonteCarloParams(random_seed=MC_SEED)
@@ -3380,7 +3382,7 @@ class TestAsianThetaFixingAtPricingDate:
 
         assert abs(theta_with_t0) < abs(theta_no_t0)
 
-    def test_theta_num_steps_intraday_raises(self):
+    def test_theta_num_observations_intraday_raises(self):
         """Implicit schedules with sub-daily spacing should raise for 1-day theta bumps."""
         gbm = self._gbm()
         spec = AsianSpec(
@@ -3390,7 +3392,7 @@ class TestAsianThetaFixingAtPricingDate:
             maturity=gbm.pricing_date + dt.timedelta(days=30),
             currency=CURRENCY,
             # ~0.5-day spacing -> introduces fixings in (t, t+1d)
-            num_steps=60,
+            num_observations=60,
             exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(
@@ -3646,7 +3648,7 @@ class TestBinomialAsianHullTreePricing:
             option_type=OptionType.CALL,
             strike=50.0,
             maturity=PRICING_DATE + dt.timedelta(days=365),
-            num_steps=num_steps,
+            num_observations=num_steps + 1,
             currency=CURRENCY,
             exercise_type=exercise_type,
         )

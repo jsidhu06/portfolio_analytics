@@ -662,10 +662,10 @@ class TestGreekImmutability(TestGreeksSetup):
 _PRICING_DATE = dt.datetime(2025, 1, 1)
 _MATURITY = dt.datetime(2026, 1, 1)
 _CURRENCY = "USD"
-_SPOT = 100.0
 _VOL = 0.20
 _MC_SEED = 42
-_ASIAN_STEPS = 52
+_ASIAN_OBSERVATIONS = 52
+_ASIAN_ENGINE_STEPS = _ASIAN_OBSERVATIONS - 1
 _ASIAN_THETA_BUMP_DAYS = 7
 
 _NONFLAT_R = DiscountCurve.from_forwards(
@@ -721,7 +721,7 @@ def _asian_ud(
         maturity=_MATURITY,
         currency=_CURRENCY,
         exercise_type=ExerciseType.AMERICAN,
-        num_steps=_ASIAN_STEPS,
+        num_observations=_ASIAN_OBSERVATIONS,
     )
     return ud, spec
 
@@ -741,7 +741,7 @@ def _asian_mc(
             dividend_curve=dividend_curve,
             discrete_dividends=discrete_dividends,
         ),
-        SimulationConfig(paths=120_000, num_steps=_ASIAN_STEPS, end_date=_MATURITY),
+        SimulationConfig(paths=120_000, num_steps=_ASIAN_ENGINE_STEPS, end_date=_MATURITY),
     )
 
 
@@ -844,7 +844,10 @@ def test_asian_american_greeks_binomial_vs_mc(
         ud,
         spec,
         PricingMethod.BINOMIAL,
-        params=BinomialParams(num_steps=_ASIAN_STEPS, asian_tree_averages=2 * _ASIAN_STEPS),
+        params=BinomialParams(
+            num_steps=_ASIAN_ENGINE_STEPS,
+            asian_tree_averages=2 * _ASIAN_ENGINE_STEPS,
+        ),
     )
     mc = OptionValuation(
         mc_process,
@@ -887,7 +890,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             strike=self.strike,
             maturity=self.maturity,
             currency=self.currency,
-            num_steps=12,
+            num_observations=12,
             exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(ud, spec, PricingMethod.BSM)
@@ -904,7 +907,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             strike=self.strike,
             maturity=self.maturity,
             currency=self.currency,
-            num_steps=12,
+            num_observations=12,
             exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(
@@ -925,7 +928,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             strike=self.strike,
             maturity=self.maturity,
             currency=self.currency,
-            num_steps=12,
+            num_observations=12,
             exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(ud, spec, PricingMethod.BSM)
@@ -941,7 +944,7 @@ class TestAsianGreekMethodSelection(TestGreeksSetup):
             strike=self.strike,
             maturity=self.maturity,
             currency=self.currency,
-            num_steps=12,
+            num_observations=12,
             exercise_type=ExerciseType.EUROPEAN,
         )
         ov = OptionValuation(

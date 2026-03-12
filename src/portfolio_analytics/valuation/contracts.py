@@ -140,10 +140,10 @@ class AsianSpec:
         Currency denomination
     averaging_start : dt.datetime, optional
         Start of averaging period. If None, uses pricing date.
-    num_steps : int, optional
-        Number of equally spaced averaging intervals within the averaging
-        window. Defines the contract observation schedule as ``num_steps + 1``
-        observation time points.
+    num_observations : int, optional
+        Number of equally spaced averaging observation time points within the
+        averaging window. For implicit schedules this includes both window
+        endpoints (e.g. pricing date and maturity when averaging_start is None).
     exercise_type : ExerciseType
         Exercise style (EUROPEAN or AMERICAN).
     contract_size : int | float
@@ -155,7 +155,7 @@ class AsianSpec:
         (pricing date, ex-dividend dates, maturity) are simulated but excluded
         from the average.  Dates must be in ascending order and fall within
         ``[averaging_start (or pricing_date), maturity]``.  Mutually exclusive
-        with ``num_steps``.
+        with ``num_observations``.
     observed_average : float, optional
         For seasoned Asians: the realised average price over the already-observed
         period.  Must be provided together with ``observed_count``.
@@ -179,7 +179,7 @@ class AsianSpec:
     exercise_type: ExerciseType
     currency: str | None = None
     averaging_start: dt.datetime | None = None
-    num_steps: int | None = None
+    num_observations: int | None = None
     contract_size: int | float = 100
     fixing_dates: Sequence[dt.datetime] | None = None
     observed_average: float | None = None
@@ -216,12 +216,14 @@ class AsianSpec:
         object.__setattr__(self, "strike", strike)
 
         # Exactly one schedule source is required.
-        if (self.fixing_dates is None) == (self.num_steps is None):
-            raise ValidationError("AsianSpec requires exactly one of fixing_dates or num_steps.")
+        if (self.fixing_dates is None) == (self.num_observations is None):
+            raise ValidationError(
+                "AsianSpec requires exactly one of fixing_dates or num_observations."
+            )
 
-        if self.num_steps is not None:
-            if not isinstance(self.num_steps, int) or self.num_steps < 1:
-                raise ValidationError("num_steps must be a positive integer")
+        if self.num_observations is not None:
+            if not isinstance(self.num_observations, int) or self.num_observations < 2:
+                raise ValidationError("num_observations must be an integer >= 2")
 
         # fixing_dates: coerce to tuple, validate ordering and bounds
         if self.fixing_dates is not None:

@@ -107,7 +107,8 @@ def test_control_variate_pde_matches_adjustment():
 # Asian geometric control variate — Hull tree + Kemna-Vorst analytical
 # ---------------------------------------------------------------------------
 
-STEPS = 100
+ASIAN_OBSERVATIONS = 100
+ASIAN_ENGINE_STEPS = ASIAN_OBSERVATIONS - 1
 TREE_AVERAGES = 100
 
 
@@ -124,7 +125,7 @@ def _asian_spec(
         strike=strike,
         maturity=MATURITY,
         currency=CURRENCY,
-        num_steps=STEPS,
+        num_observations=ASIAN_OBSERVATIONS,
         exercise_type=exercise_type,
     )
 
@@ -141,9 +142,11 @@ class TestAsianControlVariate:
             rate=0.05,
             dividend_curve=q_curve,
         )
-        base_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
+        base_params = BinomialParams(
+            num_steps=ASIAN_ENGINE_STEPS, asian_tree_averages=TREE_AVERAGES
+        )
         cv_params = BinomialParams(
-            num_steps=STEPS,
+            num_steps=ASIAN_ENGINE_STEPS,
             asian_tree_averages=TREE_AVERAGES,
             control_variate_european=True,
         )
@@ -175,7 +178,7 @@ class TestAsianControlVariate:
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,
-            num_steps=STEPS,
+            num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
@@ -206,7 +209,7 @@ class TestAsianControlVariate:
             dividend_curve=q_curve,
         )
         cv_params = BinomialParams(
-            num_steps=STEPS,
+            num_steps=ASIAN_ENGINE_STEPS,
             asian_tree_averages=TREE_AVERAGES,
             control_variate_european=True,
         )
@@ -228,7 +231,7 @@ class TestAsianControlVariate:
                 strike=strike,
                 maturity=MATURITY,
                 currency=CURRENCY,
-                num_steps=STEPS,
+                num_observations=ASIAN_OBSERVATIONS,
                 exercise_type=ExerciseType.EUROPEAN,
             )
             european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
@@ -258,7 +261,10 @@ class TestAsianControlVariate:
             dividend_curve=q_curve,
         )
 
-        hull_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
+        hull_params = BinomialParams(
+            num_steps=ASIAN_ENGINE_STEPS,
+            asian_tree_averages=TREE_AVERAGES,
+        )
 
         # European Hull tree (no CV)
         euro_spec = AsianSpec(
@@ -267,7 +273,7 @@ class TestAsianControlVariate:
             strike=strike,
             maturity=maturity,
             currency=CURRENCY,
-            num_steps=STEPS,
+            num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         euro_hull = OptionValuation(
@@ -281,7 +287,7 @@ class TestAsianControlVariate:
             strike=strike,
             maturity=maturity,
             currency=CURRENCY,
-            num_steps=STEPS,
+            num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         euro_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()
@@ -302,9 +308,11 @@ class TestAsianControlVariate:
     def test_cv_arithmetic_matches_manual_adjustment(self):
         """CV with arithmetic averaging uses Turnbull-Wakeman analytical formula."""
         ud = _underlying(initial_value=100, volatility=0.25, rate=0.05)
-        base_params = BinomialParams(num_steps=STEPS, asian_tree_averages=TREE_AVERAGES)
+        base_params = BinomialParams(
+            num_steps=ASIAN_ENGINE_STEPS, asian_tree_averages=TREE_AVERAGES
+        )
         cv_params = BinomialParams(
-            num_steps=STEPS,
+            num_steps=ASIAN_ENGINE_STEPS,
             asian_tree_averages=TREE_AVERAGES,
             control_variate_european=True,
         )
@@ -326,7 +334,7 @@ class TestAsianControlVariate:
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,
-            num_steps=STEPS,
+            num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         european_hull = OptionValuation(
@@ -340,7 +348,7 @@ class TestAsianControlVariate:
             strike=100,
             maturity=MATURITY,
             currency=CURRENCY,
-            num_steps=STEPS,
+            num_observations=ASIAN_OBSERVATIONS,
             exercise_type=ExerciseType.EUROPEAN,
         )
         european_analytical = OptionValuation(ud, bsm_spec, PricingMethod.BSM).present_value()

@@ -44,7 +44,7 @@ def test_asian_spec_instantiation_smoke():
         strike=100.0,
         maturity=dt.datetime(2026, 1, 1),
         currency="USD",
-        num_steps=12,
+        num_observations=12,
     )
     assert spec.averaging is AsianAveraging.ARITHMETIC
     assert spec.option_type is OptionType.PUT

@@ -588,7 +588,7 @@ class OptionValuation:
         if spec.fixing_dates is not None:
             return tuple(spec.fixing_dates)
 
-        assert spec.num_steps is not None
+        assert spec.num_observations is not None
         averaging_start = spec.averaging_start or self.pricing_date
         if averaging_start > self.maturity:
             raise ValidationError("averaging_start must be on or before maturity.")
@@ -597,7 +597,7 @@ class OptionValuation:
             pd.date_range(
                 start=averaging_start,
                 end=self.maturity,
-                periods=spec.num_steps + 1,
+                periods=spec.num_observations,
             ).to_pydatetime()
         )
 
@@ -846,15 +846,10 @@ class OptionValuation:
         ).present_value()
 
         bsm_underlying = self._as_underlying_data()
-        if isinstance(self._underlying, PathSimulation):
-            n_steps = len(self._underlying.time_grid) - 1
-            bsm_spec = dc_replace(euro_spec, num_steps=n_steps)  # type: ignore[arg-type]
-        else:
-            bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)  # type: ignore[union-attr, arg-type]
 
         euro_analytical = OptionValuation(
             underlying=bsm_underlying,
-            spec=bsm_spec,
+            spec=euro_spec,
             pricing_method=PricingMethod.BSM,
         ).present_value()
 
@@ -1065,7 +1060,7 @@ class OptionValuation:
         assert isinstance(spec, AsianSpec)
 
         # Build the effective contractual schedule from either explicit
-        # fixing_dates or the num_steps schedule.
+        # fixing_dates or the num_observations schedule.
         schedule = self._asian_observation_dates()
         elapsed = [d for d in schedule if d < bumped_date]
         if not elapsed:
@@ -1098,7 +1093,7 @@ class OptionValuation:
         # This works uniformly for both original schedule sources.
         return dc_replace(
             spec,
-            num_steps=None,
+            num_observations=None,
             fixing_dates=future_fixings,
             observed_average=new_avg,
             observed_count=new_n1,
