@@ -30,7 +30,6 @@ from ..exceptions import ConfigurationError, UnsupportedFeatureError, Validation
 from ..enums import (
     DayCountConvention,
     OptionType,
-    AsianAveraging,
     ExerciseType,
     PricingMethod,
     GreekCalculationMethod,
@@ -283,17 +282,13 @@ class OptionValuation:
         # so the caller's instance is never mutated.  pricing_date and
         # maturity are already handled by _build_time_grid.
         if isinstance(spec, AsianSpec):
-            obs_dates = self._asian_observation_dates()
-            if obs_dates[0] < self.pricing_date:
-                raise ValidationError(
-                    "Asian observation schedule must not start before pricing_date."
-                )
-            if obs_dates[-1] > self.maturity:
-                raise ValidationError("Asian observation schedule must not extend beyond maturity.")
+            fixing_dates = self._asian_fixing_dates()
+            if fixing_dates[0] < self.pricing_date:
+                raise ValidationError("Asian fixing schedule must not start before pricing_date.")
 
         if isinstance(underlying, PathSimulation) and isinstance(spec, AsianSpec):
             sc_overrides: dict = {}  # SimulationConfig kwargs to override
-            extra = set(self._asian_observation_dates()) - underlying.observation_dates
+            extra = set(self._asian_fixing_dates()) - underlying.observation_dates
             if extra:
                 sc_overrides["observation_dates"] = underlying.observation_dates | extra
             if spec.averaging_start is not None and underlying.grid_start != spec.averaging_start:
@@ -705,10 +700,10 @@ class OptionValuation:
             f"pricing_method={pricing_method.name} does not accept valuation params"
         )
 
-    def _asian_observation_dates(self) -> tuple[dt.datetime, ...]:
-        """Resolve the contractual Asian observation schedule as datetimes."""
+    def _asian_fixing_dates(self) -> tuple[dt.datetime, ...]:
+        """Resolve the contractual Asian fixing schedule as datetimes."""
         if not isinstance(self._spec, AsianSpec):
-            raise ConfigurationError("Asian observation schedule requested for non-Asian spec.")
+            raise ConfigurationError("Asian fixing schedule requested for non-Asian spec.")
 
         spec = self._spec
         if spec.fixing_dates is not None:
@@ -716,8 +711,6 @@ class OptionValuation:
 
         assert spec.num_observations is not None
         averaging_start = spec.averaging_start or self.pricing_date
-        if averaging_start > self.maturity:
-            raise ValidationError("averaging_start must be on or before maturity.")
 
         return tuple(
             pd.date_range(
@@ -819,10 +812,6 @@ class OptionValuation:
             )
         spec = self._spec
         assert isinstance(spec, AsianSpec)
-        if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
-            raise UnsupportedFeatureError(
-                "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
-            )
 
         params = self._params
 
@@ -1062,7 +1051,7 @@ class OptionValuation:
 
         # Build the effective contractual schedule from either explicit
         # fixing_dates or the num_observations schedule.
-        schedule = self._asian_observation_dates()
+        schedule = self._asian_fixing_dates()
         elapsed = [d for d in schedule if d < bumped_date]
         if not elapsed:
             return spec
@@ -1078,15 +1067,15 @@ class OptionValuation:
                 f"This would require nested Monte Carlo simulation."
             )
 
-        # Case 1: all elapsed fixings are at pricing_date → deterministic S₀.
-        n_elapsed = len(elapsed)
+        # Case 1: single elapsed fixing at pricing_date → deterministic S₀.
+        assert len(elapsed) == 1
         s0 = float(self._underlying.initial_value)
 
         # Merge with any pre-existing seasoned state
         old_n1 = spec.observed_count or 0
         old_avg = spec.observed_average or 0.0
-        new_n1 = old_n1 + n_elapsed
-        new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
+        new_n1 = old_n1 + 1
+        new_avg = (old_n1 * old_avg + s0) / new_n1
 
         future_fixings = tuple(d for d in schedule if d >= bumped_date)
 

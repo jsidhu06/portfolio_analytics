@@ -132,6 +132,8 @@ class AsianSpec:
         AsianAveraging.ARITHMETIC or AsianAveraging.GEOMETRIC
     option_type : OptionType
         OptionType.CALL or OptionType.PUT to specify payoff direction
+    exercise_type : ExerciseType
+        Exercise style (EUROPEAN or AMERICAN)
     strike : float
         Strike price
     maturity : dt.datetime
@@ -144,8 +146,6 @@ class AsianSpec:
         Number of equally spaced averaging observation time points within the
         averaging window. For implicit schedules this includes both window
         endpoints (e.g. pricing date and maturity when averaging_start is None).
-    exercise_type : ExerciseType
-        Exercise style (EUROPEAN or AMERICAN).
     contract_size : int | float
         Contract multiplier (default 100)
     fixing_dates : Sequence[dt.datetime], optional
@@ -174,9 +174,9 @@ class AsianSpec:
 
     averaging: AsianAveraging
     option_type: OptionType  # CALL or PUT
+    exercise_type: ExerciseType  # EUROPEAN or AMERICAN
     strike: float
     maturity: dt.datetime
-    exercise_type: ExerciseType
     currency: str | None = None
     averaging_start: dt.datetime | None = None
     num_observations: int | None = None
@@ -221,6 +221,9 @@ class AsianSpec:
                 "AsianSpec requires exactly one of fixing_dates or num_observations."
             )
 
+        if self.averaging_start is not None and self.averaging_start > self.maturity:
+            raise ValidationError("averaging_start must be on or before maturity.")
+
         if self.num_observations is not None:
             if not isinstance(self.num_observations, int) or self.num_observations < 2:
                 raise ValidationError("num_observations must be an integer >= 2")
@@ -232,6 +235,8 @@ class AsianSpec:
                 raise ValidationError("fixing_dates must be non-empty when provided.")
             if not all(isinstance(d, dt.datetime) for d in dates):
                 raise ConfigurationError("fixing_dates entries must be datetime instances.")
+            if len(dates) != len(set(dates)):
+                raise ValidationError("fixing_dates must contain unique dates.")
             if any(dates[i] >= dates[i + 1] for i in range(len(dates) - 1)):
                 raise ValidationError("fixing_dates must be in strictly ascending order.")
             # Bounds are checked later against the pricing date (not known here);

@@ -353,13 +353,13 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         )
 
     def _observation_indices(self, num_steps: int) -> np.ndarray:
-        """Map contractual observation dates to nearest CRR tree indices."""
-        obs_dates = self.parent._asian_observation_dates()  # type: ignore[attr-defined]
+        """Map contractual fixing dates to nearest CRR tree indices."""
+        fixing_dates = self.parent._asian_fixing_dates()
         tree_dates = self._tree_dates(num_steps)
 
         tree_seconds = np.array([d.timestamp() for d in tree_dates], dtype=float)
         mapped: list[int] = []
-        for d in obs_dates:
+        for d in fixing_dates:
             idx = int(np.argmin(np.abs(tree_seconds - d.timestamp())))
             if not mapped or idx != mapped[-1]:
                 mapped.append(idx)

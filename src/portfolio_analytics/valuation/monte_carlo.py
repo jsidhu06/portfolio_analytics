@@ -650,7 +650,7 @@ class _MCAsianBase(_MCValuationBase):
 
     def _fixing_indices(self, time_grid: np.ndarray) -> np.ndarray | None:
         """Return grid indices for the contractual Asian observation schedule."""
-        fixing_dates = self.parent._asian_observation_dates()  # type: ignore[attr-defined]
+        fixing_dates = self.parent._asian_fixing_dates()
         return np.array(
             [
                 _resolve_time_index(
