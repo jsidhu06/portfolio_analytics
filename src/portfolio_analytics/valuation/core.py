@@ -579,28 +579,6 @@ class OptionValuation:
         """Underlying data/process used by this valuation instance."""
         return self._underlying
 
-    def _asian_observation_dates(self) -> tuple[dt.datetime, ...]:
-        """Resolve the contractual Asian observation schedule as datetimes."""
-        if not isinstance(self._spec, AsianSpec):
-            raise ConfigurationError("Asian observation schedule requested for non-Asian spec.")
-
-        spec = self._spec
-        if spec.fixing_dates is not None:
-            return tuple(spec.fixing_dates)
-
-        assert spec.num_observations is not None
-        averaging_start = spec.averaging_start or self.pricing_date
-        if averaging_start > self.maturity:
-            raise ValidationError("averaging_start must be on or before maturity.")
-
-        return tuple(
-            pd.date_range(
-                start=averaging_start,
-                end=self.maturity,
-                periods=spec.num_observations,
-            ).to_pydatetime()
-        )
-
     @property
     def spec(self) -> VanillaSpec | PayoffSpec | AsianSpec:
         """Contract specification object for the valued instrument."""
@@ -727,6 +705,28 @@ class OptionValuation:
             f"pricing_method={pricing_method.name} does not accept valuation params"
         )
 
+    def _asian_observation_dates(self) -> tuple[dt.datetime, ...]:
+        """Resolve the contractual Asian observation schedule as datetimes."""
+        if not isinstance(self._spec, AsianSpec):
+            raise ConfigurationError("Asian observation schedule requested for non-Asian spec.")
+
+        spec = self._spec
+        if spec.fixing_dates is not None:
+            return tuple(spec.fixing_dates)
+
+        assert spec.num_observations is not None
+        averaging_start = spec.averaging_start or self.pricing_date
+        if averaging_start > self.maturity:
+            raise ValidationError("averaging_start must be on or before maturity.")
+
+        return tuple(
+            pd.date_range(
+                start=averaging_start,
+                end=self.maturity,
+                periods=spec.num_observations,
+            ).to_pydatetime()
+        )
+
     def _apply_control_variate(self, base_pv: float) -> float:
         """Apply European control-variate adjustment to American base PV.
 
@@ -838,6 +838,7 @@ class OptionValuation:
         cv_params = dc_replace(params, control_variate_european=False)
 
         euro_spec = dc_replace(spec, exercise_type=ExerciseType.EUROPEAN)
+
         euro_num = OptionValuation(
             underlying=self._underlying,
             spec=euro_spec,

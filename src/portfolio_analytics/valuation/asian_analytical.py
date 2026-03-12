@@ -32,6 +32,7 @@ Hull, J. C. *Options, Futures, and Other Derivatives*, Chapter 26.
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from dataclasses import replace as dc_replace
 
 import logging
 
@@ -442,8 +443,6 @@ class _AnalyticalAsianValuation:
 
         See Hull, *Options, Futures, and Other Derivatives*, Section 26.13.
         """
-        from dataclasses import replace as dc_replace
-
         spec = self.spec
         assert spec.observed_average is not None and spec.observed_count is not None
 
