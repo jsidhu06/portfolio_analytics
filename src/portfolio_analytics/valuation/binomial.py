@@ -380,14 +380,16 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         logger.debug(
             "Binomial Asian MC num_steps=%d paths=%s", num_steps, self.binom_params.mc_paths
         )
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
+        discount_factors, p, spot_lattice = (
+            self._setup_binomial_parameters()
+        )  # (N,), (N,), (N+1,N+1)
 
         if self.binom_params.mc_paths is None:
             raise ValidationError("BinomialParams.mc_paths must be set for Asian binomial MC")
 
         mc_paths = int(self.binom_params.mc_paths)
         rng = np.random.default_rng(self.binom_params.random_seed)
-        obs_idx = self._observation_indices(num_steps)
+        obs_idx = self._observation_indices(num_steps)  # (M,)
 
         K = self.parent.strike
 
@@ -407,7 +409,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         # Advanced indexing: col_idx broadcasts to (I, N+1), so each
         # (row_idx[i, t], col_idx[t]) selects the node for path i at time t.
         prices = spot_lattice[row_idx, col_idx]  # (I, N+1)
-        obs_prices = prices[:, obs_idx]
+        obs_prices = prices[:, obs_idx]  # (I, M)
 
         # Seasoned state: fold past observations into path averages
         n1 = self.spec.observed_count or 0
@@ -419,14 +421,14 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             if n1 > 0 and s_bar is not None:
                 n2 = obs_prices.shape[1]
                 log_sum_future = np.sum(np.log(obs_prices), axis=1)
-                avg_s = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + n2))
+                avg_s = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + n2))  # (I,)
             else:
                 avg_s = np.exp(np.mean(np.log(obs_prices), axis=1))  # (I,)
         else:
             if n1 > 0 and s_bar is not None:
                 n2 = obs_prices.shape[1]
-                sum_future = np.sum(obs_prices, axis=1)
-                avg_s = (n1 * s_bar + sum_future) / (n1 + n2)
+                sum_future = np.sum(obs_prices, axis=1)  # (I,)
+                avg_s = (n1 * s_bar + sum_future) / (n1 + n2)  # (I,)
             else:
                 avg_s = obs_prices.mean(axis=1)  # (I,)
 
@@ -463,9 +465,23 @@ class _BinomialAsianValuation(_BinomialValuationBase):
 
         For each node (row, t), avg_min is the mean obtained when all down moves
         precede all up moves, and avg_max is the mean when all up moves come first.
+
+        Parameters
+        ----------
+        lattice : (N+1, N+1)
+            Spot (or log-spot) lattice — lower-triangular.
+        num_steps : int
+            N, the number of tree steps.
+        observation_indices : (M,)
+            Tree-step indices at which fixing observations occur.
+
+        Returns
+        -------
+        avg_min, avg_max : (N+1, N+1)
+            Per-node min/max achievable running averages.
         """
-        avg_min = np.zeros_like(lattice)
-        avg_max = np.zeros_like(lattice)
+        avg_min = np.zeros_like(lattice)  # (N+1, N+1)
+        avg_max = np.zeros_like(lattice)  # (N+1, N+1)
 
         for t in range(num_steps + 1):
             obs = observation_indices[observation_indices <= t]
@@ -497,20 +513,43 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         n1: int,
         s_bar_state: float,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Fold seasoned observations into per-step min/max bounds."""
+        """Fold seasoned observations into per-step min/max bounds.
+
+        Parameters
+        ----------
+        avg_min, avg_max : (N+1, N+1)
+            Fresh (future-only) ordering bounds from ``_compute_ordering_bounds``.
+        observation_indices : (M,)
+            Tree-step indices at which fixing observations occur.
+        num_steps: int
+            Number of binomial tree steps (N).
+        n1 : int
+            Number of already-observed fixings.
+        s_bar_state : float
+            Observed average (or log-average for geometric).
+
+        Returns
+        -------
+        avg_min_out, avg_max_out : (N+1, N+1)
+            Bounds adjusted for the seasoned portion.
+        """
 
         if n1 <= 0:
             raise ValidationError("Seasoned bounds require positive observed_count")
 
-        n_future: np.ndarray = np.searchsorted(
+        n_future: np.ndarray = np.searchsorted(  # (N+1,)
             observation_indices,
             np.arange(num_steps + 1),
             side="right",
         ).astype(float)
-        n_total: np.ndarray = n1 + n_future
+        n_total: np.ndarray = n1 + n_future  # (N+1,)
 
-        avg_min_out = (n1 * s_bar_state + n_future[None, :] * avg_min) / n_total[None, :]
-        avg_max_out = (n1 * s_bar_state + n_future[None, :] * avg_max) / n_total[None, :]
+        avg_min_out = (n1 * s_bar_state + n_future[None, :] * avg_min) / n_total[
+            None, :
+        ]  # (N+1, N+1)
+        avg_max_out = (n1 * s_bar_state + n_future[None, :] * avg_max) / n_total[
+            None, :
+        ]  # (N+1, N+1)
         return avg_min_out, avg_max_out
 
     @staticmethod
@@ -523,13 +562,33 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         t: int,
         n1: int,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Update running-average state when advancing one tree step."""
+        """Update running-average state when advancing one tree step.
+
+        Parameters
+        ----------
+        grid_here : (k, t+1)
+            Representative averages at the current time step. Each column corresponds to a node; the k
+            linearly spaced values from S_avg,min to S_avg,max at that node.
+        s_up, s_down : (t+1,)
+            Spot (or log-spot) at the up/down child nodes.
+        observation_indices : (M,)
+            Fixing-date tree indices.
+        t : int
+            Current tree step.
+        n1 : int
+            Number of past (seasoned) observations.
+
+        Returns
+        -------
+        avg_up, avg_down : (k, t+1)
+            Updated running averages after incorporating the child spot.
+        """
         obs_count_now = int(np.searchsorted(observation_indices, t, side="right"))
         obs_so_far = n1 + obs_count_now
         obs_count_next = int(np.searchsorted(observation_indices, t + 1, side="right"))
         if obs_count_next > obs_count_now:
-            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)
-            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)
+            avg_up = (obs_so_far * grid_here + s_up) / (obs_so_far + 1)  # (k, t+1)
+            avg_down = (obs_so_far * grid_here + s_down) / (obs_so_far + 1)  # (k, t+1)
             return avg_up, avg_down
         return grid_here, grid_here
 
@@ -543,9 +602,26 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         rows: np.ndarray,
         t: int,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Interpolate continuation values from child average grids."""
-        v_up = np.empty_like(avg_up)
-        v_down = np.empty_like(avg_down)
+        """Interpolate continuation values from child average grids.
+
+        Parameters
+        ----------
+        avg_up, avg_down : (k, t+1)
+            Running averages at the up/down child nodes.
+        avg_grid : (k, N+1, N+1)
+            Full representative-average grid (for spot prices).
+        values : (k, N+1, N+1)
+            Full option-value grid.
+        rows : (t+1,)
+            Row indices of active nodes at step *t*.
+
+        Returns
+        -------
+        v_up, v_down : (k, t+1)
+            Interpolated option values at the child average positions.
+        """
+        v_up = np.empty_like(avg_up)  # (k, t+1)
+        v_down = np.empty_like(avg_down)  # (k, t+1)
         for j, row_idx in enumerate(rows):
             row = int(row_idx)
             v_up[:, j] = np.interp(avg_up[:, j], avg_grid[:, row, t + 1], values[:, row, t + 1])
@@ -557,7 +633,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
     def _solve_hull(self) -> tuple[np.ndarray, np.ndarray]:
         """Price an Asian option using Hull's representative-averages binomial tree.
 
-        At each node, k linearly spaced average values between the attainable
+        At each node, *k* linearly spaced average values between the attainable
         minimum and maximum are maintained. Backward induction interpolates
         continuation values from the child nodes' grids. For geometric
         averaging, all state variables are stored in log space.
@@ -568,11 +644,31 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         becomes ``n₁ + t + 1`` (total observations so far) instead of
         ``t + 1``.
 
+        Notation
+        --------
+        N = num_steps, k = asian_tree_averages, M = len(observation_indices).
+
+        Core arrays
+        ~~~~~~~~~~~
+        spot_lattice      (N+1, N+1)    CRR spot prices (lower-triangular)
+        avg_min, avg_max   (N+1, N+1)    min/max achievable running average per node
+        avg_grid           (k, N+1, N+1) representative averages per node
+        values             (k, N+1, N+1) option values per average bucket
+
+        Per backward step *t*  (loop-local)
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        rows               (t+1,)        row indices of active nodes
+        s_up, s_down       (t+1,)        spot (or log-spot) at up/down children
+        grid_here          (k, t+1)      representative averages at step t
+        avg_up, avg_down   (k, t+1)      updated running averages at children
+        v_up, v_down       (k, t+1)      interpolated option values at children
+        continuation       (k, t+1)      discounted expected continuation value
+
         Returns
         -------
         tuple of (values, avg_grid)
-            values : shape (k, num_steps+1, num_steps+1) — option values per average bucket
-            avg_grid : shape (k, num_steps+1, num_steps+1) — representative averages
+            values : (k, N+1, N+1) — option values per average bucket
+            avg_grid : (k, N+1, N+1) — representative averages
         """
         num_steps = int(self.binom_params.num_steps)
         logger.debug(
@@ -580,8 +676,10 @@ class _BinomialAsianValuation(_BinomialValuationBase):
             num_steps,
             self.binom_params.asian_tree_averages,
         )
-        discount_factors, p, spot_lattice = self._setup_binomial_parameters()
-        observation_indices = self._observation_indices(num_steps)
+        discount_factors, p, spot_lattice = (
+            self._setup_binomial_parameters()
+        )  # (N,), (N,), (N+1,N+1)
+        observation_indices = self._observation_indices(num_steps)  # (M,)
 
         averaging = self.spec.averaging
         if averaging not in (AsianAveraging.ARITHMETIC, AsianAveraging.GEOMETRIC):
@@ -602,15 +700,15 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 raise NumericalError(
                     "Hull binomial geometric averaging requires strictly positive spot lattice."
                 )
-            log_spot_lattice = np.log(spot_lattice)
-            avg_min, avg_max = self._compute_ordering_bounds(
+            log_spot_lattice = np.log(spot_lattice)  # (N+1, N+1)
+            avg_min, avg_max = self._compute_ordering_bounds(  # (N+1, N+1) each
                 log_spot_lattice,
                 num_steps,
                 observation_indices,
             )
             s_bar_state = np.log(s_bar) if s_bar is not None else 0.0
         else:
-            avg_min, avg_max = self._compute_ordering_bounds(
+            avg_min, avg_max = self._compute_ordering_bounds(  # (N+1, N+1) each
                 spot_lattice,
                 num_steps,
                 observation_indices,
@@ -630,7 +728,9 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 s_bar_state=s_bar_state,
             )
 
-        avg_grid: np.ndarray = np.zeros((k, num_steps + 1, num_steps + 1), dtype=float)
+        avg_grid: np.ndarray = np.zeros(
+            (k, num_steps + 1, num_steps + 1), dtype=float
+        )  # (k, N+1, N+1)
         for t in range(num_steps + 1):
             rows = np.arange(t + 1)
             alpha = np.linspace(0.0, 1.0, k)[:, None]
@@ -638,7 +738,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 avg_min[rows, t][None, :] + (avg_max[rows, t] - avg_min[rows, t])[None, :] * alpha
             )
 
-        values = np.zeros_like(avg_grid)
+        values = np.zeros_like(avg_grid)  # (k, N+1, N+1)
 
         for row in range(num_steps + 1):
             maturity_avg = avg_grid[:, row, num_steps]
@@ -651,14 +751,14 @@ class _BinomialAsianValuation(_BinomialValuationBase):
         is_american = self.parent.spec.exercise_type is ExerciseType.AMERICAN
 
         for t in range(num_steps - 1, -1, -1):
-            rows = np.arange(t + 1)
+            rows = np.arange(t + 1)  # (t+1,)
             if averaging is AsianAveraging.GEOMETRIC:
-                s_up = log_spot_lattice[rows, t + 1]
-                s_down = log_spot_lattice[rows + 1, t + 1]
+                s_up = log_spot_lattice[rows, t + 1]  # (t+1,)
+                s_down = log_spot_lattice[rows + 1, t + 1]  # (t+1,)
             else:
-                s_up = spot_lattice[rows, t + 1]
-                s_down = spot_lattice[rows + 1, t + 1]
-            grid_here = avg_grid[:, rows, t]  # shape (k,t+1)
+                s_up = spot_lattice[rows, t + 1]  # (t+1,)
+                s_down = spot_lattice[rows + 1, t + 1]  # (t+1,)
+            grid_here = avg_grid[:, rows, t]  # (k, t+1)
 
             avg_up, avg_down = self._update_child_averages(
                 grid_here=grid_here,
@@ -677,7 +777,7 @@ class _BinomialAsianValuation(_BinomialValuationBase):
                 t=t,
             )
 
-            continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)
+            continuation = discount_factors[t] * (p[t] * v_up + (1.0 - p[t]) * v_down)  # (k, t+1)
 
             if is_american:
                 exercise_avg = grid_here
