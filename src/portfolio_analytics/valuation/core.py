@@ -291,8 +291,6 @@ class OptionValuation:
             extra = set(self._asian_fixing_dates()) - underlying.observation_dates
             if extra:
                 sc_overrides["observation_dates"] = underlying.observation_dates | extra
-            if spec.averaging_start is not None and underlying.grid_start != spec.averaging_start:
-                sc_overrides["grid_start"] = spec.averaging_start
             if sc_overrides:
                 underlying = type(underlying)(
                     market_data=underlying.market_data,

@@ -429,15 +429,15 @@ class PathSimulation(ABC):
     def _build_time_grid(self) -> np.ndarray:
         """Build a sorted datetime grid from simulation settings.
 
-        When ``grid_start`` is set (e.g. for forward-starting Asians),
-        the dense equally-spaced grid covers ``[grid_start, end_date]``
-        with ``num_steps + 1`` points (or at the requested ``frequency``).
-        ``pricing_date`` is always included as a boundary so the diffusion
-        spans the full ``[pricing_date, end_date]`` interval.
+        When ``grid_start`` is set the dense equally-spaced grid covers
+        ``[grid_start, end_date]`` with ``num_steps + 1`` points (or at
+        the requested ``frequency``).  ``pricing_date`` is always
+        included as a boundary so the diffusion spans the full
+        ``[pricing_date, end_date]`` interval.
 
         ``num_steps`` guarantees *at least* N+1 equally-spaced points in
-        the dense region; ``observation_dates`` (e.g. ex-dividend dates)
-        may add more.
+        the dense region; ``observation_dates`` (e.g. fixing dates,
+        ex-dividend dates) may add more.
         """
         dense_start = self.grid_start or self.pricing_date
         end = self.end_date
