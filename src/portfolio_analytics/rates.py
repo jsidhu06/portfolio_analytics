@@ -20,7 +20,6 @@ class DiscountCurve:
 
     times: np.ndarray
     dfs: np.ndarray
-    flat_rate: float | None = None
 
     def __post_init__(self) -> None:
         t = np.asarray(self.times, dtype=float)
@@ -36,16 +35,23 @@ class DiscountCurve:
                 "Discount factors > 1 detected (negative rates)",
                 stacklevel=2,
             )
-        if self.flat_rate is not None and not np.isfinite(float(self.flat_rate)):
-            raise ValidationError("flat_rate must be finite when provided")
-        if self.flat_rate is not None:
-            implied = np.exp(-float(self.flat_rate) * t)
-            if not np.allclose(df, implied, rtol=1e-10, atol=1e-12):
-                raise ValidationError(
-                    "flat_rate is only allowed when consistent with the provided discount factors"
-                )
         object.__setattr__(self, "times", t)
         object.__setattr__(self, "dfs", df)
+
+    @property
+    def flat_rate(self) -> float | None:
+        """Return the flat continuously-compounded rate if the curve is flat, else ``None``."""
+        if self.times.size < 2:
+            return None
+        # Infer rate from the last tenor: r = -ln(DF) / t
+        t_last = float(self.times[-1])
+        if t_last <= 0.0:
+            return None
+        candidate = -float(np.log(self.dfs[-1])) / t_last
+        implied = np.exp(-candidate * self.times)
+        if np.allclose(self.dfs, implied, rtol=1e-10, atol=1e-12):
+            return candidate
+        return None
 
     @classmethod
     def from_forwards(
@@ -89,10 +95,10 @@ class DiscountCurve:
         ----------
         times
             Year-fraction grid.  Shape ``(N,)``.
-            Must be strictly increasing and start at 0.
+            Must be strictly increasing.  When ``times[0] = 0``, the
+            corresponding rate is cosmetic (DF is always 1 there).
         zero_rates
             Continuously-compounded zero rates at each time.  Shape ``(N,)``.
-            The rate at ``times[0] = 0`` is cosmetic (DF is always 1 there).
         """
         times = np.asarray(times, dtype=float)
         zero_rates = np.asarray(zero_rates, dtype=float)
@@ -100,10 +106,8 @@ class DiscountCurve:
             raise ValidationError("times and zero_rates must be 1-D arrays")
         if times.size != zero_rates.size:
             raise ValidationError("times and zero_rates must have the same length")
-        if times.size < 2:
-            raise ValidationError("times must include at least [0, T]")
-        if not np.isclose(times[0], 0.0):
-            raise ValidationError("times must start at 0.0")
+        if times.size < 1:
+            raise ValidationError("times must contain at least one tenor")
         dfs = np.exp(-zero_rates * times)
         return cls(times=times, dfs=dfs)
 
@@ -136,7 +140,7 @@ class DiscountCurve:
             raise ValidationError("steps must be >= 1")
         times = np.linspace(0.0, float(end_time), int(steps) + 1)
         dfs = np.exp(-float(rate) * times)
-        return cls(times=times, dfs=dfs, flat_rate=float(rate))
+        return cls(times=times, dfs=dfs)
 
     def bump_parallel_zero_rate(self, bump: float) -> DiscountCurve:
         """Return a new curve with a parallel shift to continuously-compounded zero rates.

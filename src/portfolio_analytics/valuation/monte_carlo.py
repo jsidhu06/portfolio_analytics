@@ -19,6 +19,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Year-length denominator for each day-count convention (used for sub-second tolerances).
+_YEAR_DAYS: dict[DayCountConvention, float] = {
+    DayCountConvention.ACT_360: 360.0,
+    DayCountConvention.ACT_365F: 365.0,
+    DayCountConvention.ACT_365_25: 365.25,
+    DayCountConvention.THIRTY_360_US: 360.0,
+}
+
+
 def _warn_if_high_std_error(
     *,
     pv_pathwise: np.ndarray,
@@ -61,10 +70,11 @@ def _resolve_time_index(
 ) -> int:
     """Return the index of the entry in *time_grid* closest to *target*.
 
-    Uses ``np.searchsorted`` on year-fraction offsets so that minor
-    datetime rounding (e.g. microseconds from ``pd.date_range``) does not
-    cause a lookup failure.  Raises ``ValidationError`` if the nearest
-    grid point is more than ~1 second away.
+    Uses nearest-match on year-fraction offsets so that minor datetime
+    rounding (for example microseconds from ``pd.date_range``) does not
+    cause a lookup failure. Raises ``ValidationError`` if the nearest
+    grid point is more than ~1 second away under the supplied day-count
+    convention.
     """
     if len(time_grid) == 0:
         raise ValidationError(f"{label}: time_grid is empty.")
@@ -93,8 +103,8 @@ def _resolve_time_index(
         dtype=float,
     )
     idx = int(np.argmin(np.abs(grid_yf - target_yf)))
-    # ~1 second tolerance expressed as year fraction
-    if abs(grid_yf[idx] - target_yf) > 1.0 / (365.25 * 86400):
+    # ~1 second tolerance expressed as year fraction.
+    if abs(grid_yf[idx] - target_yf) > 1.0 / (_YEAR_DAYS[day_count_convention] * 86400):
         raise ValidationError(f"{label} not found in underlying time_grid.")
     return idx
 
@@ -103,7 +113,9 @@ def _vanilla_payoff(option_type: OptionType, strike: float, spot: np.ndarray) ->
     """Vectorized vanilla payoff: max(S-K,0) for calls, max(K-S,0) for puts."""
     if option_type is OptionType.CALL:
         return np.maximum(spot - strike, 0.0)
-    return np.maximum(strike - spot, 0.0)
+    if option_type is OptionType.PUT:
+        return np.maximum(strike - spot, 0.0)
+    raise ValidationError(f"Unsupported option_type for vanilla payoff: {option_type}")
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +133,7 @@ def _laguerre_basis(x: np.ndarray, deg: int) -> np.ndarray:
         L_{k+1}(x) = ((2k + 1 - x) L_k(x) - k L_{k-1}(x)) / (k + 1)
 
     These form an orthogonal basis on [0, inf) w.r.t. e^{-x}, which
-    provides far better conditioning than raw power polynomials in spot.
+    provides better conditioning than raw power polynomials in spot.
     """
     x = np.asarray(x, dtype=float)
     cols: list[np.ndarray] = [np.ones_like(x)]
@@ -219,8 +231,8 @@ def _year_fractions(
     )
 
 
-class _MCEuropeanValuation:
-    """Implementation of European option valuation using Monte Carlo."""
+class _MCValuationBase:
+    """Common base for all Monte Carlo valuation engines."""
 
     def __init__(self, parent: OptionValuation) -> None:
         self.parent = parent
@@ -233,7 +245,21 @@ class _MCEuropeanValuation:
             raise ConfigurationError(
                 "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
             )
-        self.underlying = parent.underlying
+        self.underlying: PathSimulation = parent.underlying
+
+    def _maturity_year_fraction(self) -> float:
+        """Time to maturity in years under the underlying day-count convention."""
+        return float(
+            calculate_year_fraction(
+                self.parent.pricing_date,
+                self.parent.maturity,
+                day_count_convention=self.underlying.day_count_convention,
+            )
+        )
+
+
+class _MCEuropeanValuation(_MCValuationBase):
+    """Implementation of European option valuation using Monte Carlo."""
 
     def solve(self) -> np.ndarray:
         """Generate undiscounted payoff vector at maturity (one value per path)."""
@@ -278,13 +304,7 @@ class _MCEuropeanValuation:
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        ttm = float(
-            calculate_year_fraction(
-                self.parent.pricing_date,
-                self.parent.maturity,
-                day_count_convention=self.underlying.day_count_convention,
-            )
-        )
+        ttm = self._maturity_year_fraction()
         discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
@@ -309,13 +329,7 @@ class _MCEuropeanValuation:
             day_count_convention=self.underlying.day_count_convention,
         )
         ST: np.ndarray = paths[idx]
-        ttm = float(
-            calculate_year_fraction(
-                self.parent.pricing_date,
-                self.parent.maturity,
-                day_count_convention=self.underlying.day_count_convention,
-            )
-        )
+        ttm = self._maturity_year_fraction()
         df = float(self.parent.discount_curve.df(ttm))
         return ST, idx, ttm, df
 
@@ -332,7 +346,8 @@ class _MCEuropeanValuation:
         z_all = self.underlying.last_normals  # (num_steps, num_paths)
         if z_all is None:
             raise ValidationError(
-                "You must run PathSimulation.simulate() before calling likelihood-ratio Greeks."
+                "Internal state error: missing cached MC shocks (last_normals). "
+                "Call _simulate_terminal() before _effective_terminal_z()."
             )
         time_deltas = self.underlying._time_deltas()  # (num_steps,)
         sqrt_dt = np.sqrt(time_deltas[:idx])
@@ -525,21 +540,8 @@ class _MCEuropeanValuation:
         return (delta_up - delta_dn) / (2 * epsilon)
 
 
-class _MCAmericanValuation:
+class _MCAmericanValuation(_MCValuationBase):
     """Implementation of American option valuation using Longstaff-Schwartz Monte Carlo."""
-
-    def __init__(self, parent: OptionValuation) -> None:
-        self.parent = parent
-        if not isinstance(parent.params, MonteCarloParams):
-            raise ConfigurationError(
-                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
-            )
-        self.mc_params: MonteCarloParams = parent.params
-        if not isinstance(parent.underlying, PathSimulation):
-            raise ConfigurationError(
-                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
-            )
-        self.underlying = parent.underlying
 
     def solve(self) -> tuple[np.ndarray, np.ndarray, int, int]:
         """Generate underlying paths and intrinsic payoff matrix over time.
@@ -630,7 +632,7 @@ class _MCAmericanValuation:
         return df0 * values[1]
 
 
-class _MCAsianBase:
+class _MCAsianBase(_MCValuationBase):
     """Shared infrastructure for European and American MC Asian valuations.
 
     Provides common ``__init__`` validation, fixing-date index resolution,
@@ -639,17 +641,7 @@ class _MCAsianBase:
     """
 
     def __init__(self, parent: OptionValuation) -> None:
-        self.parent = parent
-        if not isinstance(parent.params, MonteCarloParams):
-            raise ConfigurationError(
-                "Monte Carlo valuation requires MonteCarloParams on OptionValuation"
-            )
-        self.mc_params: MonteCarloParams = parent.params
-        if not isinstance(parent.underlying, PathSimulation):
-            raise ConfigurationError(
-                "Monte Carlo valuation requires a PathSimulation underlying on OptionValuation"
-            )
-        self.underlying: PathSimulation = parent.underlying
+        super().__init__(parent)
         self.spec: AsianSpec = parent.spec  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
@@ -657,9 +649,8 @@ class _MCAsianBase:
     # ------------------------------------------------------------------
 
     def _fixing_indices(self, time_grid: np.ndarray) -> np.ndarray | None:
-        """Return grid indices for explicit fixing dates, or None."""
-        if self.spec.fixing_dates is None:
-            return None
+        """Return grid indices for the contractual Asian observation schedule."""
+        fixing_dates = self.parent._asian_fixing_dates()
         return np.array(
             [
                 _resolve_time_index(
@@ -668,7 +659,7 @@ class _MCAsianBase:
                     f"fixing_date: {d.strftime('%Y-%m-%d')}",
                     day_count_convention=self.underlying.day_count_convention,
                 )
-                for d in self.spec.fixing_dates
+                for d in fixing_dates
             ],
             dtype=int,
         )
@@ -688,28 +679,11 @@ class _MCAsianBase:
         Returns
         -------
         (averaging_paths, time_list)
-            averaging_paths : (N_obs, n_paths) spot prices at observation dates
-            time_list       : (N_obs,) datetime sub-grid for those dates
+            averaging_paths : (num_fixings, n_paths) spot prices at fixing dates
+            time_list       : (num_fixings,) datetime sub-grid for those dates
         """
         fixing_idx = self._fixing_indices(time_grid)
-        if fixing_idx is not None:
-            return paths[fixing_idx], time_grid[fixing_idx]
-
-        spec = self.spec
-        averaging_start = spec.averaging_start if spec.averaging_start else self.parent.pricing_date
-        idx_start = _resolve_time_index(
-            time_grid,
-            averaging_start,
-            "averaging_start",
-            day_count_convention=self.underlying.day_count_convention,
-        )
-        idx_end = _resolve_time_index(
-            time_grid,
-            self.parent.maturity,
-            "maturity",
-            day_count_convention=self.underlying.day_count_convention,
-        )
-        return paths[idx_start : idx_end + 1], time_grid[idx_start : idx_end + 1]
+        return paths[fixing_idx], time_grid[fixing_idx]
 
 
 class _MCAsianValuation(_MCAsianBase):
@@ -739,29 +713,13 @@ class _MCAsianValuation(_MCAsianBase):
         averaging_paths, _ = self._extract_averaging_paths(paths, self.underlying.time_grid)
 
         spec = self.spec
-        n1 = spec.observed_count or 0
-        s_bar = spec.observed_average
-
-        if spec.averaging is AsianAveraging.ARITHMETIC:
-            if n1 > 0 and s_bar is not None:
-                n2 = averaging_paths.shape[0]
-                sum_future = np.sum(averaging_paths, axis=0)
-                avg_prices = (n1 * s_bar + sum_future) / (n1 + n2)
-            else:
-                avg_prices = np.mean(averaging_paths, axis=0)
-        elif spec.averaging is AsianAveraging.GEOMETRIC:
-            if np.any(averaging_paths <= 0.0):
-                raise NumericalError("Geometric averaging requires strictly positive path prices.")
-            if n1 > 0 and s_bar is not None:
-                n2 = averaging_paths.shape[0]
-                log_sum_future = np.sum(np.log(averaging_paths), axis=0)
-                avg_prices = np.exp((n1 * np.log(s_bar) + log_sum_future) / (n1 + n2))
-            else:
-                avg_prices = np.exp(np.mean(np.log(averaging_paths), axis=0))
-        else:
-            raise ValidationError(
-                f"Unsupported averaging method for Asian valuation: {spec.averaging}"
-            )
+        running_avg = _running_averages(
+            averaging_paths,
+            spec.averaging,
+            observed_count=spec.observed_count or 0,
+            observed_average=spec.observed_average,
+        )
+        avg_prices = running_avg[-1]
 
         return self._asian_payoff(avg_prices)
 
@@ -786,42 +744,58 @@ class _MCAsianValuation(_MCAsianBase):
     def present_value_pathwise(self) -> np.ndarray:
         """Return discounted present values for each path."""
         payoff_vector = self.solve()
-        ttm = float(
-            calculate_year_fraction(
-                self.parent.pricing_date,
-                self.parent.maturity,
-                day_count_convention=self.underlying.day_count_convention,
-            )
-        )
+        ttm = self._maturity_year_fraction()
         discount_factor = float(self.parent.discount_curve.df(ttm))
         return discount_factor * payoff_vector
 
 
-def _running_averages(paths: np.ndarray, averaging: AsianAveraging) -> np.ndarray:
+def _running_averages(
+    averaging_paths: np.ndarray,
+    averaging: AsianAveraging,
+    *,
+    observed_count: int = 0,
+    observed_average: float | None = None,
+) -> np.ndarray:
     """Compute the running average at each time step along axis 0.
 
     Parameters
     ----------
-    paths : np.ndarray, shape (T, n_paths)
-        Spot prices at each observation date for every simulated path.
+    averaging_paths : np.ndarray, shape (num_fixing_dates, n_paths)
+        Spot prices at each fixing date for every simulated path.
     averaging : AsianAveraging
         ARITHMETIC or GEOMETRIC.
+    observed_count : int, default 0
+        Number of already observed fixings (seasoned Asian).
+    observed_average : float | None, default None
+        Realized average across observed fixings. Required when
+        ``observed_count > 0``.
 
     Returns
     -------
-    np.ndarray, shape (T, n_paths)
-        Running average at each observation date.
+    np.ndarray, shape (num_fixing_dates, n_paths)
+        Running average at each fixing date.
     """
-    n_steps = paths.shape[0]
-    counts = np.arange(1, n_steps + 1, dtype=float).reshape(-1, 1)
+    num_fixings = averaging_paths.shape[0]
+    counts = np.arange(1, num_fixings + 1, dtype=float).reshape(-1, 1)
+    n1 = int(observed_count)
+    if n1 < 0:
+        raise ValidationError("observed_count must be >= 0")
+    if n1 > 0 and observed_average is None:
+        raise ValidationError("observed_average must be provided when observed_count > 0")
 
     if averaging is AsianAveraging.ARITHMETIC:
-        return np.cumsum(paths, axis=0) / counts
+        cumsum = np.cumsum(averaging_paths, axis=0)
+        if n1 > 0:
+            return (n1 * observed_average + cumsum) / (n1 + counts)
+        return cumsum / counts
 
     if averaging is AsianAveraging.GEOMETRIC:
-        if np.any(paths <= 0.0):
+        if np.any(averaging_paths <= 0.0):
             raise NumericalError("Geometric averaging requires strictly positive path prices.")
-        return np.exp(np.cumsum(np.log(paths), axis=0) / counts)
+        log_cumsum = np.cumsum(np.log(averaging_paths), axis=0)
+        if n1 > 0:
+            return np.exp((n1 * np.log(observed_average) + log_cumsum) / (n1 + counts))
+        return np.exp(log_cumsum / counts)
 
     raise ValidationError(f"Unsupported averaging method: {averaging}")
 
@@ -936,10 +910,10 @@ class _MCAsianAmericanValuation(_MCAsianBase):
         Returns
         -------
         (averaging_paths, running_avg, intrinsic, time_list)
-            averaging_paths : (N_obs, n_paths) spot prices at observation dates
-            running_avg     : (N_obs, n_paths) running average at each date
-            intrinsic       : (N_obs, n_paths) intrinsic payoff at each date
-            time_list       : (N_obs,) datetime time grid for the averaging window
+            averaging_paths : (num_fixings, n_paths) spot prices at fixing dates
+            running_avg     : (num_fixings, n_paths) running average at each fixing date
+            intrinsic       : (num_fixings, n_paths) intrinsic payoff at each fixing date
+            time_list       : (num_fixings,) datetime time grid for the fixing window
         """
         paths = self.underlying.simulate(random_seed=self.mc_params.random_seed)
         averaging_paths, time_list = self._extract_averaging_paths(paths, self.underlying.time_grid)
@@ -947,25 +921,12 @@ class _MCAsianAmericanValuation(_MCAsianBase):
         spec = self.spec
         n1 = spec.observed_count or 0
         s_bar = spec.observed_average
-
-        if n1 > 0 and s_bar is not None:
-            # Seasoned: fold past observations into running averages.
-            n_obs = averaging_paths.shape[0]
-            counts = np.arange(1, n_obs + 1, dtype=float).reshape(-1, 1)
-            if spec.averaging is AsianAveraging.GEOMETRIC:
-                # G_j = exp((n1·ln(S̄) + Σ_{i=1}^{j} ln(S_i)) / (n1+j))
-                if np.any(averaging_paths <= 0.0):
-                    raise NumericalError(
-                        "Geometric averaging requires strictly positive path prices."
-                    )
-                log_cumsum = np.cumsum(np.log(averaging_paths), axis=0)
-                running_avg = np.exp((n1 * np.log(s_bar) + log_cumsum) / (n1 + counts))
-            else:
-                # A_j = (n1·S̄ + Σ_{i=1}^{j} S_i) / (n1+j)
-                cumsum = np.cumsum(averaging_paths, axis=0)
-                running_avg = (n1 * s_bar + cumsum) / (n1 + counts)
-        else:
-            running_avg = _running_averages(averaging_paths, spec.averaging)
+        running_avg = _running_averages(
+            averaging_paths,
+            spec.averaging,
+            observed_count=n1,
+            observed_average=s_bar,
+        )
 
         intrinsic = self._asian_payoff(running_avg)
         return averaging_paths, running_avg, intrinsic, time_list
@@ -980,7 +941,7 @@ class _MCAsianAmericanValuation(_MCAsianBase):
         Returns
         -------
         (averaging_paths, running_avg, intrinsic_values)
-            Each has shape (N_obs, n_paths).
+            Each has shape (num_fixings, n_paths).
         """
         averaging_paths, running_avg, intrinsic, _ = self._get_averaging_data()
         return averaging_paths, running_avg, intrinsic
@@ -1015,16 +976,16 @@ class _MCAsianAmericanValuation(_MCAsianBase):
         )
         discount_factors = self.parent.discount_curve.df(t_grid)
 
-        n_obs = averaging_paths.shape[0]
+        num_fixings = averaging_paths.shape[0]
         n_paths = averaging_paths.shape[1]
         deg = self.mc_params.deg
 
         # Terminal payoff
-        values = np.zeros((n_obs, n_paths))
+        values = np.zeros((num_fixings, n_paths))
         values[-1] = intrinsic[-1]
 
         # Backward induction
-        for t in range(n_obs - 2, 0, -1):
+        for t in range(num_fixings - 2, 0, -1):
             df_step = discount_factors[t + 1] / discount_factors[t]
             itm = intrinsic[t] > 0
 

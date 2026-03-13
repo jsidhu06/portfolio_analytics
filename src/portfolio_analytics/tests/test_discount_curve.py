@@ -17,7 +17,7 @@ class TestDiscountCurveConstruction:
 
     def test_flat_curve_basic(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
-        assert curve.flat_rate == 0.05
+        assert np.isclose(curve.flat_rate, 0.05, rtol=1e-4)
         assert np.isclose(float(curve.df(0.0)), 1.0)
         assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
 
@@ -59,27 +59,26 @@ class TestDiscountCurveConstruction:
         with pytest.raises(ValidationError, match="same length"):
             DiscountCurve(times=np.array([0.0, 1.0]), dfs=np.array([1.0]))
 
-    def test_inconsistent_flat_rate_raises(self):
-        """flat_rate provided but dfs don't match exp(-r*t)."""
-        with pytest.raises(ValidationError, match="flat_rate is only allowed"):
-            DiscountCurve(
-                times=np.array([0.0, 1.0]),
-                dfs=np.array([1.0, 0.90]),
-                flat_rate=0.05,
-            )
-
-    def test_consistent_flat_rate_accepted(self):
-        """flat_rate consistent with dfs should be accepted."""
+    def test_flat_rate_property_detects_flat_curve(self):
+        """flat_rate property should return the rate for a flat curve."""
         t = np.array([0.0, 1.0])
         rate = 0.03
         dfs = np.exp(-rate * t)
-        curve = DiscountCurve(times=t, dfs=dfs, flat_rate=rate)
-        assert curve.flat_rate == rate
+        curve = DiscountCurve(times=t, dfs=dfs)
+        assert np.isclose(curve.flat_rate, rate, rtol=1e-10)
+
+    def test_flat_rate_property_returns_none_for_non_flat(self):
+        """flat_rate property should return None for a non-flat curve."""
+        curve = DiscountCurve(
+            times=np.array([0.0, 0.5, 1.0]),
+            dfs=np.array([1.0, 0.98, 0.90]),
+        )
+        assert curve.flat_rate is None
 
     def test_frozen_dataclass(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
         with pytest.raises(AttributeError):
-            curve.flat_rate = 0.10  # type: ignore[misc]
+            curve.times = np.array([0.0])  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

@@ -311,9 +311,9 @@ class PathSimulation(ABC):
 
         # Mutable working state (not from config)
         if isinstance(process_params, (GBMParams, JDParams)):
-            self.discrete_dividends = process_params.discrete_dividends
+            self._discrete_dividends = process_params.discrete_dividends or ()
         else:
-            self.discrete_dividends = tuple()
+            self._discrete_dividends = ()
 
         self._last_normals: np.ndarray | None = None
         self.time_grid = sim_config.time_grid
@@ -325,10 +325,10 @@ class PathSimulation(ABC):
                     f"pricing_date ({market_data.pricing_date}). "
                     "All grid dates must be >= pricing_date."
                 )
-        self.observation_dates = set(sim_config.observation_dates)
-        if self.discrete_dividends:
-            for ex_date, _ in self.discrete_dividends:
-                self.observation_dates.add(ex_date)
+        self._observation_dates = set(sim_config.observation_dates)
+        if self._discrete_dividends:
+            for ex_date, _ in self._discrete_dividends:
+                self._observation_dates.add(ex_date)
 
         if corr is not None:
             if name is None:
@@ -363,6 +363,16 @@ class PathSimulation(ABC):
     def dividend_curve(self) -> DiscountCurve | None:
         """Continuous dividend discount curve, if provided."""
         return getattr(self._process_params, "dividend_curve", None)
+
+    @property
+    def discrete_dividends(self) -> tuple[tuple[dt.datetime, float], ...]:
+        """Discrete cash dividends as ``(ex_date, amount)`` tuples."""
+        return self._discrete_dividends  # type: ignore[return-value]
+
+    @property
+    def observation_dates(self) -> set[dt.datetime]:
+        """Extra dates that must appear in the time grid (e.g. fixing dates, ex-dividend dates)."""
+        return self._observation_dates
 
     @property
     def paths(self) -> int:
@@ -562,18 +572,21 @@ class GBMProcess(PathSimulation):
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate geometric Brownian motion paths.
 
-        Implements the classic Black-Scholes-Merton model:
-        dS_t = mu * S_t * dt + sigma * S_t * dW_t
+        Implements the Black-Scholes-Merton SDE under the risk-neutral measure:
+
+            dS_t = (r - q) S_t dt + σ S_t dW_t
+
+        Paths are generated in log-space (exact for GBM)::
+
+            ln S_{t+Δt} = ln S_t + (r - q - ½σ²)Δt + σ √Δt Z_t
+
+        where Z_t ~ N(0, 1).  This avoids negative prices and has
+        zero discretisation error.
 
         Parameters
         ----------
         random_seed
             Random seed for reproducibility.
-
-        Notes
-        -----
-        The drift term (mu) is derived from the risk-free rate
-        to ensure the model is calibrated to the discount curve.
         """
         self._ensure_time_grid()
 
@@ -633,8 +646,15 @@ class GBMProcess(PathSimulation):
         dividend_by_date: dict[dt.datetime, float] = {}
         time_set = set(self.time_grid)
         for ex_date, amount in self.discrete_dividends:
-            if ex_date in time_set:
-                dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+            if ex_date < self.pricing_date or ex_date > self.end_date:
+                continue
+            if ex_date not in time_set:
+                raise ConfigurationError(
+                    f"Discrete dividend ex_date {ex_date.isoformat()} is within "
+                    f"[pricing_date, maturity] but missing from the simulation time grid. "
+                    "Ensure the time grid includes all ex-dividend dates."
+                )
+            dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
         # Apply pricing-date dividend: input spot is cum-dividend, so the
         # stock goes ex immediately at t=0.
@@ -697,6 +717,15 @@ class JDProcess(PathSimulation):
 
     def _generate_paths(self, random_seed: int | None = None) -> np.ndarray:
         """Generate jump-diffusion paths.
+
+        Merton (1976) model — GBM diffusion plus compound Poisson jumps.
+        In log-space::
+
+            ln S_{t+Δt} = ln S_t + (r - q - λk - ½σ²)Δt + σ √Δt Z
+                          + Σ_{i=1}^{N_Δt} Y_i
+
+        where N_Δt ~ Poisson(λΔt), Y_i ~ N(μ_J, δ_J²), and
+        k = E[e^Y - 1] = exp(μ_J + ½δ_J²) - 1.
 
         Parameters
         ----------
@@ -793,8 +822,15 @@ class JDProcess(PathSimulation):
         dividend_by_date: dict[dt.datetime, float] = {}
         time_set = set(self.time_grid)
         for ex_date, amount in self.discrete_dividends:
-            if ex_date in time_set:
-                dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
+            if ex_date < self.pricing_date or ex_date > self.end_date:
+                continue
+            if ex_date not in time_set:
+                raise ConfigurationError(
+                    f"Discrete dividend ex_date {ex_date.isoformat()} is within "
+                    f"[pricing_date, maturity] but missing from the simulation time grid. "
+                    "Ensure the time grid includes all ex-dividend dates."
+                )
+            dividend_by_date[ex_date] = dividend_by_date.get(ex_date, 0.0) + float(amount)
 
         for t in range(1, num_steps + 1):
             dt_step = time_deltas[t - 1]

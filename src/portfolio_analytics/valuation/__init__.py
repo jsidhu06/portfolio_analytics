@@ -19,13 +19,8 @@ Parameter classes:
     ValuationParams: Union type for all parameter classes
 """
 
-from .core import (
-    OptionValuation,
-    VanillaSpec,
-    PayoffSpec,
-    AsianSpec,
-    UnderlyingData,
-)
+from .contracts import VanillaSpec, PayoffSpec, AsianSpec
+from .core import OptionValuation, UnderlyingData
 from .params import (
     MonteCarloParams,
     BinomialParams,
@@ -35,11 +30,12 @@ from .params import (
 from .implied_volatility import ImpliedVolResult, implied_volatility
 
 __all__ = [
-    # Core valuation classes
-    "OptionValuation",
+    # Option contract classes
     "VanillaSpec",
     "PayoffSpec",
     "AsianSpec",
+    # Core valuation classes
+    "OptionValuation",
     "UnderlyingData",
     # Parameter classes
     "MonteCarloParams",

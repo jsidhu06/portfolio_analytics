@@ -19,6 +19,7 @@ import pytest
 
 from portfolio_analytics.enums import (
     AsianAveraging,
+    DayCountConvention,
     ExerciseType,
     OptionType,
     PricingMethod,
@@ -27,7 +28,6 @@ from portfolio_analytics.market_environment import MarketData
 from portfolio_analytics.rates import DiscountCurve
 from portfolio_analytics.tests.helpers import (
     assert_greeks_close,
-    flat_curve,
     market_data,
     make_vanilla_spec,
     underlying,
@@ -48,6 +48,7 @@ from portfolio_analytics.valuation.params import (
     MonteCarloParams,
     PDEParams,
 )
+from portfolio_analytics.utils import calculate_year_fraction
 
 if TYPE_CHECKING:
     import QuantLib as ql_typing
@@ -57,6 +58,14 @@ pytestmark = pytest.mark.slow
 ql = pytest.importorskip("QuantLib")
 
 logger = logging.getLogger(__name__)
+
+
+def _ql_dcc(dcc: DayCountConvention):
+    """Map a PA DayCountConvention to the corresponding QuantLib DayCounter."""
+    if dcc is DayCountConvention.ACT_360:
+        return ql.Actual360()
+    return ql.Actual365Fixed()
+
 
 # Convention mapping: QL → PA
 # delta, gamma: same
@@ -81,16 +90,18 @@ MC_CFG = MonteCarloParams(random_seed=42)
 # ── Portfolio-analytics helpers ─────────────────────────────────────────
 
 
-def _market_data(discount_curve: DiscountCurve | None = None) -> MarketData:
-    curve = (
-        discount_curve
-        if discount_curve is not None
-        else flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
-    )
+def _market_data(
+    discount_curve: DiscountCurve | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
+) -> MarketData:
+    if discount_curve is None:
+        ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
+        discount_curve = DiscountCurve.flat(RISK_FREE, end_time=ttm)
     return market_data(
         pricing_date=PRICING_DATE,
-        discount_curve=curve,
+        discount_curve=discount_curve,
         currency=CURRENCY,
+        day_count_convention=dcc,
     )
 
 
@@ -115,11 +126,12 @@ def _underlying(
     risk_free_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> UnderlyingData:
     return underlying(
         initial_value=spot,
         volatility=VOL,
-        market_data=_market_data(discount_curve=risk_free_curve),
+        market_data=_market_data(discount_curve=risk_free_curve, dcc=dcc),
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
@@ -132,9 +144,10 @@ def _gbm(
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     paths: int = 500_000,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> GBMProcess:
     return GBMProcess(
-        _market_data(discount_curve=risk_free_curve),
+        _market_data(discount_curve=risk_free_curve, dcc=dcc),
         GBMParams(
             initial_value=spot,
             volatility=VOL,
@@ -162,12 +175,14 @@ def _ql_curve_handle_from_discount_curve(
     curve: DiscountCurve,
     *,
     eval_date: "ql_typing.Date",
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> "ql_typing.YieldTermStructureHandle":
-    day_count = ql.Actual365Fixed()
+    ql_dc = _ql_dcc(dcc)
+    denom = 360.0 if dcc is DayCountConvention.ACT_360 else 365.0
     dates = [eval_date]
     for t in curve.times[1:]:
-        dates.append(eval_date + int(round(float(t) * 365.0)))
-    return ql.YieldTermStructureHandle(ql.DiscountCurve(dates, list(curve.dfs), day_count))
+        dates.append(eval_date + int(round(float(t) * denom)))
+    return ql.YieldTermStructureHandle(ql.DiscountCurve(dates, list(curve.dfs), ql_dc))
 
 
 def _ql_dividend_vector(
@@ -189,15 +204,15 @@ def _ql_process(
     *,
     spot: float,
     dividend_yield: float = 0.0,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> "ql_typing.BlackScholesMertonProcess":
     """BSM process with flat rate, dividend yield, and vol."""
+    ql_dc = _ql_dcc(dcc)
     return ql.BlackScholesMertonProcess(
         ql.QuoteHandle(ql.SimpleQuote(spot)),
-        ql.YieldTermStructureHandle(ql.FlatForward(eval_date, dividend_yield, ql.Actual365Fixed())),
-        ql.YieldTermStructureHandle(ql.FlatForward(eval_date, RISK_FREE, ql.Actual365Fixed())),
-        ql.BlackVolTermStructureHandle(
-            ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql.Actual365Fixed())
-        ),
+        ql.YieldTermStructureHandle(ql.FlatForward(eval_date, dividend_yield, ql_dc)),
+        ql.YieldTermStructureHandle(ql.FlatForward(eval_date, RISK_FREE, ql_dc)),
+        ql.BlackVolTermStructureHandle(ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql_dc)),
     )
 
 
@@ -209,40 +224,36 @@ def _ql_european_option(
     dividend_yield: float = 0.0,
     risk_free_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> "ql_typing.VanillaOption":
     """QuantLib European with AnalyticEuropeanEngine (flat or term-structured curves)."""
     eval_date = _ql_setup()
     ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
     ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
+    ql_dc = _ql_dcc(dcc)
     option = ql.VanillaOption(
         ql.PlainVanillaPayoff(ql_type, strike),
         ql.EuropeanExercise(ql_maturity),
     )
 
     if risk_free_curve is None and dividend_curve is None:
-        process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield)
+        process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield, dcc=dcc)
     else:
         rf_handle = (
-            _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date)
+            _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date, dcc=dcc)
             if risk_free_curve is not None
-            else ql.YieldTermStructureHandle(
-                ql.FlatForward(eval_date, RISK_FREE, ql.Actual365Fixed())
-            )
+            else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, RISK_FREE, ql_dc))
         )
         div_handle = (
-            _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date)
+            _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date, dcc=dcc)
             if dividend_curve is not None
-            else ql.YieldTermStructureHandle(
-                ql.FlatForward(eval_date, dividend_yield, ql.Actual365Fixed())
-            )
+            else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, dividend_yield, ql_dc))
         )
         process = ql.BlackScholesMertonProcess(
             ql.QuoteHandle(ql.SimpleQuote(spot)),
             div_handle,
             rf_handle,
-            ql.BlackVolTermStructureHandle(
-                ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql.Actual365Fixed())
-            ),
+            ql.BlackVolTermStructureHandle(ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql_dc)),
         )
 
     option.setPricingEngine(ql.AnalyticEuropeanEngine(process))
@@ -260,39 +271,35 @@ def _ql_american_fd_option(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     grid_points: int = 200,
     time_steps: int = 400,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> "ql_typing.VanillaOption":
     """QuantLib American with FdBlackScholesVanillaEngine."""
     eval_date = _ql_setup()
     ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
     ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
+    ql_dc = _ql_dcc(dcc)
     option = ql.VanillaOption(
         ql.PlainVanillaPayoff(ql_type, strike),
         ql.AmericanExercise(eval_date, ql_maturity),
     )
     if risk_free_curve is None and dividend_curve is None:
-        process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield)
+        process = _ql_process(eval_date, spot=spot, dividend_yield=dividend_yield, dcc=dcc)
     else:
         rf_handle = (
-            _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date)
+            _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date, dcc=dcc)
             if risk_free_curve is not None
-            else ql.YieldTermStructureHandle(
-                ql.FlatForward(eval_date, RISK_FREE, ql.Actual365Fixed())
-            )
+            else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, RISK_FREE, ql_dc))
         )
         div_handle = (
-            _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date)
+            _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date, dcc=dcc)
             if dividend_curve is not None
-            else ql.YieldTermStructureHandle(
-                ql.FlatForward(eval_date, dividend_yield, ql.Actual365Fixed())
-            )
+            else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, dividend_yield, ql_dc))
         )
         process = ql.BlackScholesMertonProcess(
             ql.QuoteHandle(ql.SimpleQuote(spot)),
             div_handle,
             rf_handle,
-            ql.BlackVolTermStructureHandle(
-                ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql.Actual365Fixed())
-            ),
+            ql.BlackVolTermStructureHandle(ql.BlackConstantVol(eval_date, ql.TARGET(), VOL, ql_dc)),
         )
 
     engine = ql.FdBlackScholesVanillaEngine(
@@ -340,26 +347,64 @@ def _ql_scaled_greeks(
 # ═══════════════════════════════════════════════════════════════════════
 
 _EU_VANILLA_SCENARIOS = [
-    pytest.param(100.0, 100.0, OptionType.CALL, "flat", "none", id="atm_call_flat"),
-    pytest.param(100.0, 95.0, OptionType.PUT, "flat", "flat", id="itm_put_flat_div"),
-    pytest.param(90.0, 100.0, OptionType.CALL, "nonflat", "nonflat", id="otm_call_nonflat"),
-    pytest.param(110.0, 100.0, OptionType.PUT, "nonflat", "none", id="otm_put_nonflat"),
+    pytest.param(
+        100.0,
+        100.0,
+        OptionType.CALL,
+        "flat",
+        "none",
+        DayCountConvention.ACT_365F,
+        id="atm_call_flat_ACT365F",
+    ),
+    pytest.param(
+        100.0,
+        95.0,
+        OptionType.PUT,
+        "flat",
+        "flat",
+        DayCountConvention.ACT_360,
+        id="itm_put_flat_div_ACT360",
+    ),
+    pytest.param(
+        90.0,
+        100.0,
+        OptionType.CALL,
+        "nonflat",
+        "nonflat",
+        DayCountConvention.ACT_360,
+        id="otm_call_nonflat_ACT360",
+    ),
+    pytest.param(
+        110.0,
+        100.0,
+        OptionType.PUT,
+        "nonflat",
+        "none",
+        DayCountConvention.ACT_365F,
+        id="otm_put_nonflat_ACT365F",
+    ),
 ]
 
 
-def _resolve_curve(kind: str, *, is_dividend: bool) -> DiscountCurve | None:
+def _resolve_curve(
+    kind: str,
+    *,
+    is_dividend: bool,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
+) -> DiscountCurve | None:
     if kind == "none":
         return None
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
     if kind == "flat":
         rate = 0.03 if is_dividend else RISK_FREE
-        return flat_curve(PRICING_DATE, MATURITY, rate)
+        return DiscountCurve.flat(rate, end_time=ttm)
     if kind == "nonflat":
         forwards = np.array([0.01, 0.02, 0.015]) if is_dividend else np.array([0.03, 0.05, 0.06])
-        return DiscountCurve.from_forwards(times=np.array([0.0, 0.25, 0.5, 1.0]), forwards=forwards)
+        return DiscountCurve.from_forwards(times=np.array([0.0, 0.25, 0.5, ttm]), forwards=forwards)
     raise ValueError(f"unsupported curve kind: {kind}")
 
 
-@pytest.mark.parametrize("spot,strike,option_type,rate_kind,div_kind", _EU_VANILLA_SCENARIOS)
+@pytest.mark.parametrize("spot,strike,option_type,rate_kind,div_kind,dcc", _EU_VANILLA_SCENARIOS)
 @pytest.mark.parametrize(
     "engine,tols",
     [
@@ -382,16 +427,16 @@ def _resolve_curve(kind: str, *, is_dividend: bool) -> DiscountCurve | None:
     ],
 )
 def test_vanilla_european_greeks_vs_quantlib(
-    spot, strike, option_type, rate_kind, div_kind, engine, tols
+    spot, strike, option_type, rate_kind, div_kind, dcc, engine, tols
 ):
     """PA vanilla European Greeks align with QuantLib across flat/non-flat curve scenarios."""
-    r_curve = _resolve_curve(rate_kind, is_dividend=False)
-    q_curve = _resolve_curve(div_kind, is_dividend=True)
+    r_curve = _resolve_curve(rate_kind, is_dividend=False, dcc=dcc)
+    q_curve = _resolve_curve(div_kind, is_dividend=True, dcc=dcc)
 
     underlying = (
-        _gbm(spot=spot, risk_free_curve=r_curve, dividend_curve=q_curve)
+        _gbm(spot=spot, risk_free_curve=r_curve, dividend_curve=q_curve, dcc=dcc)
         if engine is PricingMethod.MONTE_CARLO
-        else _underlying(spot=spot, risk_free_curve=r_curve, dividend_curve=q_curve)
+        else _underlying(spot=spot, risk_free_curve=r_curve, dividend_curve=q_curve, dcc=dcc)
     )
     params = (
         MC_CFG
@@ -415,6 +460,7 @@ def test_vanilla_european_greeks_vs_quantlib(
         option_type=option_type,
         risk_free_curve=r_curve,
         dividend_curve=q_curve,
+        dcc=dcc,
     )
 
     ql_values = _ql_scaled_greeks(ql_opt, allow_missing=False)
@@ -430,7 +476,7 @@ def test_vanilla_european_greeks_vs_quantlib(
         lhs=pa_values,
         rhs=ql_values,
         tols=tols,
-        log_prefix=f"{engine.name} EU {option_type.value} S={spot:.0f} K={strike:.0f}",
+        log_prefix=f"{engine.name} EU {option_type.value} S={spot:.0f} K={strike:.0f} {dcc.value}",
         lhs_name="PA",
         rhs_name="QL",
         skip_missing_rhs=False,
@@ -443,9 +489,36 @@ def test_vanilla_european_greeks_vs_quantlib(
 # ═══════════════════════════════════════════════════════════════════════
 
 _AM_VANILLA_SCENARIOS = [
-    pytest.param(90.0, 100.0, OptionType.PUT, "flat", "none", None, id="itm_put_flat"),
-    pytest.param(110.0, 100.0, OptionType.CALL, "flat", "flat", None, id="itm_call_flat_div"),
-    pytest.param(100.0, 100.0, OptionType.PUT, "nonflat", "nonflat", None, id="atm_put_nonflat"),
+    pytest.param(
+        90.0,
+        100.0,
+        OptionType.PUT,
+        "flat",
+        "none",
+        None,
+        DayCountConvention.ACT_365F,
+        id="itm_put_flat_ACT365F",
+    ),
+    pytest.param(
+        110.0,
+        100.0,
+        OptionType.CALL,
+        "flat",
+        "flat",
+        None,
+        DayCountConvention.ACT_360,
+        id="itm_call_flat_div_ACT360",
+    ),
+    pytest.param(
+        100.0,
+        100.0,
+        OptionType.PUT,
+        "nonflat",
+        "nonflat",
+        None,
+        DayCountConvention.ACT_360,
+        id="atm_put_nonflat_ACT360",
+    ),
     pytest.param(
         100.0,
         100.0,
@@ -456,13 +529,14 @@ _AM_VANILLA_SCENARIOS = [
             (PRICING_DATE + dt.timedelta(days=90), 0.50),
             (PRICING_DATE + dt.timedelta(days=270), 0.50),
         ],
-        id="atm_put_nonflat_discrete",
+        DayCountConvention.ACT_365F,
+        id="atm_put_nonflat_discrete_ACT365F",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "spot,strike,option_type,rate_kind,div_kind,discrete_dividends", _AM_VANILLA_SCENARIOS
+    "spot,strike,option_type,rate_kind,div_kind,discrete_dividends,dcc", _AM_VANILLA_SCENARIOS
 )
 @pytest.mark.parametrize(
     "engine,tols",
@@ -484,12 +558,13 @@ def test_vanilla_american_greeks_vs_quantlib(
     rate_kind,
     div_kind,
     discrete_dividends,
+    dcc,
     engine,
     tols,
 ):
     """PA vanilla American Greeks align with QuantLib FD for broad curve/dividend scenarios."""
-    r_curve = _resolve_curve(rate_kind, is_dividend=False)
-    q_curve = _resolve_curve(div_kind, is_dividend=True)
+    r_curve = _resolve_curve(rate_kind, is_dividend=False, dcc=dcc)
+    q_curve = _resolve_curve(div_kind, is_dividend=True, dcc=dcc)
 
     ov = OptionValuation(
         _underlying(
@@ -497,6 +572,7 @@ def test_vanilla_american_greeks_vs_quantlib(
             risk_free_curve=r_curve,
             dividend_curve=q_curve,
             discrete_dividends=discrete_dividends,
+            dcc=dcc,
         ),
         _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN),
         engine,
@@ -509,6 +585,7 @@ def test_vanilla_american_greeks_vs_quantlib(
         risk_free_curve=r_curve,
         dividend_curve=q_curve,
         discrete_dividends=discrete_dividends,
+        dcc=dcc,
     )
 
     pa_values = {
@@ -523,7 +600,7 @@ def test_vanilla_american_greeks_vs_quantlib(
         lhs=pa_values,
         rhs=ql_values,
         tols=tols,
-        log_prefix=f"{engine.name} AM {option_type.value} S={spot:.0f} K={strike:.0f}",
+        log_prefix=f"{engine.name} AM {option_type.value} S={spot:.0f} K={strike:.0f} {dcc.value}",
         lhs_name="PA",
         rhs_name="QL",
         skip_missing_rhs=True,
@@ -554,6 +631,7 @@ def _ql_asian_greeks(
     vol: float,
     risk_free_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> dict[str, float | None]:
     """Price a European Asian via QuantLib and return available Greeks.
 
@@ -562,17 +640,16 @@ def _ql_asian_greeks(
     """
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
     ql.Settings.instance().evaluationDate = eval_date
+    ql_dc = _ql_dcc(dcc)
 
     spot_h = ql.QuoteHandle(ql.SimpleQuote(spot))
-    rf_h = _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date)
+    rf_h = _ql_curve_handle_from_discount_curve(risk_free_curve, eval_date=eval_date, dcc=dcc)
     div_h = (
-        _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date)
+        _ql_curve_handle_from_discount_curve(dividend_curve, eval_date=eval_date, dcc=dcc)
         if dividend_curve is not None
-        else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
+        else ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql_dc))
     )
-    vol_h = ql.BlackVolTermStructureHandle(
-        ql.BlackConstantVol(eval_date, ql.TARGET(), vol, ql.Actual365Fixed())
-    )
+    vol_h = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(eval_date, ql.TARGET(), vol, ql_dc))
     proc = ql.BlackScholesMertonProcess(spot_h, div_h, rf_h, vol_h)
 
     ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
@@ -613,9 +690,10 @@ def _pa_asian_mc_greeks(
     vol: float,
     risk_free_curve: DiscountCurve,
     dividend_curve: DiscountCurve | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> dict[str, float]:
     """Build our MC Asian and compute numerical Greeks."""
-    md = MarketData(PRICING_DATE, risk_free_curve, currency=CURRENCY)
+    md = MarketData(PRICING_DATE, risk_free_curve, currency=CURRENCY, day_count_convention=dcc)
     params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=dividend_curve)
     sim_cfg = SimulationConfig(
         paths=150_000,
@@ -630,6 +708,7 @@ def _pa_asian_mc_greeks(
         maturity=MATURITY,
         currency=CURRENCY,
         fixing_dates=_ASIAN_FIXINGS,
+        exercise_type=ExerciseType.EUROPEAN,
     )
     ov = OptionValuation(
         process,
@@ -657,7 +736,8 @@ _ASIAN_GREEK_SCENARIOS = [
         AsianAveraging.GEOMETRIC,
         "flat",
         "none",
-        id="geom_call_atm_flat",
+        DayCountConvention.ACT_365F,
+        id="geom_call_atm_flat_ACT365F",
     ),
     pytest.param(
         100,
@@ -667,7 +747,8 @@ _ASIAN_GREEK_SCENARIOS = [
         AsianAveraging.GEOMETRIC,
         "nonflat",
         "flat",
-        id="geom_put_itm_nonflat",
+        DayCountConvention.ACT_360,
+        id="geom_put_itm_nonflat_ACT360",
     ),
     # Arithmetic (TW engine: delta/gamma only)
     pytest.param(
@@ -678,7 +759,8 @@ _ASIAN_GREEK_SCENARIOS = [
         AsianAveraging.ARITHMETIC,
         "flat",
         "flat",
-        id="arith_call_otm_flat_div",
+        DayCountConvention.ACT_360,
+        id="arith_call_otm_flat_div_ACT360",
     ),
     pytest.param(
         100,
@@ -688,13 +770,14 @@ _ASIAN_GREEK_SCENARIOS = [
         AsianAveraging.ARITHMETIC,
         "nonflat",
         "none",
-        id="arith_put_atm_nonflat",
+        DayCountConvention.ACT_365F,
+        id="arith_put_atm_nonflat_ACT365F",
     ),
 ]
 
 
 @pytest.mark.parametrize(
-    "spot,strike,vol,option_type,averaging,rate_kind,div_kind",
+    "spot,strike,vol,option_type,averaging,rate_kind,div_kind,dcc",
     _ASIAN_GREEK_SCENARIOS,
 )
 def test_asian_mc_greeks_vs_quantlib(
@@ -705,10 +788,11 @@ def test_asian_mc_greeks_vs_quantlib(
     averaging,
     rate_kind,
     div_kind,
+    dcc,
 ):
     """European Asian MC numerical Greeks vs QuantLib analytic/TW Greeks."""
-    r_curve = _resolve_curve(rate_kind, is_dividend=False)
-    q_curve = _resolve_curve(div_kind, is_dividend=True)
+    r_curve = _resolve_curve(rate_kind, is_dividend=False, dcc=dcc)
+    q_curve = _resolve_curve(div_kind, is_dividend=True, dcc=dcc)
     assert r_curve is not None
 
     ql_greeks = _ql_asian_greeks(
@@ -719,6 +803,7 @@ def test_asian_mc_greeks_vs_quantlib(
         vol=vol,
         risk_free_curve=r_curve,
         dividend_curve=q_curve,
+        dcc=dcc,
     )
     pa_greeks = _pa_asian_mc_greeks(
         option_type=option_type,
@@ -728,6 +813,7 @@ def test_asian_mc_greeks_vs_quantlib(
         vol=vol,
         risk_free_curve=r_curve,
         dividend_curve=q_curve,
+        dcc=dcc,
     )
 
     # Tolerances: MC numerical bump-and-revalue vs analytic/TW

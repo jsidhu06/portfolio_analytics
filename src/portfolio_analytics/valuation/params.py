@@ -133,7 +133,7 @@ class BinomialParams:
                     "Consider asian_tree_averages >= 0.5 * num_steps.",
                     RuntimeWarning,
                 )
-            if ratio > 2.0:
+            if ratio > 2.1:
                 warnings.warn(
                     "asian_tree_averages is large relative to num_steps; "
                     "memory usage may be high with limited accuracy gains.",

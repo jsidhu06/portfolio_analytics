@@ -24,11 +24,13 @@ from portfolio_analytics.valuation.binomial import (
 )
 from portfolio_analytics.valuation.monte_carlo import _MCEuropeanValuation
 from portfolio_analytics.enums import (
+    DayCountConvention,
     OptionType,
     ExerciseType,
     PricingMethod,
     PositionSide,
 )
+from portfolio_analytics.utils import calculate_year_fraction
 from portfolio_analytics.stochastic_processes import (
     GBMProcess,
     GBMParams,
@@ -1169,3 +1171,108 @@ class TestCrossMethodGridAndParamCombos:
         pv = OptionValuation(gbm, spec, PricingMethod.MONTE_CARLO, params=mc_params).present_value()
         assert np.isfinite(pv)
         assert pv > 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DCC monotonicity: ACT/360 yields a longer year fraction than ACT/365F for
+# the same calendar period, so option prices must be strictly higher.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDayCountConventionMonotonicity:
+    """ACT/360 yields a longer year fraction than ACT/365F for the same calendar
+    period, so option values must be strictly higher under ACT/360."""
+
+    pricing_date = dt.datetime(2025, 1, 1)
+    maturity = dt.datetime(2026, 1, 1)
+    spot = 100.0
+    strike = 100.0
+    vol = 0.20
+    rate = 0.05
+    div_yield = 0.02
+    currency = "USD"
+
+    _LO = DayCountConvention.ACT_365F
+    _HI = DayCountConvention.ACT_360
+
+    def _curve(self, rate: float, dcc: DayCountConvention) -> DiscountCurve:
+        ttm = calculate_year_fraction(self.pricing_date, self.maturity, dcc)
+        return DiscountCurve.flat(rate, end_time=ttm)
+
+    def _md(self, dcc: DayCountConvention) -> MarketData:
+        return MarketData(
+            self.pricing_date,
+            self._curve(self.rate, dcc),
+            currency=self.currency,
+            day_count_convention=dcc,
+        )
+
+    def _ud(self, dcc: DayCountConvention) -> UnderlyingData:
+        return UnderlyingData(
+            initial_value=self.spot,
+            volatility=self.vol,
+            market_data=self._md(dcc),
+            dividend_curve=self._curve(self.div_yield, dcc),
+        )
+
+    def _gbm(self, dcc: DayCountConvention) -> GBMProcess:
+        return GBMProcess(
+            self._md(dcc),
+            GBMParams(
+                initial_value=self.spot,
+                volatility=self.vol,
+                dividend_curve=self._curve(self.div_yield, dcc),
+            ),
+            SimulationConfig(paths=200_000, end_date=self.maturity, num_steps=200),
+        )
+
+    def _pv(
+        self,
+        dcc: DayCountConvention,
+        option_spec: VanillaSpec,
+        method: PricingMethod,
+        params: BinomialParams | MonteCarloParams | PDEParams | None = None,
+    ) -> float:
+        if method is PricingMethod.MONTE_CARLO:
+            ud = self._gbm(dcc)
+        else:
+            ud = self._ud(dcc)
+        return OptionValuation(ud, option_spec, method, params=params).present_value()
+
+    @pytest.mark.parametrize("option_type", [OptionType.CALL, OptionType.PUT])
+    @pytest.mark.parametrize(
+        "exercise_type,method,params",
+        [
+            (ExerciseType.EUROPEAN, PricingMethod.BSM, None),
+            (
+                ExerciseType.EUROPEAN,
+                PricingMethod.PDE_FD,
+                PDEParams(spot_steps=140, time_steps=140, max_iter=20_000),
+            ),
+            (ExerciseType.EUROPEAN, PricingMethod.BINOMIAL, BinomialParams(num_steps=500)),
+            (ExerciseType.EUROPEAN, PricingMethod.MONTE_CARLO, MonteCarloParams(random_seed=42)),
+            (
+                ExerciseType.AMERICAN,
+                PricingMethod.PDE_FD,
+                PDEParams(spot_steps=140, time_steps=140, max_iter=20_000),
+            ),
+            (ExerciseType.AMERICAN, PricingMethod.BINOMIAL, BinomialParams(num_steps=500)),
+            (ExerciseType.AMERICAN, PricingMethod.MONTE_CARLO, MonteCarloParams(random_seed=42)),
+        ],
+        ids=["bsm_eu", "pde_eu", "binom_eu", "mc_eu", "pde_am", "binom_am", "mc_am"],
+    )
+    def test_act360_exceeds_act365f(self, option_type, exercise_type, method, params):
+        """ACT/360 (T ≈ 1.014) yields a strictly higher PV than ACT/365F (T = 1.0)."""
+        option_spec = VanillaSpec(
+            option_type=option_type,
+            exercise_type=exercise_type,
+            strike=self.strike,
+            maturity=self.maturity,
+            currency=self.currency,
+        )
+        pv_lo = self._pv(self._LO, option_spec, method, params)
+        pv_hi = self._pv(self._HI, option_spec, method, params)
+        assert pv_hi > pv_lo, (
+            f"ACT/360 {pv_hi:.6f} should exceed ACT/365F {pv_lo:.6f} "
+            f"({method.name} {exercise_type.value} {option_type.value})"
+        )

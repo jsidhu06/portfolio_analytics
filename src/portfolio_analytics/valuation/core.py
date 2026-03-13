@@ -19,16 +19,17 @@ Design notes
 
 from __future__ import annotations
 from dataclasses import dataclass, replace as dc_replace
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
+from typing import Any
 import datetime as dt
 import logging
 import numpy as np
+import pandas as pd
 from ..stochastic_processes import PathSimulation, GBMProcess
 from ..exceptions import ConfigurationError, UnsupportedFeatureError, ValidationError
 from ..enums import (
     DayCountConvention,
     OptionType,
-    AsianAveraging,
     ExerciseType,
     PricingMethod,
     GreekCalculationMethod,
@@ -49,6 +50,7 @@ from .asian_analytical import _AnalyticalAsianValuation
 from .pde import _FDEuropeanValuation, _FDAmericanValuation
 from ..rates import DiscountCurve
 from ..market_environment import MarketData
+from .contracts import AsianSpec, PayoffSpec, VanillaSpec
 from .params import BinomialParams, MonteCarloParams, PDEParams, ValuationParams
 
 logger = logging.getLogger(__name__)
@@ -94,250 +96,6 @@ _GREEK_METHOD_RULES: dict[GreekCalculationMethod, tuple[PricingMethod, str, str]
         "delta, gamma, and theta",
     ),
 }
-
-
-@dataclass(frozen=True, slots=True)
-class VanillaSpec:
-    """Contract specification for a vanilla option.
-
-    Parameters
-    ----------
-    option_type
-        Vanilla option direction (CALL or PUT).
-    exercise_type
-        Exercise style (EUROPEAN or AMERICAN).
-    strike
-        Strike price.
-    maturity
-        Contract maturity datetime.
-    currency
-        Optional contract currency. If ``None``, the underlying currency is used for valuation.
-    contract_size
-        Contract multiplier applied to the unit option value.
-    """
-
-    option_type: OptionType  # CALL / PUT
-    exercise_type: ExerciseType  # EUROPEAN / AMERICAN
-    strike: float
-    maturity: dt.datetime
-    currency: str | None = None
-    contract_size: int | float = 100
-
-    def __post_init__(self) -> None:
-        """Validate option_type/exercise_type and coerce strike."""
-        if not isinstance(self.option_type, OptionType):
-            raise ConfigurationError(
-                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
-            )
-        if self.option_type not in (OptionType.CALL, OptionType.PUT):
-            raise ValidationError(
-                "VanillaSpec.option_type must be OptionType.CALL or OptionType.PUT"
-            )
-        if not isinstance(self.exercise_type, ExerciseType):
-            raise ConfigurationError(
-                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
-            )
-
-        if self.strike is None:
-            raise ValidationError("VanillaSpec.strike must be provided")
-        try:
-            strike = float(self.strike)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("VanillaSpec.strike must be numeric") from exc
-        if not np.isfinite(strike):
-            raise ValidationError("VanillaSpec.strike must be finite")
-        if strike < 0.0:
-            raise ValidationError("VanillaSpec.strike must be >= 0")
-        object.__setattr__(self, "strike", strike)
-
-
-@dataclass(frozen=True, slots=True)
-class PayoffSpec:
-    """Contract specification for a single-contract custom payoff.
-
-    This is useful for pricing payoffs that are not representable as a single vanilla
-    call/put (e.g., capped combinations), while still treating the product as ONE
-    contract for exercise decisions (American pricing compares intrinsic vs continuation
-    on the full payoff).
-
-    Parameters
-    ----------
-    exercise_type
-        Exercise style (EUROPEAN or AMERICAN).
-    maturity
-        Contract maturity datetime.
-    payoff_fn
-        Vectorized payoff callable in spot, accepting ``float | np.ndarray`` and
-        returning ``np.ndarray``.
-    currency
-        Optional contract currency. If ``None``, the underlying currency is used.
-    contract_size
-        Contract multiplier applied to the unit payoff value.
-
-    Notes
-    -----
-    ``strike`` is intentionally fixed to ``None`` for interface compatibility with
-    ``OptionValuation``.
-    """
-
-    exercise_type: ExerciseType
-    maturity: dt.datetime
-    payoff_fn: Callable[[np.ndarray | float], np.ndarray]
-    currency: str | None = None
-    contract_size: int | float = 100
-
-    # Kept for compatibility with vanilla valuation interfaces
-    strike: None = None
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.exercise_type, ExerciseType):
-            raise ConfigurationError(
-                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
-            )
-        if not callable(self.payoff_fn):
-            raise ConfigurationError("payoff_fn must be callable")
-
-    def payoff(self, spot: np.ndarray | float) -> np.ndarray:
-        """Vectorized payoff as a function of spot."""
-        # Ensure a float ndarray output (for downstream math and boolean comparisons).
-        return np.asarray(self.payoff_fn(spot), dtype=float)
-
-
-@dataclass(frozen=True, slots=True)
-class AsianSpec:
-    """Contract specification for an Asian option.
-
-    Asian options are path-dependent options where the payoff depends on the average
-    price of the underlying over a specified averaging period.
-
-    Parameters
-    ----------
-    averaging : AsianAveraging
-        AsianAveraging.ARITHMETIC or AsianAveraging.GEOMETRIC
-    option_type : OptionType
-        OptionType.CALL or OptionType.PUT to specify payoff direction
-    strike : float
-        Strike price
-    maturity : dt.datetime
-        Option maturity date
-    currency : str, optional
-        Currency denomination
-    averaging_start : dt.datetime, optional
-        Start of averaging period. If None, uses pricing date.
-    num_steps : int, optional
-        Number of equally spaced time steps within the averaging window.
-        Required for analytical (BSM) pricing.  For Monte Carlo and Binomial the
-        step count is determined by the simulation/tree time grid.
-    exercise_type : ExerciseType
-        Exercise style (EUROPEAN or AMERICAN). Default: EUROPEAN.
-    contract_size : int | float
-        Contract multiplier (default 100)
-    fixing_dates : Sequence[dt.datetime], optional
-        Explicit fixing (observation) dates for discrete averaging.
-        When provided, only the spot
-        prices on these dates contribute to the average — any other grid dates
-        (pricing date, ex-dividend dates, maturity) are simulated but excluded
-        from the average.  Dates must be in ascending order and fall within
-        ``[averaging_start (or pricing_date), maturity]``.  Mutually exclusive
-        with ``num_steps`` for Monte Carlo pricing (ignored for BSM analytical).
-    observed_average : float, optional
-        For seasoned Asians: the realised average price over the already-observed
-        period.  Must be provided together with ``observed_count``.
-    observed_count : int, optional
-        For seasoned Asians: the number of already-observed fixings (n₁).
-        Must be provided together with ``observed_average``.
-
-    Notes
-    -----
-    - Arithmetic average: S_avg = (1/N) * Σ S_i
-    - Geometric average: S_avg = (Π S_i)^(1/N)
-    - Payoff for call: max(S_avg - K, 0)
-    - Payoff for put: max(K - S_avg, 0)
-    - European and American exercise are supported depending on pricing method
-    """
-
-    averaging: AsianAveraging
-    option_type: OptionType  # CALL or PUT
-    strike: float
-    maturity: dt.datetime
-    currency: str | None = None
-    averaging_start: dt.datetime | None = None
-    num_steps: int | None = None
-    contract_size: int | float = 100
-    exercise_type: ExerciseType = ExerciseType.EUROPEAN
-    fixing_dates: Sequence[dt.datetime] | None = None
-    observed_average: float | None = None
-    observed_count: int | None = None
-
-    def __post_init__(self) -> None:
-        """Validate Asian option specification."""
-        if not isinstance(self.averaging, AsianAveraging):
-            raise ConfigurationError(
-                f"averaging must be AsianAveraging enum, got {type(self.averaging).__name__}"
-            )
-        if not isinstance(self.exercise_type, ExerciseType):
-            raise ConfigurationError(
-                f"exercise_type must be ExerciseType enum, got {type(self.exercise_type).__name__}"
-            )
-
-        if not isinstance(self.option_type, OptionType):
-            raise ConfigurationError(
-                f"option_type must be OptionType enum, got {type(self.option_type).__name__}"
-            )
-        if self.option_type not in (OptionType.CALL, OptionType.PUT):
-            raise ValidationError("AsianSpec.option_type must be OptionType.CALL or OptionType.PUT")
-
-        if self.strike is None:
-            raise ValidationError("AsianSpec.strike must be provided")
-        try:
-            strike = float(self.strike)
-        except (TypeError, ValueError) as exc:
-            raise ConfigurationError("AsianSpec.strike must be numeric") from exc
-        if not np.isfinite(strike):
-            raise ValidationError("AsianSpec.strike must be finite")
-        if strike < 0.0:
-            raise ValidationError("AsianSpec.strike must be >= 0")
-        object.__setattr__(self, "strike", strike)
-
-        if self.num_steps is not None:
-            if not isinstance(self.num_steps, int) or self.num_steps < 1:
-                raise ValidationError("num_steps must be a positive integer")
-
-        # fixing_dates: coerce to tuple, validate ordering and bounds
-        if self.fixing_dates is not None:
-            dates = tuple(self.fixing_dates)
-            if not dates:
-                raise ValidationError("fixing_dates must be non-empty when provided.")
-            if not all(isinstance(d, dt.datetime) for d in dates):
-                raise ConfigurationError("fixing_dates entries must be datetime instances.")
-            if any(dates[i] >= dates[i + 1] for i in range(len(dates) - 1)):
-                raise ValidationError("fixing_dates must be in strictly ascending order.")
-            # Bounds are checked later against the pricing date (not known here);
-            # maturity is available so we can at least ensure dates don't exceed it.
-            if dates[-1] > self.maturity:
-                raise ValidationError("fixing_dates must not extend beyond maturity.")
-            if self.averaging_start is not None and dates[0] < self.averaging_start:
-                raise ValidationError("fixing_dates must not precede averaging_start.")
-            object.__setattr__(self, "fixing_dates", dates)
-
-        # Seasoned Asian: observed_average and observed_count must be both set or both None
-        if (self.observed_average is None) != (self.observed_count is None):
-            raise ValidationError(
-                "observed_average and observed_count must both be provided or both omitted."
-            )
-        if self.observed_average is not None:
-            try:
-                obs_avg = float(self.observed_average)
-            except (TypeError, ValueError) as exc:
-                raise ConfigurationError("observed_average must be numeric") from exc
-            if not np.isfinite(obs_avg):
-                raise ValidationError("observed_average must be finite")
-            if obs_avg <= 0.0:
-                raise ValidationError("observed_average must be > 0")
-            object.__setattr__(self, "observed_average", obs_avg)
-
-            if not isinstance(self.observed_count, int) or self.observed_count < 1:
-                raise ValidationError("observed_count must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,16 +277,20 @@ class OptionValuation:
                 "Pass an UnderlyingData instance instead of PathSimulation."
             )
 
-        # Inject Asian fixing dates / grid_start into the simulation.
+        # Inject Asian observation dates / grid_start into the simulation.
         # We construct a new PathSimulation (via dc_replace on sim_config)
         # so the caller's instance is never mutated.  pricing_date and
         # maturity are already handled by _build_time_grid.
+        if isinstance(spec, AsianSpec):
+            fixing_dates = self._asian_fixing_dates()
+            if fixing_dates[0] < self.pricing_date:
+                raise ValidationError("Asian fixing schedule must not start before pricing_date.")
+
         if isinstance(underlying, PathSimulation) and isinstance(spec, AsianSpec):
             sc_overrides: dict = {}  # SimulationConfig kwargs to override
-            if spec.fixing_dates is not None:
-                extra = set(spec.fixing_dates) - underlying.observation_dates
-                if extra:
-                    sc_overrides["observation_dates"] = underlying.observation_dates | extra
+            extra = set(self._asian_fixing_dates()) - underlying.observation_dates
+            if extra:
+                sc_overrides["observation_dates"] = underlying.observation_dates | extra
             if spec.averaging_start is not None and underlying.grid_start != spec.averaging_start:
                 sc_overrides["grid_start"] = spec.averaging_start
             if sc_overrides:
@@ -750,10 +512,10 @@ class OptionValuation:
 
         underlying_bumped = self._bump_underlying(pricing_date=bumped_date)
 
-        # Asian fixing-date awareness: if fixing dates fall before the
-        # bumped pricing date they become observed ("seasoned") fixings.
+        # Asian fixing-date awareness: if contractual observations fall before
+        # the bumped pricing date they become observed ("seasoned") fixings.
         bumped_spec = self._spec
-        if isinstance(self._spec, AsianSpec) and self._spec.fixing_dates:
+        if isinstance(self._spec, AsianSpec):
             bumped_spec = self._asian_theta_spec(bumped_date)
 
         value_bumped = self._build_valuation(
@@ -938,6 +700,26 @@ class OptionValuation:
             f"pricing_method={pricing_method.name} does not accept valuation params"
         )
 
+    def _asian_fixing_dates(self) -> tuple[dt.datetime, ...]:
+        """Resolve the contractual Asian fixing schedule as datetimes."""
+        if not isinstance(self._spec, AsianSpec):
+            raise ConfigurationError("Asian fixing schedule requested for non-Asian spec.")
+
+        spec = self._spec
+        if spec.fixing_dates is not None:
+            return tuple(spec.fixing_dates)
+
+        assert spec.num_observations is not None
+        averaging_start = spec.averaging_start or self.pricing_date
+
+        return tuple(
+            pd.date_range(
+                start=averaging_start,
+                end=self.maturity,
+                periods=spec.num_observations,
+            ).to_pydatetime()
+        )
+
     def _apply_control_variate(self, base_pv: float) -> float:
         """Apply European control-variate adjustment to American base PV.
 
@@ -1030,10 +812,6 @@ class OptionValuation:
             )
         spec = self._spec
         assert isinstance(spec, AsianSpec)
-        if spec.averaging not in (AsianAveraging.GEOMETRIC, AsianAveraging.ARITHMETIC):
-            raise UnsupportedFeatureError(
-                "Asian control_variate_european requires GEOMETRIC or ARITHMETIC averaging "
-            )
 
         params = self._params
 
@@ -1049,6 +827,7 @@ class OptionValuation:
         cv_params = dc_replace(params, control_variate_european=False)
 
         euro_spec = dc_replace(spec, exercise_type=ExerciseType.EUROPEAN)
+
         euro_num = OptionValuation(
             underlying=self._underlying,
             spec=euro_spec,
@@ -1057,15 +836,10 @@ class OptionValuation:
         ).present_value()
 
         bsm_underlying = self._as_underlying_data()
-        if isinstance(self._underlying, PathSimulation):
-            n_steps = len(self._underlying.time_grid) - 1
-            bsm_spec = dc_replace(euro_spec, num_steps=n_steps)  # type: ignore[arg-type]
-        else:
-            bsm_spec = dc_replace(euro_spec, num_steps=params.num_steps)  # type: ignore[union-attr, arg-type]
 
         euro_analytical = OptionValuation(
             underlying=bsm_underlying,
-            spec=bsm_spec,
+            spec=euro_spec,
             pricing_method=PricingMethod.BSM,
         ).present_value()
 
@@ -1097,8 +871,8 @@ class OptionValuation:
         u = self._underlying
 
         # Split into MarketData-level vs direct-field overrides.
-        md_kw = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
-        rest_kw = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
+        md_kw: dict[str, Any] = {k: v for k, v in overrides.items() if k in self._MD_FIELDS}
+        rest_kw: dict[str, Any] = {k: v for k, v in overrides.items() if k not in self._MD_FIELDS}
 
         if isinstance(u, UnderlyingData):
             if md_kw:
@@ -1273,9 +1047,12 @@ class OptionValuation:
             ``UnsupportedFeatureError``.
         """
         spec = self._spec
-        assert isinstance(spec, AsianSpec) and spec.fixing_dates is not None
+        assert isinstance(spec, AsianSpec)
 
-        elapsed = [d for d in spec.fixing_dates if d < bumped_date]
+        # Build the effective contractual schedule from either explicit
+        # fixing_dates or the num_observations schedule.
+        schedule = self._asian_fixing_dates()
+        elapsed = [d for d in schedule if d < bumped_date]
         if not elapsed:
             return spec
 
@@ -1290,20 +1067,24 @@ class OptionValuation:
                 f"This would require nested Monte Carlo simulation."
             )
 
-        # Case 1: all elapsed fixings are at pricing_date → deterministic S₀.
-        n_elapsed = len(elapsed)
+        # Case 1: single elapsed fixing at pricing_date → deterministic S₀.
+        assert len(elapsed) == 1
         s0 = float(self._underlying.initial_value)
 
         # Merge with any pre-existing seasoned state
         old_n1 = spec.observed_count or 0
         old_avg = spec.observed_average or 0.0
-        new_n1 = old_n1 + n_elapsed
-        new_avg = (old_n1 * old_avg + n_elapsed * s0) / new_n1
+        new_n1 = old_n1 + 1
+        new_avg = (old_n1 * old_avg + s0) / new_n1
 
-        future_fixings = tuple(d for d in spec.fixing_dates if d >= bumped_date)
+        future_fixings = tuple(d for d in schedule if d >= bumped_date)
+
+        # Represent the seasoned remainder with explicit fixing_dates.
+        # This works uniformly for both original schedule sources.
         return dc_replace(
             spec,
-            fixing_dates=future_fixings if future_fixings else None,
+            num_observations=None,
+            fixing_dates=future_fixings,
             observed_average=new_avg,
             observed_count=new_n1,
         )
