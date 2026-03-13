@@ -71,7 +71,13 @@ class _BinomialValuationBase:
         )
         dt_steps = np.diff(time_grid)
         if not np.allclose(dt_steps, dt_steps[0]):
-            raise ValidationError("Binomial tree requires equal time steps.")
+            raise UnsupportedFeatureError(
+                f"Binomial trees (CRR) require equal time steps, but the "
+                f"'{self.parent.day_count_convention.value}' day-count convention "
+                f"produces non-uniform year fractions on a calendar date grid. "
+                f"Use an actual-day convention (ACT/365F, ACT/360) or switch to "
+                f"PDE / Monte Carlo pricing."
+            )
         delta_t = float(dt_steps[0])
 
         sigma = float(self.underlying.volatility)
