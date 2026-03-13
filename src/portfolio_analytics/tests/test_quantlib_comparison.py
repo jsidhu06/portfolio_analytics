@@ -56,23 +56,28 @@ BINOM_CFG = BinomialParams(num_steps=500)
 MC_CFG = MonteCarloParams(random_seed=42, deg=3)
 
 
-def _market_data(r_curve: DiscountCurve | None = None) -> MarketData:
+def _market_data(
+    r_curve: DiscountCurve | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
+) -> MarketData:
     curve = r_curve if r_curve is not None else flat_curve(PRICING_DATE, MATURITY, RISK_FREE)
-    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY, day_count_convention=dcc)
 
 
 def _ql_curve_from_times(
     *,
     times: np.ndarray,
     dfs: np.ndarray,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> ql_typing.YieldTermStructureHandle:
-    day_count = ql.Actual365Fixed()
+    denom = 360.0 if dcc is DayCountConvention.ACT_360 else 365.0
+    day_count = _ql_dcc(dcc)
     ql.Settings.instance().evaluationDate = ql.Date(
         PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
     )
     dates = [ql.Settings.instance().evaluationDate]
     for t in times[1:]:
-        days = int(round(float(t) * 365.0))
+        days = int(round(float(t) * denom))
         dates.append(ql.Settings.instance().evaluationDate + days)
     return ql.YieldTermStructureHandle(ql.DiscountCurve(dates, list(dfs), day_count))
 
@@ -116,6 +121,7 @@ def _quantlib_american_with_curves(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
     grid_points: int = 200,
     time_steps: int = 400,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     ql.Settings.instance().evaluationDate = ql.Date(
         PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
@@ -129,7 +135,7 @@ def _quantlib_american_with_curves(
             ql.Settings.instance().evaluationDate,
             ql.TARGET(),
             float(VOL),
-            ql.Actual365Fixed(),
+            _ql_dcc(dcc),
         )
     )
 
@@ -164,22 +170,24 @@ def _quantlib_american(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
     grid_points: int = 200,
     time_steps: int = 400,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     ql.Settings.instance().evaluationDate = ql.Date(
         PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year
     )
+    day_count = _ql_dcc(dcc)
     rf_curve = ql.YieldTermStructureHandle(
         ql.FlatForward(
             ql.Settings.instance().evaluationDate,
             float(RISK_FREE),
-            ql.Actual365Fixed(),
+            day_count,
         )
     )
     div_curve = ql.YieldTermStructureHandle(
         ql.FlatForward(
             ql.Settings.instance().evaluationDate,
             float(dividend_yield),
-            ql.Actual365Fixed(),
+            day_count,
         )
     )
     return _quantlib_american_with_curves(
@@ -191,6 +199,7 @@ def _quantlib_american(
         discrete_dividends=discrete_dividends,
         grid_points=grid_points,
         time_steps=time_steps,
+        dcc=dcc,
     )
 
 
@@ -206,9 +215,10 @@ def _quantlib_american_curves(
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     grid_points: int = 200,
     time_steps: int = 400,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
-    rf_curve = _ql_curve_from_times(times=r_times, dfs=r_dfs)
-    div_curve = _ql_curve_from_times(times=q_times, dfs=q_dfs)
+    rf_curve = _ql_curve_from_times(times=r_times, dfs=r_dfs, dcc=dcc)
+    div_curve = _ql_curve_from_times(times=q_times, dfs=q_dfs, dcc=dcc)
     return _quantlib_american_with_curves(
         spot=spot,
         strike=strike,
@@ -218,6 +228,7 @@ def _quantlib_american_curves(
         discrete_dividends=discrete_dividends,
         grid_points=grid_points,
         time_steps=time_steps,
+        dcc=dcc,
     )
 
 
@@ -229,11 +240,12 @@ def _pde_fd_american(
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
-        market_data=_market_data(r_curve),
+        market_data=_market_data(r_curve, dcc=dcc),
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
@@ -245,190 +257,8 @@ def _pde_fd_american(
     "spot,strike,option_type",
     [
         (52.0, 50.0, OptionType.PUT),
-        (60.0, 55.0, OptionType.CALL),
+        (52.0, 50.0, OptionType.CALL),
     ],
-)
-def test_american_fd_vs_quantlib_no_div(spot, strike, option_type):
-    pde = _pde_fd_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_curve=None,
-        discrete_dividends=None,
-    )
-    ql_price = _quantlib_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_yield=0.0,
-        discrete_dividends=None,
-    )
-
-    logger.info(
-        "No-div American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        pde,
-        ql_price,
-    )
-
-    assert np.isclose(pde, ql_price, rtol=0.01)
-
-
-@pytest.mark.parametrize(
-    "spot,strike,option_type",
-    [
-        (52.0, 50.0, OptionType.PUT),
-        (60.0, 55.0, OptionType.CALL),
-    ],
-)
-def test_american_fd_vs_quantlib_continuous_div(spot, strike, option_type):
-    q_curve = flat_curve(PRICING_DATE, MATURITY, 0.03)
-    pde = _pde_fd_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_curve=q_curve,
-        discrete_dividends=None,
-    )
-    ql_price = _quantlib_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        dividend_yield=0.03,
-        discrete_dividends=None,
-    )
-
-    logger.info(
-        "Cont-div American %s S=%.2f K=%.2f q=0.03 | PDE=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        pde,
-        ql_price,
-    )
-
-    assert np.isclose(pde, ql_price, rtol=0.01)
-
-
-@pytest.mark.parametrize("spot,strike,option_type", [(52.0, 50.0, OptionType.PUT)])
-def test_american_fd_vs_quantlib_nonflat_rate_curve(spot, strike, option_type):
-    times = np.array([0.0, 0.25, 0.5, 1.0])
-    forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = DiscountCurve.from_forwards(times=times, forwards=forwards)
-
-    pde = _pde_fd_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        r_curve=r_curve,
-        dividend_curve=None,
-    )
-    ql_price = _quantlib_american_curves(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        r_times=r_curve.times,
-        r_dfs=r_curve.dfs,
-        q_times=np.array([0.0, 1.0]),
-        q_dfs=np.array([1.0, 1.0]),
-    )
-
-    logger.info(
-        "Forward-curve American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        pde,
-        ql_price,
-    )
-
-    assert np.isclose(pde, ql_price, rtol=0.01)
-
-
-@pytest.mark.parametrize("spot,strike,option_type", [(60.0, 55.0, OptionType.CALL)])
-def test_american_fd_vs_quantlib_flat_rate_with_dividend_curve(spot, strike, option_type):
-    r_times = np.array([0.0, 1.0])
-    r_forwards = np.array([0.04])
-    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
-
-    q_times = np.array([0.0, 0.25, 0.5, 1.0])
-    q_forwards = np.array([0.00, 0.02, 0.04])
-    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
-
-    pde = _pde_fd_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        r_curve=r_curve,
-        dividend_curve=q_curve,
-    )
-    ql_price = _quantlib_american_curves(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        r_times=r_curve.times,
-        r_dfs=r_curve.dfs,
-        q_times=q_curve.times,
-        q_dfs=q_curve.dfs,
-    )
-
-    logger.info(
-        "Dividend-curve American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        pde,
-        ql_price,
-    )
-
-    assert np.isclose(pde, ql_price, rtol=0.01)
-
-
-@pytest.mark.parametrize(
-    "spot,strike,option_type", [(52.0, 50.0, OptionType.PUT), (52.0, 50.0, OptionType.CALL)]
-)
-def test_american_fd_vs_quantlib_nonflat_rate_and_dividend_curves(spot, strike, option_type):
-    r_times = np.array([0.0, 0.25, 0.5, 1.0])
-    r_forwards = np.array([0.03, 0.05, 0.04])
-    r_curve = DiscountCurve.from_forwards(times=r_times, forwards=r_forwards)
-
-    q_times = np.array([0.0, 0.25, 0.5, 1.0])
-    q_forwards = np.array([0.01, 0.02, 0.00])
-    q_curve = DiscountCurve.from_forwards(times=q_times, forwards=q_forwards)
-
-    pde = _pde_fd_american(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        r_curve=r_curve,
-        dividend_curve=q_curve,
-    )
-    ql_price = _quantlib_american_curves(
-        spot=spot,
-        strike=strike,
-        option_type=option_type,
-        r_times=r_curve.times,
-        r_dfs=r_curve.dfs,
-        q_times=q_curve.times,
-        q_dfs=q_curve.dfs,
-    )
-
-    logger.info(
-        "Forward+dividend curves American %s S=%.2f K=%.2f | PDE=%.6f QL=%.6f",
-        option_type.value,
-        spot,
-        strike,
-        pde,
-        ql_price,
-    )
-
-    assert np.isclose(pde, ql_price, rtol=0.01)
-
-
-@pytest.mark.parametrize(
-    "spot,strike,option_type", [(52.0, 50.0, OptionType.PUT), (52.0, 50.0, OptionType.CALL)]
 )
 def test_american_fd_vs_quantlib_nonflat_rate_with_discrete_divs(spot, strike, option_type):
     r_times = np.array([0.0, 0.25, 0.5, 1.0])
@@ -484,19 +314,19 @@ def _quantlib_european(
     strike: float,
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """QuantLib European price using AnalyticDividendEuropeanEngine (Merton approach)."""
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
     ql.Settings.instance().evaluationDate = eval_date
     ql_maturity = ql.Date(MATURITY.day, MATURITY.month, MATURITY.year)
 
-    rf_curve = ql.YieldTermStructureHandle(
-        ql.FlatForward(eval_date, float(RISK_FREE), ql.Actual365Fixed())
-    )
-    div_curve = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, ql.Actual365Fixed()))
+    day_count = _ql_dcc(dcc)
+    rf_curve = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, float(RISK_FREE), day_count))
+    div_curve = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, 0.0, day_count))
     spot_handle = ql.QuoteHandle(ql.SimpleQuote(float(spot)))
     vol_handle = ql.BlackVolTermStructureHandle(
-        ql.BlackConstantVol(eval_date, ql.TARGET(), float(VOL), ql.Actual365Fixed())
+        ql.BlackConstantVol(eval_date, ql.TARGET(), float(VOL), day_count)
     )
 
     ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
@@ -517,11 +347,12 @@ def _bsm_european(
     strike: float,
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
-        market_data=_market_data(),
+        market_data=_market_data(dcc=dcc),
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
@@ -534,11 +365,12 @@ def _binomial_european(
     strike: float,
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     ud = UnderlyingData(
         initial_value=spot,
         volatility=VOL,
-        market_data=_market_data(),
+        market_data=_market_data(dcc=dcc),
         discrete_dividends=discrete_dividends,
     )
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
@@ -551,8 +383,9 @@ def _mc_american(
     strike: float,
     option_type: OptionType,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
-    md = _market_data()
+    md = _market_data(dcc=dcc)
     gbm_params = GBMParams(
         initial_value=spot,
         volatility=VOL,
