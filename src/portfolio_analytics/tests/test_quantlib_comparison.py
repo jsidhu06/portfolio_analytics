@@ -1,4 +1,4 @@
-"""Compare PDE FD American pricing vs QuantLib for reference."""
+"""Compare option present values between portfolio_analytics and QuantLib."""
 
 from __future__ import annotations
 import datetime as dt
@@ -10,6 +10,7 @@ import pytest
 
 from portfolio_analytics.enums import (
     AsianAveraging,
+    DayCountConvention,
     ExerciseType,
     OptionType,
     PricingMethod,
@@ -41,6 +42,14 @@ MATURITY = PRICING_DATE + dt.timedelta(days=365)
 RISK_FREE = 0.1
 VOL = 0.4
 CURRENCY = "USD"
+
+
+def _ql_dcc(dcc: DayCountConvention):
+    """Return the QuantLib DayCounter matching a PA DayCountConvention."""
+    if dcc is DayCountConvention.ACT_360:
+        return ql.Actual360()
+    return ql.Actual365Fixed()
+
 
 PDE_CFG = PDEParams(spot_steps=200, time_steps=200, max_iter=20_000)
 BINOM_CFG = BinomialParams(num_steps=500)
@@ -699,23 +708,19 @@ def _ql_asian_process(
     rf_handle: "ql_typing.YieldTermStructureHandle | None" = None,
     div_rate: float = 0.0,
     div_handle: "ql_typing.YieldTermStructureHandle | None" = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> "ql_typing.BlackScholesMertonProcess":
     eval_date = _dt_to_ql(PRICING_DATE)
     ql.Settings.instance().evaluationDate = eval_date
     spot_h = ql.QuoteHandle(ql.SimpleQuote(spot))
+    ql_dc = _ql_dcc(dcc)
     if rf_handle is None:
         rf_handle = ql.YieldTermStructureHandle(
-            ql.FlatForward(
-                eval_date, rf_rate if rf_rate is not None else _ASIAN_RATE, ql.Actual365Fixed()
-            )
+            ql.FlatForward(eval_date, rf_rate if rf_rate is not None else _ASIAN_RATE, ql_dc)
         )
     if div_handle is None:
-        div_handle = ql.YieldTermStructureHandle(
-            ql.FlatForward(eval_date, div_rate, ql.Actual365Fixed())
-        )
-    vol_h = ql.BlackVolTermStructureHandle(
-        ql.BlackConstantVol(eval_date, ql.TARGET(), vol, ql.Actual365Fixed())
-    )
+        div_handle = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, div_rate, ql_dc))
+    vol_h = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(eval_date, ql.TARGET(), vol, ql_dc))
     return ql.BlackScholesMertonProcess(spot_h, div_handle, rf_handle, vol_h)
 
 
@@ -732,6 +737,7 @@ def _ql_discrete_asian_price(
     rf_handle: "ql_typing.YieldTermStructureHandle | None" = None,
     div_rate: float = 0.0,
     div_handle: "ql_typing.YieldTermStructureHandle | None" = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     process = _ql_asian_process(
         spot=spot,
@@ -740,6 +746,7 @@ def _ql_discrete_asian_price(
         rf_handle=rf_handle,
         div_rate=div_rate,
         div_handle=div_handle,
+        dcc=dcc,
     )
     payoff = ql.PlainVanillaPayoff(option_type_ql, strike)
     exercise = ql.EuropeanExercise(_dt_to_ql(_ASIAN_MATURITY))
@@ -750,11 +757,11 @@ def _ql_discrete_asian_price(
 
 def _pa_asian_market_data(
     r_curve: DiscountCurve | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> MarketData:
-
-    ttm = calculate_year_fraction(PRICING_DATE, _ASIAN_MATURITY)
+    ttm = calculate_year_fraction(PRICING_DATE, _ASIAN_MATURITY, dcc)
     curve = r_curve if r_curve is not None else DiscountCurve.flat(_ASIAN_RATE, end_time=ttm)
-    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+    return MarketData(PRICING_DATE, curve, currency=CURRENCY, day_count_convention=dcc)
 
 
 def _pa_asian_gbm(
@@ -764,8 +771,9 @@ def _pa_asian_gbm(
     vol: float = _ASIAN_VOL,
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> GBMProcess:
-    md = _pa_asian_market_data(r_curve)
+    md = _pa_asian_market_data(r_curve, dcc=dcc)
     params = GBMParams(initial_value=spot, volatility=vol, dividend_curve=dividend_curve)
     sim_cfg = SimulationConfig(
         paths=_ASIAN_MC_PATHS,
@@ -784,6 +792,7 @@ _MONTHLY_FIXINGS = tuple(
 
 def test_asian_arithmetic_call_monthly_vs_quantlib():
     """Monthly-fixing arithmetic Asian call: our MC vs QuantLib TW analytic."""
+
     ql_fixings = [_dt_to_ql(d) for d in _MONTHLY_FIXINGS]
 
     ql_tw = _ql_discrete_asian_price(
@@ -791,6 +800,7 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         option_type_ql=ql.Option.Call,
         averaging_ql=ql.Average.Arithmetic,
         engine_factory=lambda p: ql.TurnbullWakemanAsianEngine(p),
+        dcc=DayCountConvention.ACT_360,
     )
 
     spec = AsianSpec(
@@ -802,7 +812,7 @@ def test_asian_arithmetic_call_monthly_vs_quantlib():
         fixing_dates=_MONTHLY_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    gbm = _pa_asian_gbm(fixing_dates=_MONTHLY_FIXINGS)
+    gbm = _pa_asian_gbm(fixing_dates=_MONTHLY_FIXINGS, dcc=DayCountConvention.ACT_360)
     pa_mc = OptionValuation(
         gbm,
         spec,
@@ -837,6 +847,7 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         option_type_ql=ql.Option.Put,
         averaging_ql=ql.Average.Geometric,
         engine_factory=lambda p: ql.AnalyticDiscreteGeometricAveragePriceAsianEngine(p),
+        dcc=DayCountConvention.ACT_365F,
     )
 
     spec = AsianSpec(
@@ -848,7 +859,7 @@ def test_asian_geometric_put_quarterly_vs_quantlib():
         fixing_dates=_QUARTERLY_FIXINGS,
         exercise_type=ExerciseType.EUROPEAN,
     )
-    gbm = _pa_asian_gbm(fixing_dates=_QUARTERLY_FIXINGS)
+    gbm = _pa_asian_gbm(fixing_dates=_QUARTERLY_FIXINGS, dcc=DayCountConvention.ACT_365F)
     pa_mc = OptionValuation(
         gbm,
         spec,
@@ -1004,9 +1015,14 @@ def _nonflat_r_curve() -> DiscountCurve:
     return DiscountCurve.from_forwards(times=times, forwards=forwards)
 
 
-def _me_market_data(r_curve: DiscountCurve | None = None) -> MarketData:
-    curve = r_curve if r_curve is not None else flat_curve(PRICING_DATE, MATURITY, _ME_RATE)
-    return MarketData(PRICING_DATE, curve, currency=CURRENCY)
+def _me_market_data(
+    r_curve: DiscountCurve | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
+) -> MarketData:
+    if r_curve is None:
+        ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
+        r_curve = DiscountCurve.flat(_ME_RATE, end_time=ttm)
+    return MarketData(PRICING_DATE, r_curve, currency=CURRENCY, day_count_convention=dcc)
 
 
 def _underlying(
@@ -1015,11 +1031,12 @@ def _underlying(
     r_curve: DiscountCurve | None = None,
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> UnderlyingData:
     return UnderlyingData(
         initial_value=spot,
         volatility=_ME_VOL,
-        market_data=_me_market_data(r_curve),
+        market_data=_me_market_data(r_curve, dcc=dcc),
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
@@ -1032,6 +1049,7 @@ def _gbm(
     dividend_curve: DiscountCurve | None = None,
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
     paths: int = 200_000,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> GBMProcess:
     sim_config = SimulationConfig(
         paths=paths,
@@ -1044,7 +1062,7 @@ def _gbm(
         dividend_curve=dividend_curve,
         discrete_dividends=discrete_dividends,
     )
-    return GBMProcess(_me_market_data(r_curve), params, sim_config)
+    return GBMProcess(_me_market_data(r_curve, dcc=dcc), params, sim_config)
 
 
 def _ql_price(
@@ -1056,6 +1074,7 @@ def _ql_price(
     rf_handle: "ql_typing.YieldTermStructureHandle",
     div_handle: "ql_typing.YieldTermStructureHandle",
     discrete_dividends: Sequence[tuple[dt.datetime, float]] | None = None,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> float:
     """QuantLib vanilla pricing with vol=_ME_VOL and configurable curves."""
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
@@ -1064,7 +1083,7 @@ def _ql_price(
 
     spot_h = ql.QuoteHandle(ql.SimpleQuote(float(spot)))
     vol_h = ql.BlackVolTermStructureHandle(
-        ql.BlackConstantVol(eval_date, ql.TARGET(), float(_ME_VOL), ql.Actual365Fixed())
+        ql.BlackConstantVol(eval_date, ql.TARGET(), float(_ME_VOL), _ql_dcc(dcc))
     )
     ql_type = ql.Option.Put if option_type is OptionType.PUT else ql.Option.Call
     payoff = ql.PlainVanillaPayoff(ql_type, float(strike))
@@ -1090,14 +1109,12 @@ def _ql_price(
 def _ql_flat_handles(
     rf_rate: float = _ME_RATE,
     div_yield: float = 0.0,
+    dcc: DayCountConvention = DayCountConvention.ACT_365F,
 ) -> tuple:
     eval_date = ql.Date(PRICING_DATE.day, PRICING_DATE.month, PRICING_DATE.year)
-    rf_h = ql.YieldTermStructureHandle(
-        ql.FlatForward(eval_date, float(rf_rate), ql.Actual365Fixed())
-    )
-    div_h = ql.YieldTermStructureHandle(
-        ql.FlatForward(eval_date, float(div_yield), ql.Actual365Fixed())
-    )
+    day_count = _ql_dcc(dcc)
+    rf_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, float(rf_rate), day_count))
+    div_h = ql.YieldTermStructureHandle(ql.FlatForward(eval_date, float(div_yield), day_count))
     return rf_h, div_h
 
 
@@ -1105,18 +1122,19 @@ def _ql_flat_handles(
 
 
 @pytest.mark.parametrize(
-    "spot,strike,option_type",
+    "spot,strike,option_type,dividend_yield,dcc",
     [
-        (90.0, 100.0, OptionType.CALL),
-        (110.0, 100.0, OptionType.PUT),
+        (90.0, 100.0, OptionType.CALL, 0.03, DayCountConvention.ACT_365F),
+        (110.0, 100.0, OptionType.CALL, 0.02, DayCountConvention.ACT_360),
     ],
+    ids=["otm_call_ACT365F", "itm_call_ACT360"],
 )
-@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
-def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield):
+def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield, dcc):
     """European vanilla: BSM, PDE, Binomial, MC all match QuantLib analytical."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
-    ud = _underlying(spot=spot, dividend_curve=q_curve)
-    gbm = _gbm(spot=spot, dividend_curve=q_curve)
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
+    q_curve = DiscountCurve.flat(dividend_yield, end_time=ttm)
+    ud = _underlying(spot=spot, dividend_curve=q_curve, dcc=dcc)
+    gbm = _gbm(spot=spot, dividend_curve=q_curve, dcc=dcc)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.EUROPEAN)
 
     bsm_pv = OptionValuation(ud, spec, PricingMethod.BSM).present_value()
@@ -1134,7 +1152,7 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
         params=_ME_MC_EU,
     ).present_value()
 
-    rf_h, div_h = _ql_flat_handles(div_yield=dividend_yield)
+    rf_h, div_h = _ql_flat_handles(div_yield=dividend_yield, dcc=dcc)
     ql_pv = _ql_price(
         spot=spot,
         strike=strike,
@@ -1142,14 +1160,16 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
         exercise_type=ExerciseType.EUROPEAN,
         rf_handle=rf_h,
         div_handle=div_h,
+        dcc=dcc,
     )
 
     logger.info(
-        "European %s S=%.0f K=%.0f q=%.2f | BSM=%.6f PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
+        "European %s S=%.0f K=%.0f q=%.2f dcc=%s | BSM=%.6f PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
         option_type.value,
         spot,
         strike,
         dividend_yield,
+        dcc.value,
         bsm_pv,
         pde_pv,
         binom_pv,
@@ -1167,18 +1187,19 @@ def test_european_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
 
 
 @pytest.mark.parametrize(
-    "spot,strike,option_type",
+    "spot,strike,option_type,dividend_yield,dcc",
     [
-        (90.0, 100.0, OptionType.CALL),
-        (110.0, 100.0, OptionType.PUT),
+        (90.0, 100.0, OptionType.CALL, 0.03, DayCountConvention.ACT_365F),
+        (110.0, 100.0, OptionType.CALL, 0.02, DayCountConvention.ACT_360),
     ],
+    ids=["otm_call_ACT365F", "itm_call_ACT360"],
 )
-@pytest.mark.parametrize("dividend_yield", [0.0, 0.03])
-def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield):
+def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, dividend_yield, dcc):
     """American vanilla: PDE, Binomial, MC all match QuantLib FD."""
-    q_curve = flat_curve(PRICING_DATE, MATURITY, dividend_yield)
-    ud = _underlying(spot=spot, dividend_curve=q_curve)
-    gbm = _gbm(spot=spot, dividend_curve=q_curve)
+    ttm = calculate_year_fraction(PRICING_DATE, MATURITY, dcc)
+    q_curve = DiscountCurve.flat(dividend_yield, end_time=ttm)
+    ud = _underlying(spot=spot, dividend_curve=q_curve, dcc=dcc)
+    gbm = _gbm(spot=spot, dividend_curve=q_curve, dcc=dcc)
     spec = _spec(strike=strike, option_type=option_type, exercise_type=ExerciseType.AMERICAN)
 
     pde_pv = OptionValuation(ud, spec, PricingMethod.PDE_FD, params=_ME_PDE).present_value()
@@ -1195,7 +1216,7 @@ def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
         params=_ME_MC_AM,
     ).present_value()
 
-    rf_h, div_h = _ql_flat_handles(div_yield=dividend_yield)
+    rf_h, div_h = _ql_flat_handles(div_yield=dividend_yield, dcc=dcc)
     ql_pv = _ql_price(
         spot=spot,
         strike=strike,
@@ -1203,14 +1224,16 @@ def test_american_vanilla_all_methods_vs_quantlib(spot, strike, option_type, div
         exercise_type=ExerciseType.AMERICAN,
         rf_handle=rf_h,
         div_handle=div_h,
+        dcc=dcc,
     )
 
     logger.info(
-        "American %s S=%.0f K=%.0f q=%.2f | PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
+        "American %s S=%.0f K=%.0f q=%.2f dcc=%s | PDE=%.6f Binom=%.6f MC=%.6f QL=%.6f",
         option_type.value,
         spot,
         strike,
         dividend_yield,
+        dcc.value,
         pde_pv,
         binom_pv,
         mc_pv,

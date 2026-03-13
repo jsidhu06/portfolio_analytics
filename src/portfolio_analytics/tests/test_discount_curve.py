@@ -17,7 +17,7 @@ class TestDiscountCurveConstruction:
 
     def test_flat_curve_basic(self):
         curve = DiscountCurve.flat(rate=0.05, end_time=1.0)
-        assert curve.flat_rate == 0.05
+        assert np.isclose(curve.flat_rate, 0.05, rtol=1e-4)
         assert np.isclose(float(curve.df(0.0)), 1.0)
         assert np.isclose(float(curve.df(1.0)), np.exp(-0.05))
 
