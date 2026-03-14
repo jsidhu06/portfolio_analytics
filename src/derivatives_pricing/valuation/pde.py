@@ -22,6 +22,18 @@ import datetime as dt
 
 import numpy as np
 
+# optional acceleration via numba if available
+try:
+    from numba import njit as _njit
+except ModuleNotFoundError:  # pragma: no cover
+
+    def _njit(*args, **kwargs):  # type: ignore[misc]
+        """Identity decorator when numba is not installed."""
+        if args and callable(args[0]):
+            return args[0]
+        return lambda fn: fn
+
+
 from ..enums import DayCountConvention, PDEEarlyExercise, PDEMethod, PDESpaceGrid, OptionType
 from ..rates import DiscountCurve
 from ..utils import calculate_year_fraction, log_timing
@@ -327,6 +339,46 @@ def _explicit_step(
     return V_new
 
 
+@_njit(cache=True)
+def _psor_core(
+    x: np.ndarray,
+    exercise_j: np.ndarray,
+    rhs: np.ndarray,
+    lower: np.ndarray,
+    diag: np.ndarray,
+    upper: np.ndarray,
+    V_left: float,
+    V_right: float,
+    omega: float,
+    tol: float,
+    max_iter: int,
+) -> tuple[np.ndarray, int]:
+    """Numba-accelerated Projected SOR (Gauss-Seidel with overrelaxation)."""
+    n = x.shape[0]
+    for k in range(n):
+        if x[k] < exercise_j[k]:
+            x[k] = exercise_j[k]
+    iter_used = max_iter
+    for iter_idx in range(max_iter):
+        max_diff = 0.0
+        for k in range(n):
+            left_val = x[k - 1] if k > 0 else V_left
+            right_val = x[k + 1] if k < n - 1 else V_right
+            gs = (rhs[k] - lower[k] * left_val - upper[k] * right_val) / diag[k]
+            old = x[k]
+            new = old + omega * (gs - old)
+            if new < exercise_j[k]:
+                new = exercise_j[k]
+            x[k] = new
+            diff = new - old if new > old else old - new
+            if diff > max_diff:
+                max_diff = diff
+        if max_diff < tol:
+            iter_used = iter_idx + 1
+            break
+    return x, iter_used
+
+
 def _psor_solve(
     x: np.ndarray,
     exercise_j: np.ndarray,
@@ -343,21 +395,21 @@ def _psor_solve(
     """Projected SOR (Gauss-Seidel with overrelaxation) for American exercise.
 
     Returns the updated interior values and the number of iterations used.
+    Delegates to a Numba-JIT compiled inner loop when numba is available.
     """
-    x = np.maximum(x, exercise_j)
-    iter_used = max_iter
-    for iter_idx in range(max_iter):
-        x_prev = x.copy()
-        for k in range(x.size):
-            left_val = x[k - 1] if k > 0 else V_left
-            right_val = x[k + 1] if k < x.size - 1 else V_right
-            gs = (rhs[k] - lower[k] * left_val - upper[k] * right_val) / diag[k]
-            sor = x[k] + omega * (gs - x[k])
-            x[k] = max(sor, exercise_j[k])
-        if np.max(np.abs(x - x_prev)) < tol:
-            iter_used = iter_idx + 1
-            break
-    return x, iter_used
+    return _psor_core(
+        x,
+        exercise_j,
+        rhs,
+        lower,
+        diag,
+        upper,
+        float(V_left),
+        float(V_right),
+        omega,
+        tol,
+        max_iter,
+    )
 
 
 def _implicit_cn_step(

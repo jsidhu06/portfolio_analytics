@@ -34,6 +34,8 @@ isort==6.1.0
     # via pylint
 librt==0.8.1
     # via mypy
+llvmlite==0.46.0
+    # via numba
 mccabe==0.7.0
     # via pylint
 mypy==1.19.1
@@ -44,10 +46,13 @@ mypy-extensions==1.1.0
     #   mypy
 nodeenv==1.10.0
     # via pre-commit
+numba==0.64.0
+    # via derivatives_pricing (pyproject.toml)
 numpy==2.4.2
     # via
-    #   pandas
     #   derivatives_pricing (pyproject.toml)
+    #   numba
+    #   pandas
     #   scipy
 packaging==26.0
     # via
