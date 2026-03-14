@@ -38,11 +38,9 @@ from .enums import (
     PDEEarlyExercise,
     DayCountConvention,
     AsianAveraging,
-    PositionSide,
     GreekCalculationMethod,
     ImpliedVolMethod,
 )
-from .strategies import CondorSpec
 from .valuation import (
     VanillaSpec,
     OptionValuation,
@@ -78,7 +76,6 @@ __all__ = [
     "PDEEarlyExercise",
     "DayCountConvention",
     "AsianAveraging",
-    "PositionSide",
     "GreekCalculationMethod",
     "ImpliedVolMethod",
     # Valuation
@@ -91,8 +88,6 @@ __all__ = [
     "BinomialParams",
     "PDEParams",
     "implied_volatility",
-    # Strategies
-    "CondorSpec",
     # Exceptions
     "DerivativesAnalyticsError",
     "ValidationError",
