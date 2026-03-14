@@ -1,9 +1,9 @@
 [project]
-name = "portfolio_analytics"
+name = "derivatives_pricing"
 version = "0.1.0"
 description = "Python package for derivatives valuation"
 authors = [
-    { name = "TODO", email = "todo@example.com" }
+    { name = "TODO"}
 ]
 readme = "README.md"
 license = { text = "MIT" }
@@ -67,7 +67,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["portfolio_analytics"]
+source = ["derivatives_pricing"]
 
 [tool.coverage.report]
 show_missing = true

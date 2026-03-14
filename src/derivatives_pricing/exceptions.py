@@ -1,4 +1,4 @@
-"""Custom exception hierarchy for the portfolio_analytics library.
+"""Custom exception hierarchy for the derivatives_pricing library.
 
 All library-specific exceptions inherit from :class:`DerivativesAnalyticsError`,
 enabling callers to catch *any* library error with a single ``except`` clause::

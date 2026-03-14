@@ -4,8 +4,8 @@ import datetime as dt
 
 import numpy as np
 
-from portfolio_analytics.enums import DayCountConvention, ExerciseType, OptionType, PricingMethod
-from portfolio_analytics.tests.conftest import (
+from derivatives_pricing.enums import DayCountConvention, ExerciseType, OptionType, PricingMethod
+from derivatives_pricing.tests.conftest import (
     BINOM_PARAMS,
     PRICING_DATE,
     MATURITY,
@@ -14,9 +14,9 @@ from portfolio_analytics.tests.conftest import (
     STRIKE,
     VOL,
 )
-from portfolio_analytics.tests.helpers import underlying, pv, spec
-from portfolio_analytics.utils import calculate_year_fraction, expected_binomial_payoff
-from portfolio_analytics.valuation import (
+from derivatives_pricing.tests.helpers import underlying, pv, spec
+from derivatives_pricing.utils import calculate_year_fraction, expected_binomial_payoff
+from derivatives_pricing.valuation import (
     BinomialParams,
     VanillaSpec,
     UnderlyingData,

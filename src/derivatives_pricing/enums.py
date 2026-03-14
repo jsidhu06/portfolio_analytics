@@ -5,7 +5,6 @@ from enum import Enum
 __all__ = [
     "OptionType",
     "AsianAveraging",
-    "PositionSide",
     "ExerciseType",
     "PricingMethod",
     "GreekCalculationMethod",
@@ -29,13 +28,6 @@ class AsianAveraging(Enum):
 
     ARITHMETIC = "arithmetic"
     GEOMETRIC = "geometric"
-
-
-class PositionSide(Enum):
-    """Long or short position in a strategy."""
-
-    LONG = "long"
-    SHORT = "short"
 
 
 class ExerciseType(Enum):

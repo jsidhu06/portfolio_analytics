@@ -5,35 +5,35 @@ import logging
 import numpy as np
 import pytest
 
-from portfolio_analytics.exceptions import (
+from derivatives_pricing.exceptions import (
     ConfigurationError,
     ValidationError,
     UnsupportedFeatureError,
 )
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     AsianAveraging,
     ExerciseType,
     GreekCalculationMethod,
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import assert_greeks_close, flat_curve
-from portfolio_analytics.utils import calculate_year_fraction
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.tests.helpers import assert_greeks_close, flat_curve
+from derivatives_pricing.utils import calculate_year_fraction
+from derivatives_pricing.stochastic_processes import (
     GBMParams,
     PathSimulation,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.valuation import (
+from derivatives_pricing.valuation import (
     AsianSpec,
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
 )
-from portfolio_analytics.valuation import BinomialParams, MonteCarloParams
+from derivatives_pricing.valuation import BinomialParams, MonteCarloParams
 
 logger = logging.getLogger(__name__)
 

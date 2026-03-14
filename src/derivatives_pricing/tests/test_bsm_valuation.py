@@ -4,16 +4,16 @@ import datetime as dt
 
 import numpy as np
 
-from portfolio_analytics.enums import OptionType, PricingMethod
-from portfolio_analytics.tests.conftest import (
+from derivatives_pricing.enums import OptionType, PricingMethod
+from derivatives_pricing.tests.conftest import (
     PRICING_DATE,
     MATURITY,
     RATE,
     SPOT,
     STRIKE,
 )
-from portfolio_analytics.tests.helpers import flat_curve, underlying, pv, spec
-from portfolio_analytics.valuation import (
+from derivatives_pricing.tests.helpers import flat_curve, underlying, pv, spec
+from derivatives_pricing.valuation import (
     VanillaSpec,
     OptionValuation,
     UnderlyingData,

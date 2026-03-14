@@ -3,11 +3,11 @@
 import datetime as dt
 import numpy as np
 
-from portfolio_analytics.enums import OptionType, ExerciseType, PricingMethod
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import VanillaSpec, UnderlyingData, OptionValuation
-from portfolio_analytics.utils import (
+from derivatives_pricing.enums import OptionType, ExerciseType, PricingMethod
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.tests.helpers import flat_curve
+from derivatives_pricing.valuation import VanillaSpec, UnderlyingData, OptionValuation
+from derivatives_pricing.utils import (
     calculate_year_fraction,
     forward_price,
     put_call_parity_rhs,

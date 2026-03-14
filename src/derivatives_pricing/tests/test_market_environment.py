@@ -5,10 +5,10 @@ import datetime as dt
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import DayCountConvention
-from portfolio_analytics.exceptions import ValidationError
-from portfolio_analytics.market_environment import CorrelationContext, MarketData
-from portfolio_analytics.rates import DiscountCurve
+from derivatives_pricing.enums import DayCountConvention
+from derivatives_pricing.exceptions import ValidationError
+from derivatives_pricing.market_environment import CorrelationContext, MarketData
+from derivatives_pricing.rates import DiscountCurve
 
 
 # ---------------------------------------------------------------------------

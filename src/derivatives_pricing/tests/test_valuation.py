@@ -3,12 +3,12 @@
 import pytest
 import datetime as dt
 import numpy as np
-from portfolio_analytics.exceptions import (
+from derivatives_pricing.exceptions import (
     ConfigurationError,
     UnsupportedFeatureError,
     ValidationError,
 )
-from portfolio_analytics.valuation import (
+from derivatives_pricing.valuation import (
     VanillaSpec,
     PayoffSpec,
     UnderlyingData,
@@ -17,27 +17,27 @@ from portfolio_analytics.valuation import (
     MonteCarloParams,
     PDEParams,
 )
-from portfolio_analytics.valuation.bsm import _BSMEuropeanValuation
-from portfolio_analytics.valuation.binomial import (
+from derivatives_pricing.valuation.bsm import _BSMEuropeanValuation
+from derivatives_pricing.valuation.binomial import (
     _BinomialEuropeanValuation,
 )
-from portfolio_analytics.valuation.monte_carlo import _MCEuropeanValuation
-from portfolio_analytics.enums import (
+from derivatives_pricing.valuation.monte_carlo import _MCEuropeanValuation
+from derivatives_pricing.enums import (
     DayCountConvention,
     OptionType,
     ExerciseType,
     PricingMethod,
 )
-from portfolio_analytics.utils import calculate_year_fraction
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.utils import calculate_year_fraction
+from derivatives_pricing.stochastic_processes import (
     GBMProcess,
     GBMParams,
     SimulationConfig,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.valuation.pde import _FDAmericanValuation
-from portfolio_analytics.tests.helpers import flat_curve
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.valuation.pde import _FDAmericanValuation
+from derivatives_pricing.tests.helpers import flat_curve
 
 
 class TestVanillaSpec:

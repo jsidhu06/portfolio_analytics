@@ -9,25 +9,25 @@ import datetime as dt
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     ExerciseType,
     OptionType,
     PDESpaceGrid,
     PricingMethod,
 )
-from portfolio_analytics.exceptions import (
+from derivatives_pricing.exceptions import (
     ArbitrageViolationError,
     NumericalError,
     ValidationError,
 )
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.tests.helpers import (
     flat_curve,
     market_data,
     underlying,
     make_vanilla_spec,
     pv as _pv,
 )
-from portfolio_analytics.valuation import (
+from derivatives_pricing.valuation import (
     BinomialParams,
     VanillaSpec,
     PDEParams,

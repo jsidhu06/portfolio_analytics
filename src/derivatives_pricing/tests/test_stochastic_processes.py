@@ -1,8 +1,8 @@
 import pytest
 import datetime as dt
 import numpy as np
-from portfolio_analytics.exceptions import ValidationError
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.exceptions import ValidationError
+from derivatives_pricing.stochastic_processes import (
     PathSimulation,
     GBMProcess,
     SRDProcess,
@@ -12,8 +12,8 @@ from portfolio_analytics.stochastic_processes import (
     SRDParams,
     SimulationConfig,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.tests.helpers import flat_curve
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.tests.helpers import flat_curve
 
 
 class TestPathSimulation:

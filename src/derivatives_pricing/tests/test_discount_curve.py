@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from portfolio_analytics.exceptions import ValidationError
-from portfolio_analytics.rates import DiscountCurve
+from derivatives_pricing.exceptions import ValidationError
+from derivatives_pricing.rates import DiscountCurve
 
 
 # ---------------------------------------------------------------------------

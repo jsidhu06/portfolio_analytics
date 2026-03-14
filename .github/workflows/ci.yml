@@ -44,12 +44,12 @@ jobs:
 
       - name: Smoke import
         run: |
-          python -c "import portfolio_analytics; print('import ok')"
+          python -c "import derivatives_pricing; print('import ok')"
 
       - name: Pytest
         run: |
-          pytest src/portfolio_analytics/tests/ \
-              --cov=portfolio_analytics \
+          pytest src/derivatives_pricing/tests/ \
+              --cov=derivatives_pricing \
               --cov-report=term-missing \
               --cov-branch \
               -q --runslow
@@ -77,11 +77,11 @@ jobs:
 
       - name: Smoke import
         run: |
-          python -c "import portfolio_analytics; print('import ok')"
+          python -c "import derivatives_pricing; print('import ok')"
 
       - name: Pytest
         run: |
-          pytest src/portfolio_analytics/tests/ -q -n auto
+          pytest src/derivatives_pricing/tests/ -q -n auto
 
 
   notebooks:
@@ -151,11 +151,11 @@ jobs:
 
       - name: Smoke import
         run: |
-          python -c "import portfolio_analytics; print('import ok')"
+          python -c "import derivatives_pricing; print('import ok')"
 
       - name: Pytest (core subset)
         run: |
-          pytest src/portfolio_analytics/tests/ -q -k "bsm or binomial or mcs"
+          pytest src/derivatives_pricing/tests/ -q -k "bsm or binomial or mcs"
 
       - name: Execute one notebook
         shell: bash

@@ -20,35 +20,35 @@ import pandas as pd
 import pytest
 from scipy.stats import norm
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     AsianAveraging,
     ExerciseType,
     OptionType,
     PricingMethod,
     GreekCalculationMethod,
 )
-from portfolio_analytics.exceptions import UnsupportedFeatureError, ValidationError
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.exceptions import UnsupportedFeatureError, ValidationError
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.tests.helpers import (
     flat_curve,
     market_data,
     underlying,
 )
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.stochastic_processes import (
     GBMParams,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.utils import pv_discrete_dividends
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
-from portfolio_analytics.valuation.asian_analytical import (
+from derivatives_pricing.utils import pv_discrete_dividends
+from derivatives_pricing.valuation import VanillaSpec, OptionValuation, UnderlyingData
+from derivatives_pricing.valuation.asian_analytical import (
     _asian_arithmetic_analytical,
     _asian_geometric_analytical,
 )
-from portfolio_analytics.valuation.binomial import _BinomialAsianValuation
-from portfolio_analytics.valuation.core import AsianSpec
-from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams
+from derivatives_pricing.valuation.binomial import _BinomialAsianValuation
+from derivatives_pricing.valuation.core import AsianSpec
+from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams
 
 
 logger = logging.getLogger(__name__)

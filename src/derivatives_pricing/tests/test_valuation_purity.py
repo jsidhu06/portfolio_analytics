@@ -15,16 +15,16 @@ import datetime as dt
 
 import pytest
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     ExerciseType,
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import VanillaSpec, OptionValuation, UnderlyingData
-from portfolio_analytics.valuation import BinomialParams
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.tests.helpers import flat_curve
+from derivatives_pricing.valuation import VanillaSpec, OptionValuation, UnderlyingData
+from derivatives_pricing.valuation import BinomialParams
 
 
 def _make_ud(

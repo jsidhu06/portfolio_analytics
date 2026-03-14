@@ -1,4 +1,4 @@
-"""Compare option present values between portfolio_analytics and QuantLib."""
+"""Compare option present values between derivatives_pricing and QuantLib."""
 
 from __future__ import annotations
 import datetime as dt
@@ -8,25 +8,25 @@ from typing import TYPE_CHECKING, Sequence
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     AsianAveraging,
     DayCountConvention,
     ExerciseType,
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.valuation import (
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.tests.helpers import flat_curve
+from derivatives_pricing.valuation import (
     AsianSpec,
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
 )
-from portfolio_analytics.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
-from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
-from portfolio_analytics.utils import calculate_year_fraction, pv_discrete_dividends
+from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
+from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
+from derivatives_pricing.utils import calculate_year_fraction, pv_discrete_dividends
 
 if TYPE_CHECKING:
     import QuantLib as ql_typing

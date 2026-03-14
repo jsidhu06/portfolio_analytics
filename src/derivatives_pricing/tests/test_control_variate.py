@@ -6,13 +6,13 @@ import logging
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     AsianAveraging,
     ExerciseType,
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.tests.helpers import (
     PRICING_DATE,
     MATURITY,
     CURRENCY,
@@ -21,9 +21,9 @@ from portfolio_analytics.tests.helpers import (
     underlying,
     spec,
 )
-from portfolio_analytics.valuation import OptionValuation
-from portfolio_analytics.valuation.core import AsianSpec
-from portfolio_analytics.valuation.params import BinomialParams, PDEParams
+from derivatives_pricing.valuation import OptionValuation
+from derivatives_pricing.valuation.core import AsianSpec
+from derivatives_pricing.valuation.params import BinomialParams, PDEParams
 
 logger = logging.getLogger(__name__)
 

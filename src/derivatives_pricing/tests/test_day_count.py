@@ -3,8 +3,8 @@
 import datetime as dt
 import numpy as np
 
-from portfolio_analytics.enums import DayCountConvention
-from portfolio_analytics.utils import calculate_year_fraction
+from derivatives_pricing.enums import DayCountConvention
+from derivatives_pricing.utils import calculate_year_fraction
 
 
 # ---------------------------------------------------------------------------

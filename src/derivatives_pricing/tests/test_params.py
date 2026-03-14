@@ -4,9 +4,9 @@ import warnings
 
 import pytest
 
-from portfolio_analytics.enums import PDEMethod
-from portfolio_analytics.exceptions import ValidationError
-from portfolio_analytics.valuation.params import BinomialParams, MonteCarloParams, PDEParams
+from derivatives_pricing.enums import PDEMethod
+from derivatives_pricing.exceptions import ValidationError
+from derivatives_pricing.valuation.params import BinomialParams, MonteCarloParams, PDEParams
 
 
 # ---------------------------------------------------------------------------

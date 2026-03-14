@@ -9,8 +9,8 @@ QuantLib comparisons live in test_quantlib_comparison.py.
 import numpy as np
 import pytest
 
-from portfolio_analytics.exceptions import StabilityError, UnsupportedFeatureError
-from portfolio_analytics.enums import (
+from derivatives_pricing.exceptions import StabilityError, UnsupportedFeatureError
+from derivatives_pricing.enums import (
     ExerciseType,
     OptionType,
     PDEEarlyExercise,
@@ -18,15 +18,15 @@ from portfolio_analytics.enums import (
     PDESpaceGrid,
     PricingMethod,
 )
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.tests.helpers import (
     flat_curve,
     underlying,
     spec,
     PRICING_DATE,
     MATURITY,
 )
-from portfolio_analytics.valuation import OptionValuation
-from portfolio_analytics.valuation.params import PDEParams
+from derivatives_pricing.valuation import OptionValuation
+from derivatives_pricing.valuation.params import PDEParams
 
 
 def test_pde_fd_grid_method_equivalence_european():

@@ -3,12 +3,12 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from portfolio_analytics.enums import DayCountConvention, ExerciseType, OptionType
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
-from portfolio_analytics.utils import calculate_year_fraction
-from portfolio_analytics.valuation import OptionValuation, UnderlyingData, VanillaSpec
+from derivatives_pricing.enums import DayCountConvention, ExerciseType, OptionType
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.stochastic_processes import GBMParams, GBMProcess, SimulationConfig
+from derivatives_pricing.utils import calculate_year_fraction
+from derivatives_pricing.valuation import OptionValuation, UnderlyingData, VanillaSpec
 
 
 # ---------------------------------------------------------------------------

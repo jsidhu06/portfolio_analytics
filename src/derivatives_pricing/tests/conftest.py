@@ -1,16 +1,16 @@
-"""Shared pytest fixtures for portfolio_analytics tests."""
+"""Shared pytest fixtures for derivatives_pricing tests."""
 
 import datetime as dt
 
 import pytest
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     ExerciseType,
     OptionType,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.valuation import (
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.valuation import (
     BinomialParams,
     MonteCarloParams,
     PDEParams,
@@ -18,7 +18,7 @@ from portfolio_analytics.valuation import (
     UnderlyingData,
 )
 
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.tests.helpers import (
     flat_curve,
     PRICING_DATE,
     MATURITY,

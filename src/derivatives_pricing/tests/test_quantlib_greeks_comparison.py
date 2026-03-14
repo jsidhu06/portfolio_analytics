@@ -1,4 +1,4 @@
-"""Compare Greeks between portfolio_analytics and QuantLib for reference.
+"""Compare Greeks between derivatives_pricing and QuantLib for reference.
 
 Sections
 --------
@@ -17,38 +17,38 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import (
+from derivatives_pricing.enums import (
     AsianAveraging,
     DayCountConvention,
     ExerciseType,
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.tests.helpers import (
     assert_greeks_close,
     market_data,
     make_vanilla_spec,
     underlying,
 )
-from portfolio_analytics.valuation import (
+from derivatives_pricing.valuation import (
     AsianSpec,
     VanillaSpec,
     OptionValuation,
     UnderlyingData,
 )
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.stochastic_processes import (
     GBMParams,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.valuation.params import (
+from derivatives_pricing.valuation.params import (
     BinomialParams,
     MonteCarloParams,
     PDEParams,
 )
-from portfolio_analytics.utils import calculate_year_fraction
+from derivatives_pricing.utils import calculate_year_fraction
 
 if TYPE_CHECKING:
     import QuantLib as ql_typing
@@ -325,7 +325,7 @@ def _ql_scaled_greeks(
     *,
     allow_missing: bool,
 ) -> dict[str, float | None]:
-    """Return QuantLib Greeks scaled to portfolio_analytics conventions."""
+    """Return QuantLib Greeks scaled to derivatives_pricing conventions."""
     values: dict[str, float | None] = {}
     for greek, scale in _QL_SCALE.items():
         val = _ql_greek(option, greek)
@@ -336,7 +336,7 @@ def _ql_scaled_greeks(
     return values
 
 
-# Convention conversions (QuantLib → portfolio_analytics):
+# Convention conversions (QuantLib → derivatives_pricing):
 #   vega:  QL returns d(V)/d(σ);  PA returns d(V)/d(σ)/100  (per 1 vol-pt)
 #   theta: QL returns d(V)/d(t) per year; PA returns per calendar day (/365)
 #   rho:   QL returns d(V)/d(r);  PA returns d(V)/d(r)/100 (per 1% rate)

@@ -1,8 +1,8 @@
 import datetime as dt
 
-from portfolio_analytics.enums import AsianAveraging, ExerciseType, OptionType
-from portfolio_analytics.valuation import AsianSpec, PayoffSpec, VanillaSpec
-from portfolio_analytics.valuation import contracts
+from derivatives_pricing.enums import AsianAveraging, ExerciseType, OptionType
+from derivatives_pricing.valuation import AsianSpec, PayoffSpec, VanillaSpec
+from derivatives_pricing.valuation import contracts
 
 
 def test_contract_types_reexport_from_valuation_module():

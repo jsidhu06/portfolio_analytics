@@ -5,33 +5,33 @@ import datetime as dt
 import numpy as np
 import pytest
 
-from portfolio_analytics.exceptions import UnsupportedFeatureError, ValidationError
-from portfolio_analytics.enums import (
+from derivatives_pricing.exceptions import UnsupportedFeatureError, ValidationError
+from derivatives_pricing.enums import (
     ExerciseType,
     ImpliedVolMethod,
     OptionType,
     PricingMethod,
 )
-from portfolio_analytics.market_environment import MarketData
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.tests.helpers import flat_curve
-from portfolio_analytics.tests.helpers import (
+from derivatives_pricing.market_environment import MarketData
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.tests.helpers import flat_curve
+from derivatives_pricing.tests.helpers import (
     market_data,
     underlying,
     make_vanilla_spec,
 )
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.stochastic_processes import (
     GBMParams,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.valuation import (
+from derivatives_pricing.valuation import (
     ImpliedVolResult,
     VanillaSpec,
     OptionValuation,
     implied_volatility,
 )
-from portfolio_analytics.valuation.params import BinomialParams
+from derivatives_pricing.valuation.params import BinomialParams
 
 
 PRICING_DATE = dt.datetime(2025, 1, 1)

@@ -3,14 +3,14 @@
 import numpy as np
 import pytest
 
-from portfolio_analytics.enums import ExerciseType, OptionType, PricingMethod
-from portfolio_analytics.rates import DiscountCurve
-from portfolio_analytics.stochastic_processes import (
+from derivatives_pricing.enums import ExerciseType, OptionType, PricingMethod
+from derivatives_pricing.rates import DiscountCurve
+from derivatives_pricing.stochastic_processes import (
     GBMParams,
     GBMProcess,
     SimulationConfig,
 )
-from portfolio_analytics.tests.conftest import (
+from derivatives_pricing.tests.conftest import (
     BINOM_PARAMS,
     MC_PARAMS,
     PRICING_DATE,
@@ -19,8 +19,8 @@ from portfolio_analytics.tests.conftest import (
     SPOT,
     VOL,
 )
-from portfolio_analytics.tests.helpers import flat_curve, market_data, pv, spec
-from portfolio_analytics.valuation import (
+from derivatives_pricing.tests.helpers import flat_curve, market_data, pv, spec
+from derivatives_pricing.valuation import (
     MonteCarloParams,
     OptionValuation,
     UnderlyingData,
